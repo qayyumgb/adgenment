@@ -1,0 +1,213 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Platform {
+  META
+  GOOGLE
+  TIKTOK
+  LINKEDIN
+  YOUTUBE
+  SNAPCHAT
+  PINTEREST
+  X
+}
+
+enum PlanType {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ENDED
+}
+
+enum BudgetType {
+  DAILY
+  LIFETIME
+}
+
+enum CreativeType {
+  IMAGE
+  VIDEO
+  CAROUSEL
+  TEXT
+}
+
+enum CreativeStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+enum AiSessionType {
+  CAMPAIGN_PLANNER
+  CREATIVE_GEN
+  AUDIENCE_BUILDER
+  BUDGET_OPTIMIZER
+  REPORT
+}
+
+model User {
+  id        String   @id @default(cuid())
+  clerkId   String   @unique
+  email     String   @unique
+  name      String?
+  plan      PlanType @default(FREE)
+  createdAt DateTime @default(now())
+
+  ownedWorkspaces    Workspace[]       @relation("WorkspaceOwner")
+  workspaceMembers   WorkspaceMember[]
+  aiSessions         AiSession[]
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   String
+  plan      PlanType @default(FREE)
+  createdAt DateTime @default(now())
+
+  owner       User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  members     WorkspaceMember[]
+  adAccounts  AdAccount[]
+  campaigns   Campaign[]
+  creatives   Creative[]
+  aiSessions  AiSession[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(VIEWER)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+model AdAccount {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  platform     Platform
+  accountId    String
+  accountName  String
+  accessToken  String
+  refreshToken String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@unique([workspaceId, platform, accountId])
+  @@index([workspaceId])
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  workspaceId String
+  adAccountId String
+  platform    Platform
+  name        String
+  status      CampaignStatus @default(DRAFT)
+  objective   String
+  budget      Decimal        @db.Decimal(12, 2)
+  budgetType  BudgetType     @default(DAILY)
+  startDate   DateTime?
+  endDate     DateTime?
+  targeting   Json?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adAccount AdAccount          @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  metrics   CampaignMetrics[]
+  creatives Creative[]
+
+  @@index([workspaceId])
+  @@index([adAccountId])
+  @@index([status])
+}
+
+model CampaignMetrics {
+  id          String   @id @default(cuid())
+  campaignId  String
+  date        DateTime
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  spend       Decimal  @default(0) @db.Decimal(12, 2)
+  conversions Int      @default(0)
+  revenue     Decimal  @default(0) @db.Decimal(12, 2)
+  ctr         Float    @default(0)
+  cpc         Float    @default(0)
+  cpm         Float    @default(0)
+  roas        Float    @default(0)
+  updatedAt   DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, date])
+  @@index([campaignId])
+  @@index([date])
+}
+
+model Creative {
+  id           String         @id @default(cuid())
+  workspaceId  String
+  campaignId   String?
+  name         String
+  type         CreativeType
+  content      Json
+  status       CreativeStatus @default(DRAFT)
+  aiGenerated  Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([campaignId])
+}
+
+model AiSession {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  type        AiSessionType
+  prompt      String        @db.Text
+  response    String        @db.Text
+  tokensUsed  Int           @default(0)
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([type])
+}
