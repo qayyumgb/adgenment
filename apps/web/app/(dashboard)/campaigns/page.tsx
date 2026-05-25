@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import {
   RefreshCw,
@@ -19,213 +20,24 @@ import {
   Copy,
   Trash2,
   Calendar,
-  Inbox,
-  Sparkles,
+  Megaphone,
+  Loader2,
 } from "lucide-react";
-import CreateCampaignModal from "@/components/campaigns/CreateCampaignModal";
+import CreateCampaignModal, {
+  type CampaignPrefill,
+} from "@/components/campaigns/CreateCampaignModal";
+import { SkeletonCampaignCard, SkeletonTableRow } from "@/components/ui/Skeleton";
+import EmptyState from "@/components/ui/EmptyState";
+import { useApi } from "@/hooks/useApi";
+import { useApiClient } from "@/lib/api";
+import type {
+  Campaign,
+  CampaignsResponse,
+  CampaignStatus,
+  Platform,
+} from "@/lib/api";
 
-type Platform = "META" | "GOOGLE" | "TIKTOK" | "LINKEDIN";
-type Status = "ACTIVE" | "PAUSED" | "DRAFT" | "ENDED";
 type DateRange = "7" | "30" | "90" | "CUSTOM";
-
-type Campaign = {
-  id: string;
-  name: string;
-  objective: string;
-  platform: Platform;
-  status: Status;
-  budget: number;
-  spend: number;
-  impressions: number;
-  clicks: number;
-  ctr: number;
-  roas: number;
-  startDate: string;
-  endDate: string;
-};
-
-const CAMPAIGNS: Campaign[] = [
-  {
-    id: "summer-sale-2026",
-    name: "Summer Sale 2026",
-    objective: "Conversions · Retargeting",
-    platform: "META",
-    status: "ACTIVE",
-    budget: 5000,
-    spend: 3240,
-    impressions: 412000,
-    clicks: 8240,
-    ctr: 2.0,
-    roas: 4.2,
-    startDate: "2026-04-28",
-    endDate: "2026-06-30",
-  },
-  {
-    id: "brand-q2",
-    name: "Brand Awareness Q2",
-    objective: "Reach · Top of funnel",
-    platform: "GOOGLE",
-    status: "ACTIVE",
-    budget: 3500,
-    spend: 2890,
-    impressions: 287000,
-    clicks: 4310,
-    ctr: 1.5,
-    roas: 2.8,
-    startDate: "2026-05-01",
-    endDate: "2026-06-15",
-  },
-  {
-    id: "tide-launch",
-    name: "Product Launch — Tide+",
-    objective: "Conversions · New SKU",
-    platform: "TIKTOK",
-    status: "ACTIVE",
-    budget: 4200,
-    spend: 1820,
-    impressions: 198400,
-    clicks: 6190,
-    ctr: 3.1,
-    roas: 3.7,
-    startDate: "2026-05-12",
-    endDate: "2026-07-01",
-  },
-  {
-    id: "enterprise-leadgen",
-    name: "Enterprise Lead Gen",
-    objective: "Lead form · B2B",
-    platform: "LINKEDIN",
-    status: "PAUSED",
-    budget: 6000,
-    spend: 4100,
-    impressions: 84200,
-    clicks: 980,
-    ctr: 1.2,
-    roas: 1.6,
-    startDate: "2026-03-18",
-    endDate: "2026-06-30",
-  },
-  {
-    id: "cart-abandon",
-    name: "Retargeting · Cart Abandon",
-    objective: "Conversions · Warm",
-    platform: "META",
-    status: "ACTIVE",
-    budget: 2200,
-    spend: 1670,
-    impressions: 142800,
-    clicks: 4280,
-    ctr: 3.0,
-    roas: 5.1,
-    startDate: "2026-04-02",
-    endDate: "2026-06-30",
-  },
-  {
-    id: "bf-teaser",
-    name: "Black Friday Teaser",
-    objective: "Awareness · Wait-list",
-    platform: "META",
-    status: "DRAFT",
-    budget: 8000,
-    spend: 0,
-    impressions: 0,
-    clicks: 0,
-    ctr: 0,
-    roas: 0,
-    startDate: "2026-11-15",
-    endDate: "2026-11-29",
-  },
-  {
-    id: "brand-search",
-    name: "Search · Branded Terms",
-    objective: "Search · Brand defense",
-    platform: "GOOGLE",
-    status: "ACTIVE",
-    budget: 1800,
-    spend: 1240,
-    impressions: 96400,
-    clicks: 3850,
-    ctr: 4.0,
-    roas: 6.2,
-    startDate: "2026-02-08",
-    endDate: "2026-12-31",
-  },
-  {
-    id: "winter-2025",
-    name: "Winter Collection 2025",
-    objective: "Conversions · Apparel",
-    platform: "TIKTOK",
-    status: "ENDED",
-    budget: 3000,
-    spend: 2980,
-    impressions: 218000,
-    clicks: 5240,
-    ctr: 2.4,
-    roas: 2.1,
-    startDate: "2025-12-01",
-    endDate: "2026-02-15",
-  },
-  {
-    id: "creator-collab",
-    name: "Creator Collab — Spring Drop",
-    objective: "Spark Ads · Influencer",
-    platform: "TIKTOK",
-    status: "ACTIVE",
-    budget: 2500,
-    spend: 980,
-    impressions: 124000,
-    clicks: 3720,
-    ctr: 3.0,
-    roas: 4.6,
-    startDate: "2026-05-04",
-    endDate: "2026-06-04",
-  },
-  {
-    id: "youtube-shorts",
-    name: "YouTube Shorts Push",
-    objective: "Video Views · Awareness",
-    platform: "GOOGLE",
-    status: "PAUSED",
-    budget: 2800,
-    spend: 1150,
-    impressions: 412000,
-    clicks: 1840,
-    ctr: 0.4,
-    roas: 0.9,
-    startDate: "2026-04-10",
-    endDate: "2026-06-10",
-  },
-  {
-    id: "abm-tier1",
-    name: "ABM · Tier 1 Accounts",
-    objective: "Lead form · Enterprise",
-    platform: "LINKEDIN",
-    status: "ACTIVE",
-    budget: 4500,
-    spend: 2310,
-    impressions: 41200,
-    clicks: 620,
-    ctr: 1.5,
-    roas: 2.4,
-    startDate: "2026-04-21",
-    endDate: "2026-07-21",
-  },
-  {
-    id: "back-to-school",
-    name: "Back to School Prep",
-    objective: "Catalog Sales",
-    platform: "META",
-    status: "DRAFT",
-    budget: 5500,
-    spend: 0,
-    impressions: 0,
-    clicks: 0,
-    ctr: 0,
-    roas: 0,
-    startDate: "2026-07-15",
-    endDate: "2026-09-15",
-  },
-];
 
 const PLATFORM_META: Record<
   Platform,
@@ -255,10 +67,34 @@ const PLATFORM_META: Record<
     bg: "bg-[#0A66C2]/10",
     text: "text-[#0A66C2]",
   },
+  YOUTUBE: {
+    label: "YouTube",
+    color: "#FF0000",
+    bg: "bg-[#FF0000]/10",
+    text: "text-[#FF0000]",
+  },
+  SNAPCHAT: {
+    label: "Snapchat",
+    color: "#FFFC00",
+    bg: "bg-[#FFFC00]/20",
+    text: "text-slate-900",
+  },
+  PINTEREST: {
+    label: "Pinterest",
+    color: "#E60023",
+    bg: "bg-[#E60023]/10",
+    text: "text-[#E60023]",
+  },
+  X: {
+    label: "X",
+    color: "#0f172a",
+    bg: "bg-slate-900/[0.08]",
+    text: "text-slate-900",
+  },
 };
 
 const STATUS_META: Record<
-  Status,
+  CampaignStatus,
   { label: string; cls: string; dot: "active" | "paused" | "draft" | "ended" }
 > = {
   ACTIVE: { label: "Active", cls: "text-emerald-700", dot: "active" },
@@ -271,35 +107,63 @@ function fmtMoney(n: number, full = false): string {
   return n.toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: full ? 0 : 0,
+    maximumFractionDigits: full ? 2 : 0,
   });
 }
 
 function fmtCompact(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000_000)
+    return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
   return n.toString();
-}
-
-function daysRemaining(end: string): number {
-  const e = new Date(end + "T00:00:00Z").getTime();
-  const now = new Date("2026-05-25T00:00:00Z").getTime();
-  return Math.round((e - now) / (1000 * 60 * 60 * 24));
 }
 
 const VIEW_STORAGE_KEY = "campaigns-view";
 const PAGE_SIZE = 9;
 
 export default function CampaignsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [view, setView] = useState<"grid" | "list">("grid");
   const [search, setSearch] = useState("");
-  const [platformFilter, setPlatformFilter] = useState<"ALL" | Platform>("ALL");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | Status>("ALL");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [platformFilter, setPlatformFilter] = useState<"ALL" | Platform>(
+    "ALL"
+  );
+  const [statusFilter, setStatusFilter] = useState<"ALL" | CampaignStatus>(
+    "ALL"
+  );
   const [range, setRange] = useState<DateRange>("30");
   const [page, setPage] = useState(1);
   const [modalOpen, setModalOpen] = useState(false);
+  const [modalPrefill, setModalPrefill] = useState<CampaignPrefill | null>(
+    null
+  );
 
-  // Restore view from localStorage
+  // Open the modal automatically when redirected with ?new=1 (used by
+  // Header, Dashboard Quick Actions, and the AI Planner "Apply" button).
+  // If the AI Planner stashed prefill data in sessionStorage, pop it once
+  // and feed it into the modal.
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      try {
+        const raw = sessionStorage.getItem("aiPlanPrefill");
+        if (raw) {
+          setModalPrefill(JSON.parse(raw) as CampaignPrefill);
+          sessionStorage.removeItem("aiPlanPrefill");
+        }
+      } catch {
+        // ignore
+      }
+      setModalOpen(true);
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("new");
+      const qs = params.toString();
+      router.replace(qs ? `/campaigns?${qs}` : "/campaigns", { scroll: false });
+    }
+  }, [searchParams, router]);
+
+  // Restore view preference
   useEffect(() => {
     const stored =
       typeof window !== "undefined"
@@ -307,50 +171,56 @@ export default function CampaignsPage() {
         : null;
     if (stored === "grid" || stored === "list") setView(stored);
   }, []);
-
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem(VIEW_STORAGE_KEY, view);
     }
   }, [view]);
 
+  // Debounce the search input to avoid hammering the API on every keystroke
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, platformFilter, statusFilter]);
+
   const filtersActive =
-    search.trim() !== "" ||
+    debouncedSearch.trim() !== "" ||
     platformFilter !== "ALL" ||
     statusFilter !== "ALL" ||
     range !== "30";
 
-  const filtered = useMemo(() => {
-    return CAMPAIGNS.filter((c) => {
-      if (
-        search.trim() &&
-        !c.name.toLowerCase().includes(search.trim().toLowerCase()) &&
-        !c.objective.toLowerCase().includes(search.trim().toLowerCase())
-      ) {
-        return false;
-      }
-      if (platformFilter !== "ALL" && c.platform !== platformFilter) return false;
-      if (statusFilter !== "ALL" && c.status !== statusFilter) return false;
-      return true;
-    });
-  }, [search, platformFilter, statusFilter]);
+  // Real campaigns fetch
+  const { data, loading, error, refetch } = useApi<CampaignsResponse>(
+    (client) =>
+      client.getCampaigns({
+        platform: platformFilter !== "ALL" ? platformFilter : undefined,
+        status: statusFilter !== "ALL" ? statusFilter : undefined,
+        search: debouncedSearch.trim() || undefined,
+        page: String(page),
+        limit: String(PAGE_SIZE),
+      }),
+    [debouncedSearch, platformFilter, statusFilter, page]
+  );
 
-  useEffect(() => {
-    setPage(1);
-  }, [search, platformFilter, statusFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageStart = (page - 1) * PAGE_SIZE;
-  const pageEnd = Math.min(pageStart + PAGE_SIZE, filtered.length);
-  const pageRows = filtered.slice(pageStart, pageEnd);
-
-  const counts = useMemo(
-    () => ({
-      total: CAMPAIGNS.length,
-      active: CAMPAIGNS.filter((c) => c.status === "ACTIVE").length,
-      paused: CAMPAIGNS.filter((c) => c.status === "PAUSED").length,
-      draft: CAMPAIGNS.filter((c) => c.status === "DRAFT").length,
-    }),
+  // Separate count fetches for the stat chips so they don't change with filters
+  const counts = useApi(
+    (client) =>
+      Promise.all([
+        client.getCampaigns({ limit: "1" }),
+        client.getCampaigns({ status: "ACTIVE", limit: "1" }),
+        client.getCampaigns({ status: "PAUSED", limit: "1" }),
+        client.getCampaigns({ status: "DRAFT", limit: "1" }),
+      ]).then(([total, active, paused, draft]) => ({
+        total: total.total,
+        active: active.total,
+        paused: paused.total,
+        draft: draft.total,
+      })),
     []
   );
 
@@ -360,6 +230,13 @@ export default function CampaignsPage() {
     setStatusFilter("ALL");
     setRange("30");
   };
+
+  const refetchAll = useCallback(async () => {
+    await Promise.all([refetch(), counts.refetch()]);
+  }, [refetch, counts]);
+
+  const totalPages = data?.totalPages ?? 1;
+  const campaigns = data?.campaigns ?? [];
 
   return (
     <div className="space-y-6">
@@ -376,10 +253,11 @@ export default function CampaignsPage() {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => refetch()}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
           >
             <RefreshCw className="h-4 w-4" />
-            Sync All
+            Refresh
           </button>
           <button
             type="button"
@@ -394,13 +272,28 @@ export default function CampaignsPage() {
 
       {/* ── Stats chips ── */}
       <div className="flex flex-wrap items-center gap-2 animate-in stagger-2">
-        <StatChip label="Total" value={counts.total} />
-        <StatChip label="Active" value={counts.active} dot="active" />
-        <StatChip label="Paused" value={counts.paused} dot="paused" />
-        <StatChip label="Draft" value={counts.draft} dot="draft" />
+        <StatChip
+          label="Total"
+          value={counts.loading ? "…" : counts.data?.total ?? 0}
+        />
+        <StatChip
+          label="Active"
+          value={counts.loading ? "…" : counts.data?.active ?? 0}
+          dot="active"
+        />
+        <StatChip
+          label="Paused"
+          value={counts.loading ? "…" : counts.data?.paused ?? 0}
+          dot="paused"
+        />
+        <StatChip
+          label="Draft"
+          value={counts.loading ? "…" : counts.data?.draft ?? 0}
+          dot="draft"
+        />
       </div>
 
-      {/* ── Filter + search bar ── */}
+      {/* ── Filter bar ── */}
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/70 bg-white p-3 shadow-card animate-in stagger-3">
         <div className="relative min-w-[220px] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -408,7 +301,7 @@ export default function CampaignsPage() {
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search campaigns by name or objective…"
+            placeholder="Search campaigns by name…"
             className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-sm transition placeholder:text-slate-400 focus:border-primary focus:outline-none"
           />
         </div>
@@ -424,10 +317,9 @@ export default function CampaignsPage() {
             { value: "LINKEDIN", label: "LinkedIn" },
           ]}
         />
-
         <Select
           value={statusFilter}
-          onChange={(v) => setStatusFilter(v as "ALL" | Status)}
+          onChange={(v) => setStatusFilter(v as "ALL" | CampaignStatus)}
           options={[
             { value: "ALL", label: "All Status" },
             { value: "ACTIVE", label: "Active" },
@@ -436,7 +328,6 @@ export default function CampaignsPage() {
             { value: "ENDED", label: "Ended" },
           ]}
         />
-
         <Select
           value={range}
           onChange={(v) => setRange(v as DateRange)}
@@ -464,9 +355,13 @@ export default function CampaignsPage() {
       {/* ── Section header w/ view toggle ── */}
       <div className="flex items-center justify-between animate-in stagger-4">
         <p className="text-sm font-medium text-slate-500">
-          {filtered.length === 0
-            ? "No matches"
-            : `Showing ${pageStart + 1}–${pageEnd} of ${filtered.length}`}
+          {loading
+            ? "Loading…"
+            : campaigns.length === 0
+              ? "No matches"
+              : `Showing ${(page - 1) * PAGE_SIZE + 1}–${
+                  (page - 1) * PAGE_SIZE + campaigns.length
+                } of ${data?.total ?? 0}`}
         </p>
         <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
           <button
@@ -499,31 +394,72 @@ export default function CampaignsPage() {
       </div>
 
       {/* ── Results ── */}
-      {filtered.length === 0 ? (
-        <EmptyState onReset={resetFilters} />
+      {error ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-700">
+          Couldn&apos;t load campaigns — {error}.{" "}
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="underline"
+          >
+            Retry
+          </button>
+        </div>
+      ) : loading ? (
+        view === "grid" ? (
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: PAGE_SIZE }).map((_, i) => (
+              <SkeletonCampaignCard key={i} />
+            ))}
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card">
+            <table className="min-w-full text-sm">
+              <tbody>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <SkeletonTableRow key={i} cols={10} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : campaigns.length === 0 ? (
+        <EmptyState
+          icon={Megaphone}
+          title={filtersActive ? "No campaigns found" : "No campaigns yet"}
+          description={
+            filtersActive
+              ? "Try adjusting your filters or clearing them to see all campaigns."
+              : "Connect an ad account in Settings, then click Sync to pull your existing campaigns into AdGenius."
+          }
+          action={
+            filtersActive
+              ? { label: "Clear filters", onClick: resetFilters, icon: RotateCcw }
+              : {
+                  label: "Connect Ad Account",
+                  onClick: () =>
+                    (window.location.href = "/settings?tab=integrations"),
+                  icon: Plus,
+                }
+          }
+        />
       ) : view === "grid" ? (
         <div className="grid grid-cols-1 gap-5 animate-in stagger-5 md:grid-cols-2 xl:grid-cols-3">
-          {pageRows.map((c) => (
-            <CampaignCard key={c.id} c={c} />
+          {campaigns.map((c) => (
+            <CampaignCard key={c.id} c={c} onMutate={refetchAll} />
           ))}
         </div>
       ) : (
-        <CampaignListTable rows={pageRows} />
+        <CampaignListTable rows={campaigns} onMutate={refetchAll} />
       )}
 
       {/* ── Pagination ── */}
-      {filtered.length > 0 && (
+      {!loading && campaigns.length > 0 && totalPages > 1 && (
         <div className="flex items-center justify-between animate-in stagger-6">
           <p className="text-xs text-slate-500">
-            Showing{" "}
-            <span className="font-semibold text-slate-700">
-              {pageStart + 1}–{pageEnd}
-            </span>{" "}
-            of{" "}
-            <span className="font-semibold text-slate-700">
-              {filtered.length}
-            </span>{" "}
-            campaigns
+            Page{" "}
+            <span className="font-semibold text-slate-700">{page}</span> of{" "}
+            <span className="font-semibold text-slate-700">{totalPages}</span>
           </p>
           <div className="flex items-center gap-1">
             <button
@@ -534,9 +470,6 @@ export default function CampaignsPage() {
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="px-2 text-xs font-semibold text-slate-600">
-              Page {page} of {totalPages}
-            </span>
             <button
               type="button"
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
@@ -551,7 +484,12 @@ export default function CampaignsPage() {
 
       <CreateCampaignModal
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={() => {
+          setModalOpen(false);
+          setModalPrefill(null);
+        }}
+        onCreated={refetchAll}
+        prefill={modalPrefill}
       />
     </div>
   );
@@ -564,7 +502,7 @@ function StatChip({
   dot,
 }: {
   label: string;
-  value: number;
+  value: string | number;
   dot?: "active" | "paused" | "draft" | "ended";
 }) {
   return (
@@ -612,11 +550,83 @@ function Select({
 }
 
 /* ───────────────────────────────────────── */
-function CampaignCard({ c }: { c: Campaign }) {
-  const plat = PLATFORM_META[c.platform];
+function useCampaignActions(c: Campaign, onMutate: () => void) {
+  const client = useApiClient();
+  const router = useRouter();
+  const [busy, setBusy] = useState<null | "toggle" | "duplicate" | "delete">(null);
+
+  const wrap = async (
+    kind: "toggle" | "duplicate" | "delete",
+    fn: () => Promise<unknown>
+  ) => {
+    setBusy(kind);
+    try {
+      await fn();
+      onMutate();
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const toggleStatus = () => {
+    const next: CampaignStatus =
+      c.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
+    return wrap("toggle", () =>
+      client.updateCampaign(c.id, { status: next })
+    );
+  };
+
+  const duplicate = () =>
+    wrap("duplicate", () =>
+      client.createCampaign({
+        name: `${c.name} (copy)`,
+        platform: c.platform,
+        objective: c.objective,
+        budget: Number(c.budget) || 0,
+        budgetType: c.budgetType,
+        startDate: c.startDate ?? null,
+        endDate: c.endDate ?? null,
+        adAccountId: c.adAccountId,
+        targeting: c.targeting,
+      })
+    );
+
+  const remove = () => {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Delete "${c.name}"? This also removes its metrics and creative links. This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    return wrap("delete", () => client.deleteCampaign(c.id));
+  };
+
+  const edit = () => router.push(`/campaigns/${c.id}`);
+
+  return { busy, toggleStatus, duplicate, remove, edit };
+}
+
+function CampaignCard({
+  c,
+  onMutate,
+}: {
+  c: Campaign;
+  onMutate: () => void;
+}) {
+  const plat = PLATFORM_META[c.platform] ?? PLATFORM_META.META;
   const st = STATUS_META[c.status];
-  const pct = c.budget ? Math.min(100, Math.round((c.spend / c.budget) * 100)) : 0;
-  const remaining = daysRemaining(c.endDate);
+  const latest = c.metrics?.[0];
+  const budget = Number(c.budget) || 0;
+  const spend = latest ? Number(latest.spend) : 0;
+  const roas = latest ? Number(latest.roas) : 0;
+  const ctr = latest ? Number(latest.ctr) * 100 : 0;
+  const pct = budget > 0 ? Math.min(100, Math.round((spend / budget) * 100)) : 0;
+  const actions = useCampaignActions(c, onMutate);
 
   return (
     <Link
@@ -651,11 +661,9 @@ function CampaignCard({ c }: { c: Campaign }) {
             Spend
           </p>
           <p className="mt-0.5 text-sm font-bold text-slate-900">
-            {fmtMoney(c.spend)}
+            {spend === 0 ? "—" : fmtMoney(spend)}
           </p>
-          <p className="text-[10px] text-slate-400">
-            of {fmtMoney(c.budget)} budget
-          </p>
+          <p className="text-[10px] text-slate-400">of {fmtMoney(budget)}</p>
           <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-slate-100">
             <div
               className={clsx(
@@ -677,16 +685,16 @@ function CampaignCard({ c }: { c: Campaign }) {
           <p
             className={clsx(
               "mt-0.5 text-sm font-bold",
-              c.roas === 0
+              roas === 0
                 ? "text-slate-400"
-                : c.roas >= 2
+                : roas >= 2
                   ? "text-emerald-600"
-                  : c.roas >= 1
+                  : roas >= 1
                     ? "text-amber-600"
                     : "text-rose-600"
             )}
           >
-            {c.roas.toFixed(2)}x
+            {roas === 0 ? "—" : `${roas.toFixed(2)}x`}
           </p>
         </div>
         <div>
@@ -696,52 +704,63 @@ function CampaignCard({ c }: { c: Campaign }) {
           <p
             className={clsx(
               "mt-0.5 text-sm font-bold",
-              c.ctr === 0
+              ctr === 0
                 ? "text-slate-400"
-                : c.ctr > 2
+                : ctr > 2
                   ? "text-emerald-600"
                   : "text-amber-600"
             )}
           >
-            {c.ctr.toFixed(2)}%
+            {ctr === 0 ? "—" : `${ctr.toFixed(2)}%`}
           </p>
         </div>
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-            <Calendar className="h-2.5 w-2.5" />
-            {c.startDate}
-          </span>
-          {remaining > 0 && c.status !== "ENDED" && (
-            <span
-              className={clsx(
-                "rounded-md px-2 py-0.5 text-[10px] font-semibold",
-                remaining < 7
-                  ? "bg-rose-50 text-rose-700"
-                  : "bg-emerald-50 text-emerald-700"
-              )}
-            >
-              {remaining}d remaining
+          {c.startDate && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+              <Calendar className="h-2.5 w-2.5" />
+              {c.startDate.slice(0, 10)}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
-          <CardIconBtn label="Edit">
+        <div
+          className={clsx(
+            "flex items-center gap-1 transition",
+            actions.busy ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          )}
+        >
+          <CardIconBtn label="Edit" onClick={actions.edit}>
             <Pencil className="h-3.5 w-3.5" />
           </CardIconBtn>
-          <CardIconBtn label={c.status === "ACTIVE" ? "Pause" : "Resume"}>
+          <CardIconBtn
+            label={c.status === "ACTIVE" ? "Pause" : "Resume"}
+            onClick={actions.toggleStatus}
+            loading={actions.busy === "toggle"}
+            disabled={!!actions.busy}
+          >
             {c.status === "ACTIVE" ? (
               <PauseCircle className="h-3.5 w-3.5" />
             ) : (
               <PlayCircle className="h-3.5 w-3.5" />
             )}
           </CardIconBtn>
-          <CardIconBtn label="Duplicate">
+          <CardIconBtn
+            label="Duplicate"
+            onClick={actions.duplicate}
+            loading={actions.busy === "duplicate"}
+            disabled={!!actions.busy}
+          >
             <Copy className="h-3.5 w-3.5" />
           </CardIconBtn>
-          <CardIconBtn label="Delete" tone="danger">
+          <CardIconBtn
+            label="Delete"
+            tone="danger"
+            onClick={actions.remove}
+            loading={actions.busy === "delete"}
+            disabled={!!actions.busy}
+          >
             <Trash2 className="h-3.5 w-3.5" />
           </CardIconBtn>
         </div>
@@ -754,34 +773,48 @@ function CardIconBtn({
   children,
   label,
   tone = "default",
+  onClick,
+  loading,
+  disabled,
 }: {
   children: React.ReactNode;
   label: string;
   tone?: "default" | "danger";
+  onClick?: () => void;
+  loading?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
+      disabled={disabled}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
+        onClick?.();
       }}
       className={clsx(
-        "flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition",
+        "flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition disabled:cursor-not-allowed disabled:opacity-50",
         tone === "danger"
           ? "hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600"
           : "hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
       )}
     >
-      {children}
+      {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : children}
     </button>
   );
 }
 
 /* ───────────────────────────────────────── */
-function CampaignListTable({ rows }: { rows: Campaign[] }) {
+function CampaignListTable({
+  rows,
+  onMutate,
+}: {
+  rows: Campaign[];
+  onMutate: () => void;
+}) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card animate-in stagger-5">
       <div className="overflow-x-auto">
@@ -802,105 +835,9 @@ function CampaignListTable({ rows }: { rows: Campaign[] }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((c) => {
-              const plat = PLATFORM_META[c.platform];
-              const st = STATUS_META[c.status];
-              return (
-                <tr
-                  key={c.id}
-                  className="group border-t border-slate-50 transition hover:bg-slate-50/70"
-                >
-                  <td className="max-w-[200px] px-5 py-3.5">
-                    <Link
-                      href={`/campaigns/${c.id}`}
-                      className="block truncate text-sm font-semibold text-slate-900 hover:text-primary"
-                    >
-                      {c.name}
-                    </Link>
-                  </td>
-                  <td className="py-3.5">
-                    <span className={clsx("pill", plat.bg, plat.text)}>
-                      {plat.label}
-                    </span>
-                  </td>
-                  <td className="py-3.5">
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className={clsx("status-dot", st.dot)} />
-                      <span className={clsx("text-xs font-semibold", st.cls)}>
-                        {st.label}
-                      </span>
-                    </span>
-                  </td>
-                  <td className="max-w-[160px] py-3.5">
-                    <span className="block truncate text-xs text-slate-600">
-                      {c.objective}
-                    </span>
-                  </td>
-                  <td className="py-3.5 text-xs font-semibold text-slate-700">
-                    {fmtMoney(c.budget)}
-                  </td>
-                  <td className="py-3.5 text-xs font-semibold text-slate-700">
-                    {fmtMoney(c.spend)}
-                  </td>
-                  <td className="py-3.5">
-                    <span
-                      className={clsx(
-                        "text-sm font-bold",
-                        c.roas === 0
-                          ? "text-slate-400"
-                          : c.roas >= 2
-                            ? "text-emerald-600"
-                            : "text-rose-600"
-                      )}
-                    >
-                      {c.roas.toFixed(2)}x
-                    </span>
-                  </td>
-                  <td className="py-3.5">
-                    <span
-                      className={clsx(
-                        "text-sm font-semibold",
-                        c.ctr === 0
-                          ? "text-slate-400"
-                          : c.ctr > 2
-                            ? "text-emerald-600"
-                            : "text-amber-600"
-                      )}
-                    >
-                      {c.ctr.toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="py-3.5 text-xs font-medium text-slate-700">
-                    {fmtCompact(c.impressions)}
-                  </td>
-                  <td className="py-3.5 text-xs text-slate-500">
-                    {c.startDate}
-                  </td>
-                  <td className="px-5 py-3.5 text-right">
-                    <div className="inline-flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
-                      <CardIconBtn label="Edit">
-                        <Pencil className="h-3.5 w-3.5" />
-                      </CardIconBtn>
-                      <CardIconBtn
-                        label={c.status === "ACTIVE" ? "Pause" : "Resume"}
-                      >
-                        {c.status === "ACTIVE" ? (
-                          <PauseCircle className="h-3.5 w-3.5" />
-                        ) : (
-                          <PlayCircle className="h-3.5 w-3.5" />
-                        )}
-                      </CardIconBtn>
-                      <CardIconBtn label="Duplicate">
-                        <Copy className="h-3.5 w-3.5" />
-                      </CardIconBtn>
-                      <CardIconBtn label="Delete" tone="danger">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </CardIconBtn>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+            {rows.map((c) => (
+              <CampaignListRow key={c.id} c={c} onMutate={onMutate} />
+            ))}
           </tbody>
         </table>
       </div>
@@ -908,27 +845,122 @@ function CampaignListTable({ rows }: { rows: Campaign[] }) {
   );
 }
 
-/* ───────────────────────────────────────── */
-function EmptyState({ onReset }: { onReset: () => void }) {
+function CampaignListRow({
+  c,
+  onMutate,
+}: {
+  c: Campaign;
+  onMutate: () => void;
+}) {
+  const actions = useCampaignActions(c, onMutate);
+  const plat = PLATFORM_META[c.platform] ?? PLATFORM_META.META;
+  const st = STATUS_META[c.status];
+  const latest = c.metrics?.[0];
+  const spend = latest ? Number(latest.spend) : 0;
+  const roas = latest ? Number(latest.roas) : 0;
+  const ctr = latest ? Number(latest.ctr) * 100 : 0;
+
   return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-20 text-center animate-in">
-      <div className="relative mb-5">
-        <div className="absolute inset-0 rounded-3xl bg-primary/10 blur-2xl" />
-        <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-glow">
-          <Inbox className="h-7 w-7" />
+    <tr className="group border-t border-slate-50 transition hover:bg-slate-50/70">
+      <td className="max-w-[200px] px-5 py-3.5">
+        <Link
+          href={`/campaigns/${c.id}`}
+          className="block truncate text-sm font-semibold text-slate-900 hover:text-primary"
+        >
+          {c.name}
+        </Link>
+      </td>
+      <td className="py-3.5">
+        <span className={clsx("pill", plat.bg, plat.text)}>{plat.label}</span>
+      </td>
+      <td className="py-3.5">
+        <span className="inline-flex items-center gap-1.5">
+          <span className={clsx("status-dot", st.dot)} />
+          <span className={clsx("text-xs font-semibold", st.cls)}>{st.label}</span>
+        </span>
+      </td>
+      <td className="max-w-[160px] py-3.5">
+        <span className="block truncate text-xs text-slate-600">{c.objective}</span>
+      </td>
+      <td className="py-3.5 text-xs font-semibold text-slate-700">
+        {fmtMoney(Number(c.budget) || 0)}
+      </td>
+      <td className="py-3.5 text-xs font-semibold text-slate-700">
+        {spend === 0 ? "—" : fmtMoney(spend)}
+      </td>
+      <td className="py-3.5">
+        <span
+          className={clsx(
+            "text-sm font-bold",
+            roas === 0
+              ? "text-slate-400"
+              : roas >= 2
+                ? "text-emerald-600"
+                : "text-rose-600"
+          )}
+        >
+          {roas === 0 ? "—" : `${roas.toFixed(2)}x`}
+        </span>
+      </td>
+      <td className="py-3.5">
+        <span
+          className={clsx(
+            "text-sm font-semibold",
+            ctr === 0
+              ? "text-slate-400"
+              : ctr > 2
+                ? "text-emerald-600"
+                : "text-amber-600"
+          )}
+        >
+          {ctr === 0 ? "—" : `${ctr.toFixed(2)}%`}
+        </span>
+      </td>
+      <td className="py-3.5 text-xs font-medium text-slate-700">
+        {latest ? fmtCompact(latest.impressions) : "—"}
+      </td>
+      <td className="py-3.5 text-xs text-slate-500">
+        {c.startDate ? c.startDate.slice(0, 10) : "—"}
+      </td>
+      <td className="px-5 py-3.5 text-right">
+        <div className="inline-flex items-center justify-end gap-1">
+          <CardIconBtn
+            label={c.status === "ACTIVE" ? "Pause" : "Resume"}
+            onClick={actions.toggleStatus}
+            loading={actions.busy === "toggle"}
+            disabled={!!actions.busy}
+          >
+            {c.status === "ACTIVE" ? (
+              <PauseCircle className="h-3.5 w-3.5" />
+            ) : (
+              <PlayCircle className="h-3.5 w-3.5" />
+            )}
+          </CardIconBtn>
+          <CardIconBtn
+            label="Duplicate"
+            onClick={actions.duplicate}
+            loading={actions.busy === "duplicate"}
+            disabled={!!actions.busy}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </CardIconBtn>
+          <CardIconBtn
+            label="Delete"
+            tone="danger"
+            onClick={actions.remove}
+            loading={actions.busy === "delete"}
+            disabled={!!actions.busy}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </CardIconBtn>
+          <Link
+            href={`/campaigns/${c.id}`}
+            className="ml-2 text-xs font-semibold text-primary hover:underline"
+          >
+            Open →
+          </Link>
         </div>
-        <div className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-md">
-          <Sparkles className="h-3 w-3 text-primary" />
-        </div>
-      </div>
-      <h4 className="text-base font-bold text-slate-900">No campaigns found</h4>
-      <p className="mt-1 max-w-xs text-sm text-slate-500">
-        Try adjusting your filters or search query.
-      </p>
-      <button type="button" onClick={onReset} className="btn-brand mt-5">
-        <RotateCcw className="h-4 w-4" />
-        Clear Filters
-      </button>
-    </div>
+      </td>
+    </tr>
   );
 }

@@ -67,6 +67,9 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       where.name = { contains: search.trim(), mode: "insensitive" };
     }
 
+    const includeLatestMetrics =
+      req.query.includeLatestMetrics === "true";
+
     const [total, campaigns] = await Promise.all([
       prisma.campaign.count({ where }),
       prisma.campaign.findMany({
@@ -74,6 +77,14 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
         include: {
           adAccount: { select: { platform: true, accountName: true } },
           _count: { select: { metrics: true } },
+          ...(includeLatestMetrics
+            ? {
+                metrics: {
+                  orderBy: { date: "desc" as const },
+                  take: 1,
+                },
+              }
+            : {}),
         },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,

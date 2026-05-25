@@ -1,16 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Toaster } from "react-hot-toast";
+import { Loader2 } from "lucide-react";
 import Sidebar from "@/components/layout/Sidebar";
 import Header from "@/components/layout/Header";
+import { useApi } from "@/hooks/useApi";
 
+/**
+ * Workspace gate. Every dashboard route fans out to API calls that require
+ * a workspace; without one, every Sidebar/Header/page fetch returns
+ * NO_WORKSPACE. Cheaper UX to detect once at the layout level and bounce
+ * to `/onboarding` before the children mount.
+ */
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  const me = useApi((c) => c.getMe(), []);
+
+  useEffect(() => {
+    if (!me.loading && me.data && !me.data.workspace) {
+      router.replace("/onboarding");
+    }
+  }, [me.loading, me.data, router]);
+
+  // While checking, or while the redirect is pending, show a centered
+  // spinner instead of mounting the dashboard chrome (which would fire
+  // dozens of NO_WORKSPACE requests).
+  if (me.loading || (me.data && !me.data.workspace)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50/60">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50/60 text-slate-900">

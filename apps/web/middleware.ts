@@ -3,15 +3,16 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 /**
  * Truly public routes — accessible without a Clerk session.
  *
- * - `/`             marketing landing
- * - `/sign-in/*`    Clerk sign-in pages
- * - `/sign-up/*`    Clerk sign-up pages
- * - `/api/webhooks` external services posting to us (Stripe, Clerk, etc.)
+ * - `/`                     marketing landing
+ * - `/sign-in/*`            Clerk sign-in pages
+ * - `/sign-up/*`            Clerk sign-up pages
+ * - `/api/webhooks/*`       external services posting to us (Stripe, Clerk, etc.)
  *
- * Everything else (including /onboarding if we ever reintroduce it,
- * /connect/done, /dashboard, etc.) requires a signed-in user. Workspaces
- * are auto-created by the API on first authenticated request, so there is
- * no separate onboarding step today.
+ * Signed-in but workspace-less users land on `/onboarding`. That route
+ * REQUIRES auth (so it stays out of this matcher) but does NOT require a
+ * workspace — the workspace gate lives in the dashboard layout
+ * (`apps/web/app/(dashboard)/layout.tsx`) which redirects to `/onboarding`
+ * when `getMe()` returns `workspace: null`.
  */
 const isPublicRoute = createRouteMatcher([
   "/",

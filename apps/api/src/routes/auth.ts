@@ -34,24 +34,30 @@ router.get("/me", async (req: Request, res: Response, next: NextFunction) => {
 
 /**
  * POST /auth/complete-onboarding
+ *
+ * Idempotent: if the user already owns/belongs to a workspace, return it
+ * (200) instead of erroring — the client can safely retry without seeing
+ * spurious failures.
  */
 router.post(
   "/complete-onboarding",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const userId = req.dbUserId!;
-      const { workspaceName, industry: _industry, plan } = req.body ?? {};
+      const { workspaceName, industry, companySize, plan } = req.body ?? {};
+
+      // If the user already has a workspace, hand it back — don't create a
+      // second one and don't surface an error.
+      const existing = await getUserWorkspace(userId);
+      if (existing) {
+        const member = await prisma.workspaceMember.findFirst({
+          where: { workspaceId: existing.id, userId },
+        });
+        return res.status(200).json({ workspace: existing, member });
+      }
 
       if (typeof workspaceName !== "string" || workspaceName.trim() === "") {
         return res.status(400).json({ error: "workspaceName is required" });
-      }
-
-      const existing = await getUserWorkspace(userId);
-      if (existing) {
-        return res.status(409).json({
-          error: "Onboarding already completed",
-          workspace: existing,
-        });
       }
 
       const validPlan =
@@ -64,6 +70,14 @@ router.post(
           name: workspaceName.trim(),
           ownerId: userId,
           plan: validPlan,
+          industry:
+            typeof industry === "string" && industry.trim()
+              ? industry.trim()
+              : null,
+          companySize:
+            typeof companySize === "string" && companySize.trim()
+              ? companySize.trim()
+              : null,
         },
       });
       const member = await prisma.workspaceMember.create({
@@ -73,8 +87,6 @@ router.post(
           role: "OWNER",
         },
       });
-
-      // TODO: persist `industry` on workspace once schema is extended.
 
       res.status(201).json({ workspace, member });
     } catch (err) {

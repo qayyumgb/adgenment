@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import clsx from "clsx";
 import {
   Sparkles,
@@ -24,6 +24,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import ConnectModal from "@/components/connect/ConnectModal";
+import { useApi } from "@/hooks/useApi";
+import { useUser } from "@clerk/nextjs";
 
 type NavLink = {
   kind: "link";
@@ -123,12 +125,19 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-const PLATFORMS = [
-  { name: "Meta", color: "#1877F2", initial: "M" },
-  { name: "Google", color: "#EA4335", initial: "G" },
-  { name: "TikTok", color: "#010101", initial: "T" },
-  { name: "LinkedIn", color: "#0A66C2", initial: "in" },
-];
+const PLATFORM_META: Record<
+  string,
+  { name: string; color: string; initial: string }
+> = {
+  META: { name: "Meta", color: "#1877F2", initial: "M" },
+  GOOGLE: { name: "Google", color: "#EA4335", initial: "G" },
+  TIKTOK: { name: "TikTok", color: "#010101", initial: "T" },
+  LINKEDIN: { name: "LinkedIn", color: "#0A66C2", initial: "in" },
+  YOUTUBE: { name: "YouTube", color: "#FF0000", initial: "Y" },
+  SNAPCHAT: { name: "Snapchat", color: "#FFFC00", initial: "S" },
+  PINTEREST: { name: "Pinterest", color: "#E60023", initial: "P" },
+  X: { name: "X", color: "#0f172a", initial: "X" },
+};
 
 interface SidebarProps {
   collapsed: boolean;
@@ -137,7 +146,46 @@ interface SidebarProps {
 
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const { user } = useUser();
   const [connectOpen, setConnectOpen] = useState(false);
+
+  const displayName =
+    user?.fullName ||
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
+    user?.username ||
+    user?.primaryEmailAddress?.emailAddress?.split("@")[0] ||
+    "Account";
+  const displayEmail = user?.primaryEmailAddress?.emailAddress ?? "";
+  const initials = (() => {
+    const src = displayName;
+    return (
+      src
+        .split(/\s+|@/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p[0]?.toUpperCase())
+        .join("") || "?"
+    );
+  })();
+
+  // Live counts + connected platforms — fed into nav badges + bottom strip
+  const campaignsQ = useApi(
+    (client) => client.getCampaigns({ limit: "1" }),
+    []
+  );
+  const adAccountsQ = useApi((client) => client.getAdAccounts(), []);
+
+  const campaignBadge = campaignsQ.data?.total ?? 0;
+  const connectedPlatforms = useMemo(() => {
+    const seen = new Set<string>();
+    return (adAccountsQ.data ?? [])
+      .filter((a) => a.isActive)
+      .filter((a) => {
+        if (seen.has(a.platform)) return false;
+        seen.add(a.platform);
+        return true;
+      });
+  }, [adAccountsQ.data]);
 
   const isActive = (href: string) =>
     pathname === href || pathname?.startsWith(href + "/");
@@ -278,15 +326,24 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                         <>
                           <span className="flex-1 truncate">{item.label}</span>
                           {item.badge &&
-                            (item.badge.variant === "new" ? (
-                              <span className="rounded-md bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary-300">
-                                {item.badge.text}
-                              </span>
-                            ) : (
-                              <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
-                                {item.badge.text}
-                              </span>
-                            ))}
+                            (() => {
+                              // Live override: Campaigns badge shows real count.
+                              const text =
+                                item.kind === "link" &&
+                                item.href === "/campaigns" &&
+                                item.badge.variant === "count"
+                                  ? String(campaignBadge)
+                                  : item.badge.text;
+                              return item.badge.variant === "new" ? (
+                                <span className="rounded-md bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary-300">
+                                  {text}
+                                </span>
+                              ) : (
+                                <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
+                                  {text}
+                                </span>
+                              );
+                            })()}
                         </>
                       )}
                     </>
@@ -347,25 +404,53 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             Connected
           </div>
           <div className="flex items-center gap-1.5">
-            {PLATFORMS.map((p) => (
+            {adAccountsQ.loading ? (
+              <span className="text-[10px] font-medium text-slate-500">
+                Loading…
+              </span>
+            ) : connectedPlatforms.length === 0 ? (
               <button
-                key={p.name}
                 type="button"
-                title={p.name}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-[10px] font-bold text-white shadow-sm transition hover:scale-110"
-                style={{ backgroundColor: p.color }}
+                onClick={() => setConnectOpen(true)}
+                className="text-[10px] font-semibold text-slate-500 transition hover:text-primary"
               >
-                {p.initial}
+                No platforms connected — connect now →
               </button>
-            ))}
-            <button
-              type="button"
-              title="Connect platform"
-              onClick={() => setConnectOpen(true)}
-              className="flex h-7 w-7 items-center justify-center rounded-md border border-dashed border-white/15 text-slate-500 transition hover:border-primary hover:text-primary"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
+            ) : (
+              connectedPlatforms.map((acc) => {
+                const meta = PLATFORM_META[acc.platform] ?? {
+                  name: acc.platform,
+                  color: "#475569",
+                  initial: acc.platform.charAt(0),
+                };
+                return (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    title={`${meta.name} · ${acc.accountName}`}
+                    onClick={() => setConnectOpen(true)}
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-[10px] font-bold text-white shadow-sm transition hover:scale-110"
+                    style={{
+                      backgroundColor: meta.color,
+                      color:
+                        acc.platform === "SNAPCHAT" ? "#0f172a" : "#ffffff",
+                    }}
+                  >
+                    {meta.initial}
+                  </button>
+                );
+              })
+            )}
+            {connectedPlatforms.length < 6 && (
+              <button
+                type="button"
+                title="Connect platform"
+                onClick={() => setConnectOpen(true)}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-dashed border-white/15 text-slate-500 transition hover:border-primary hover:text-primary"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -377,17 +462,17 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
       >
         {collapsed ? (
           <div className="flex justify-center">
-            <UserAvatar />
+            <UserAvatar initials={initials} avatarUrl={user?.imageUrl} />
           </div>
         ) : (
           <div className="flex items-center gap-2.5 rounded-xl px-2 py-1.5 transition hover:bg-white/[0.04]">
-            <UserAvatar />
+            <UserAvatar initials={initials} avatarUrl={user?.imageUrl} />
             <div className="min-w-0 flex-1 leading-tight">
               <div className="truncate text-xs font-semibold text-white">
-                Alex Carter
+                {displayName}
               </div>
               <div className="truncate text-[10px] text-slate-400">
-                alex@adgenius.ai
+                {displayEmail}
               </div>
             </div>
             <button
@@ -417,10 +502,25 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   );
 }
 
-function UserAvatar() {
+function UserAvatar({
+  initials,
+  avatarUrl,
+}: {
+  initials: string;
+  avatarUrl?: string;
+}) {
   return (
     <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-xs font-bold text-white shadow-md ring-2 ring-white/10">
-      AC
+      {avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={avatarUrl}
+          alt={initials}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        initials
+      )}
       <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#0f172a] bg-emerald-400" />
     </div>
   );

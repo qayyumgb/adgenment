@@ -18,8 +18,19 @@ import {
   ArrowRight,
   Loader2,
   RefreshCw,
+  Palette,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { useApi } from "@/hooks/useApi";
+import { useApiClient } from "@/lib/api";
+import type {
+  Creative as ApiCreative,
+  CreativeStatus as ApiCreativeStatus,
+  Platform as ApiPlatform,
+} from "@/lib/api";
+import { SkeletonCard } from "@/components/ui/Skeleton";
+import EmptyState from "@/components/ui/EmptyState";
 
 /* ───────────────────────────────────────── */
 /* Types & Mock Data                          */
@@ -43,155 +54,83 @@ type Creative = {
   createdAt: string;
 };
 
-const CREATIVES: Creative[] = [
-  {
-    id: "cr-1",
-    name: "Summer Sale Hero",
-    type: "IMAGE",
-    platforms: ["META", "GOOGLE"],
-    status: "ACTIVE",
-    aiGenerated: true,
-    ctr: 3.2,
-    impressions: 124000,
-    gradient: "from-indigo-500 via-purple-500 to-pink-500",
-    createdAt: "2026-05-20",
-  },
-  {
-    id: "cr-2",
-    name: "Tide+ Product Demo",
-    type: "VIDEO",
-    platforms: ["TIKTOK"],
-    status: "ACTIVE",
-    aiGenerated: true,
-    ctr: 4.1,
-    impressions: 96000,
-    gradient: "from-emerald-500 via-teal-500 to-cyan-500",
-    createdAt: "2026-05-18",
-  },
-  {
-    id: "cr-3",
-    name: "Best Sellers Carousel",
-    type: "CAROUSEL",
-    platforms: ["META"],
-    status: "ACTIVE",
-    aiGenerated: false,
-    ctr: 2.4,
-    impressions: 78000,
-    gradient: "from-amber-400 via-orange-500 to-rose-500",
-    createdAt: "2026-05-15",
-  },
-  {
-    id: "cr-4",
-    name: "Testimonial · Sarah",
-    type: "TEXT",
-    platforms: ["LINKEDIN"],
-    status: "ACTIVE",
-    aiGenerated: false,
-    ctr: 1.8,
-    impressions: 18400,
-    copy: "AdGenius helped us cut our CAC by 38% in just 6 weeks. Highly recommend.",
-    gradient: "",
-    createdAt: "2026-05-12",
-  },
-  {
-    id: "cr-5",
-    name: "Black Friday Tease",
-    type: "IMAGE",
-    platforms: ["META", "TIKTOK"],
-    status: "DRAFT",
-    aiGenerated: true,
-    ctr: 0,
+// Gradient palette assigned deterministically per creative id so the
+// preview tile colors stay stable across renders.
+const GRADIENTS = [
+  "from-indigo-500 via-purple-500 to-pink-500",
+  "from-emerald-500 via-teal-500 to-cyan-500",
+  "from-amber-400 via-orange-500 to-rose-500",
+  "from-slate-900 via-purple-900 to-indigo-900",
+  "from-violet-500 via-fuchsia-500 to-pink-500",
+  "from-rose-400 via-pink-500 to-fuchsia-600",
+  "from-blue-500 via-indigo-500 to-purple-600",
+  "from-cyan-500 via-blue-500 to-indigo-600",
+  "from-orange-400 via-red-500 to-pink-600",
+] as const;
+
+function hashId(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) {
+    h = (h * 31 + id.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+function gradientFor(id: string): string {
+  return GRADIENTS[hashId(id) % GRADIENTS.length];
+}
+
+function extractCopy(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (content && typeof content === "object") {
+    const obj = content as Record<string, unknown>;
+    if (typeof obj.text === "string") return obj.text;
+    if (typeof obj.copy === "string") return obj.copy;
+    if (Array.isArray(obj.headlines) && typeof obj.headlines[0] === "string") {
+      return obj.headlines[0] as string;
+    }
+    if (Array.isArray(obj.primary_texts) && typeof obj.primary_texts[0] === "string") {
+      return obj.primary_texts[0] as string;
+    }
+  }
+  return undefined;
+}
+
+function mapApiStatus(s: ApiCreativeStatus): Status {
+  switch (s) {
+    case "APPROVED":
+      return "ACTIVE";
+    case "REJECTED":
+    case "ARCHIVED":
+      return "PAUSED";
+    case "DRAFT":
+    default:
+      return "DRAFT";
+  }
+}
+
+function mapApiCreative(c: ApiCreative): Creative {
+  return {
+    id: c.id,
+    name: c.name,
+    type: c.type,
+    platforms: c.campaign?.platform
+      ? ([c.campaign.platform] as ApiPlatform[]).filter(
+          (p): p is Platform =>
+            p === "META" || p === "GOOGLE" || p === "TIKTOK" || p === "LINKEDIN"
+        )
+      : [],
+    status: mapApiStatus(c.status),
+    aiGenerated: c.aiGenerated,
+    ctr: 0, // not joined to campaign metrics today
     impressions: 0,
-    gradient: "from-slate-900 via-purple-900 to-indigo-900",
-    createdAt: "2026-05-22",
-  },
-  {
-    id: "cr-6",
-    name: "Founder Story 15s",
-    type: "VIDEO",
-    platforms: ["LINKEDIN", "META"],
-    status: "PAUSED",
-    aiGenerated: true,
-    ctr: 1.4,
-    impressions: 42000,
-    gradient: "from-violet-500 via-fuchsia-500 to-pink-500",
-    createdAt: "2026-05-08",
-  },
-  {
-    id: "cr-7",
-    name: "Spring Drop Lookbook",
-    type: "CAROUSEL",
-    platforms: ["META", "TIKTOK"],
-    status: "ACTIVE",
-    aiGenerated: true,
-    ctr: 3.6,
-    impressions: 188000,
-    gradient: "from-rose-400 via-pink-500 to-fuchsia-600",
-    createdAt: "2026-05-21",
-  },
-  {
-    id: "cr-8",
-    name: "Quote · Founder Vision",
-    type: "TEXT",
-    platforms: ["LINKEDIN"],
-    status: "ACTIVE",
-    aiGenerated: true,
-    ctr: 2.1,
-    impressions: 24000,
-    copy: "We don't sell software. We sell back the 12 hours per week you waste on busywork.",
-    gradient: "",
-    createdAt: "2026-05-19",
-  },
-  {
-    id: "cr-9",
-    name: "Cart Abandon Static",
-    type: "IMAGE",
-    platforms: ["META"],
-    status: "ACTIVE",
-    aiGenerated: true,
-    ctr: 4.2,
-    impressions: 64000,
-    gradient: "from-blue-500 via-indigo-500 to-purple-600",
-    createdAt: "2026-05-10",
-  },
-  {
-    id: "cr-10",
-    name: "Reel · Behind the Scenes",
-    type: "VIDEO",
-    platforms: ["META", "TIKTOK"],
-    status: "ACTIVE",
-    aiGenerated: false,
-    ctr: 3.8,
-    impressions: 142000,
-    gradient: "from-cyan-500 via-blue-500 to-indigo-600",
-    createdAt: "2026-05-14",
-  },
-  {
-    id: "cr-11",
-    name: "Holiday Catalog Sweep",
-    type: "CAROUSEL",
-    platforms: ["GOOGLE"],
-    status: "DRAFT",
-    aiGenerated: false,
-    ctr: 0,
-    impressions: 0,
-    gradient: "from-orange-400 via-red-500 to-pink-600",
-    createdAt: "2026-05-23",
-  },
-  {
-    id: "cr-12",
-    name: "Punchy CTA Headline",
-    type: "TEXT",
-    platforms: ["GOOGLE"],
-    status: "ACTIVE",
-    aiGenerated: true,
-    ctr: 5.4,
-    impressions: 41000,
-    copy: "Stop guessing. Start scaling. AdGenius optimizes 24/7 so you don't have to.",
-    gradient: "",
-    createdAt: "2026-05-16",
-  },
-];
+    copy: extractCopy(c.content),
+    gradient: gradientFor(c.id),
+    createdAt: c.createdAt.slice(0, 10),
+  };
+}
+
+// Mock data removed — creatives now fetched via useApiClient().getCreatives().
 
 const PLATFORM_BADGE: Record<
   Platform,
@@ -234,49 +173,102 @@ function formatCompact(n: number): string {
 /* ───────────────────────────────────────── */
 
 export default function CreativesPage() {
+  const apiClient = useApiClient();
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"ALL" | CreativeType>("ALL");
   const [platformFilter, setPlatformFilter] = useState<"ALL" | Platform>("ALL");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | Status>("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | ApiCreativeStatus>(
+    "ALL"
+  );
   const [sort, setSort] = useState<"NEWEST" | "CTR" | "USAGE">("NEWEST");
   const [modalOpen, setModalOpen] = useState(false);
 
-  const filtered = useMemo(() => {
-    let rows = CREATIVES.filter((c) => {
-      if (
-        search.trim() &&
-        !c.name.toLowerCase().includes(search.trim().toLowerCase())
-      ) {
-        return false;
-      }
-      if (typeFilter !== "ALL" && c.type !== typeFilter) return false;
-      if (statusFilter !== "ALL" && c.status !== statusFilter) return false;
-      if (
-        platformFilter !== "ALL" &&
-        !c.platforms.includes(platformFilter as Platform)
-      )
-        return false;
-      return true;
-    });
+  // Debounce the search input
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
-    if (sort === "NEWEST") {
-      rows = rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    } else if (sort === "CTR") {
-      rows = rows.sort((a, b) => b.ctr - a.ctr);
-    } else {
-      rows = rows.sort((a, b) => b.impressions - a.impressions);
-    }
-    return rows;
-  }, [search, typeFilter, platformFilter, statusFilter, sort]);
+  // Fetch creatives with the live filters
+  const creativesQ = useApi(
+    (client) =>
+      client.getCreatives({
+        type: typeFilter !== "ALL" ? typeFilter : undefined,
+        status: statusFilter !== "ALL" ? statusFilter : undefined,
+        platform: platformFilter !== "ALL" ? platformFilter : undefined,
+        search: debouncedSearch.trim() || undefined,
+        limit: "48",
+      }),
+    [typeFilter, statusFilter, platformFilter, debouncedSearch]
+  );
 
-  const counts = useMemo(
-    () => ({
-      total: CREATIVES.length,
-      ai: CREATIVES.filter((c) => c.aiGenerated).length,
-      active: CREATIVES.filter((c) => c.status === "ACTIVE").length,
-    }),
+  // Stats — independent counts (full workspace, not filter-scoped)
+  const statsQ = useApi(
+    (client) =>
+      Promise.all([
+        client.getCreatives({ limit: "1" }),
+        client.getCreatives({ limit: "1", status: "APPROVED" }),
+      ]).then(([all, approved]) => ({
+        total: all.total,
+        active: approved.total,
+      })),
     []
   );
+
+  // Sort client-side since the API endpoint doesn't yet expose a sort param
+  const filtered = useMemo(() => {
+    const rows = (creativesQ.data?.creatives ?? []).map(mapApiCreative);
+    if (sort === "NEWEST") {
+      rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    } else if (sort === "CTR") {
+      rows.sort((a, b) => b.ctr - a.ctr);
+    } else {
+      rows.sort((a, b) => b.impressions - a.impressions);
+    }
+    return rows;
+  }, [creativesQ.data, sort]);
+
+  const filtersActive =
+    debouncedSearch.trim() !== "" ||
+    typeFilter !== "ALL" ||
+    platformFilter !== "ALL" ||
+    statusFilter !== "ALL";
+
+  const aiCount = useMemo(
+    () =>
+      (creativesQ.data?.creatives ?? []).filter((c) => c.aiGenerated).length,
+    [creativesQ.data]
+  );
+
+  const counts = {
+    total: statsQ.data?.total ?? 0,
+    ai: aiCount,
+    active: statsQ.data?.active ?? 0,
+  };
+
+  // Called when the AI modal's "Use This Creative" button is clicked.
+  async function handleSaveAiCreative(input: {
+    type: CreativeType;
+    platform: string;
+    objective: string;
+    content: Record<string, unknown>;
+  }) {
+    try {
+      const name = `AI ${input.type.toLowerCase()} · ${input.platform} · ${new Date().toLocaleDateString()}`;
+      await apiClient.createCreative({
+        name,
+        type: input.type,
+        content: input.content,
+        aiGenerated: true,
+      });
+      toast.success("Creative saved to your library");
+      creativesQ.refetch();
+      statsQ.refetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -346,12 +338,13 @@ export default function CreativesPage() {
         />
         <FilterSelect
           value={statusFilter}
-          onChange={(v) => setStatusFilter(v as "ALL" | Status)}
+          onChange={(v) => setStatusFilter(v as "ALL" | ApiCreativeStatus)}
           options={[
             { value: "ALL", label: "All Status" },
-            { value: "ACTIVE", label: "Active" },
-            { value: "PAUSED", label: "Paused" },
             { value: "DRAFT", label: "Draft" },
+            { value: "APPROVED", label: "Approved" },
+            { value: "REJECTED", label: "Rejected" },
+            { value: "ARCHIVED", label: "Archived" },
           ]}
         />
         <FilterSelect
@@ -388,16 +381,58 @@ export default function CreativesPage() {
       </div>
 
       {/* ── Creatives grid ── */}
-      {filtered.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center animate-in">
-          <p className="text-sm font-semibold text-slate-700">
-            No creatives match your filters.
-          </p>
+      {creativesQ.error ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-700">
+          Couldn&apos;t load creatives — {creativesQ.error}.{" "}
+          <button
+            type="button"
+            onClick={() => creativesQ.refetch()}
+            className="underline"
+          >
+            Retry
+          </button>
         </div>
+      ) : creativesQ.loading ? (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <SkeletonCard key={i} className="aspect-[4/5]" />
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={Palette}
+          title={
+            filtersActive ? "No creatives match your filters" : "No creatives yet"
+          }
+          description={
+            filtersActive
+              ? "Try clearing filters to see all your creatives."
+              : "Generate your first ad creative with AI or upload one to get started."
+          }
+          action={{
+            label: filtersActive ? "Clear filters" : "Generate with AI",
+            onClick: filtersActive
+              ? () => {
+                  setSearch("");
+                  setTypeFilter("ALL");
+                  setPlatformFilter("ALL");
+                  setStatusFilter("ALL");
+                }
+              : () => setModalOpen(true),
+            icon: Sparkles,
+          }}
+        />
       ) : (
         <div className="grid grid-cols-2 gap-4 animate-in stagger-4 md:grid-cols-3 lg:grid-cols-4">
           {filtered.map((c) => (
-            <CreativeCard key={c.id} c={c} />
+            <CreativeCard
+              key={c.id}
+              c={c}
+              onDeleted={() => {
+                creativesQ.refetch();
+                statsQ.refetch();
+              }}
+            />
           ))}
         </div>
       )}
@@ -405,6 +440,7 @@ export default function CreativesPage() {
       <AIGenerateModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
+        onSave={handleSaveAiCreative}
       />
     </div>
   );
@@ -439,9 +475,37 @@ function FilterSelect({
 }
 
 /* ───────────────────────────────────────── */
-function CreativeCard({ c }: { c: Creative }) {
+function CreativeCard({
+  c,
+  onDeleted,
+}: {
+  c: Creative;
+  onDeleted: () => void;
+}) {
   const Icon = TYPE_ICON[c.type];
   const st = STATUS_META[c.status];
+  const api = useApiClient();
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (deleting) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(`Delete "${c.name}"? This cannot be undone.`)
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await api.deleteCreative(c.id);
+      toast.success("Creative deleted");
+      onDeleted();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+      setDeleting(false);
+    }
+  }
 
   return (
     <div className="group overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover">
@@ -456,6 +520,22 @@ function CreativeCard({ c }: { c: Creative }) {
             AI
           </span>
         )}
+
+        {/* Delete (hover) */}
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleting}
+          aria-label="Delete creative"
+          title="Delete creative"
+          className="absolute right-3 bottom-3 z-10 flex h-7 w-7 items-center justify-center rounded-lg bg-white/95 text-rose-600 opacity-0 shadow-sm ring-1 ring-rose-200 backdrop-blur transition group-hover:opacity-100 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {deleting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Trash2 className="h-3.5 w-3.5" />
+          )}
+        </button>
 
         {/* Type badge */}
         <span className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700 shadow-sm backdrop-blur">
@@ -645,9 +725,16 @@ const FALLBACK_COPY: CopyResult = {
 function AIGenerateModal({
   open,
   onClose,
+  onSave,
 }: {
   open: boolean;
   onClose: () => void;
+  onSave: (input: {
+    type: CreativeType;
+    platform: string;
+    objective: string;
+    content: Record<string, unknown>;
+  }) => Promise<void>;
 }) {
   const [brief, setBrief] = useState("");
   const [platform, setPlatform] = useState<Platform>("META");
@@ -938,7 +1025,22 @@ function AIGenerateModal({
               <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={async () => {
+                    if (!result) return;
+                    const typeMap: Record<CreativeKind, CreativeType> = {
+                      image: "IMAGE",
+                      video: "VIDEO",
+                      carousel: "CAROUSEL",
+                      text: "TEXT",
+                    };
+                    await onSave({
+                      type: typeMap[kind],
+                      platform,
+                      objective,
+                      content: { ...result, brief, tone },
+                    });
+                    onClose();
+                  }}
                   className="btn-brand flex-1"
                 >
                   Use This Creative

@@ -22,6 +22,21 @@ type Point = {
   roas: number;
 };
 
+export type SpendChartPoint = {
+  date: string; // YYYY-MM-DD
+  spend: number;
+  roas: number;
+};
+
+interface SpendChartProps {
+  /** Real timeseries data. If omitted, falls back to mock generated data. */
+  data?: SpendChartPoint[];
+  /** Show the 7D/30D/90D range tabs. Defaults to true when not providing data. */
+  showRangeTabs?: boolean;
+  /** Optional title override. */
+  title?: string;
+}
+
 // Deterministic pseudo-random for stable SSR output.
 function seeded(i: number, salt: number): number {
   const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
@@ -73,9 +88,31 @@ function fmtMoney(n: number) {
   });
 }
 
-export default function SpendChart() {
+export default function SpendChart({
+  data: dataProp,
+  showRangeTabs,
+  title = "Spend & ROAS",
+}: SpendChartProps = {}) {
   const [range, setRange] = useState<Range>("30D");
-  const data = useMemo(() => generateData(TAB_DAYS[range]), [range]);
+
+  // If real data is provided, use it; otherwise fall back to the mock
+  // generator (mainly for storybook / unconnected previews).
+  const data = useMemo<Point[]>(() => {
+    if (dataProp) {
+      return dataProp.map((d) => ({
+        date: d.date,
+        label: new Date(d.date + "T00:00:00Z").toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        }),
+        spend: Number(d.spend) || 0,
+        roas: Number(d.roas) || 0,
+      }));
+    }
+    return generateData(TAB_DAYS[range]);
+  }, [dataProp, range]);
+
+  const showTabs = showRangeTabs ?? !dataProp;
 
   const totals = useMemo(() => {
     const totalSpend = data.reduce((s, d) => s + d.spend, 0);
@@ -91,7 +128,7 @@ export default function SpendChart() {
     <section className="flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-base font-bold text-slate-900">Spend &amp; ROAS</h3>
+          <h3 className="text-base font-bold text-slate-900">{title}</h3>
           <p className="text-xs text-slate-500">
             {fmtMoney(totals.totalSpend)} spent ·{" "}
             <span className="font-semibold text-emerald-600">
@@ -101,23 +138,25 @@ export default function SpendChart() {
           </p>
         </div>
 
-        <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
-          {TABS.map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setRange(t)}
-              className={clsx(
-                "rounded-lg px-3 py-1.5 text-xs font-bold transition",
-                range === t
-                  ? "bg-white text-slate-900 shadow-sm"
-                  : "text-slate-500 hover:text-slate-700"
-              )}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+        {showTabs && (
+          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
+            {TABS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setRange(t)}
+                className={clsx(
+                  "rounded-lg px-3 py-1.5 text-xs font-bold transition",
+                  range === t
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                )}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="mt-4 flex items-center gap-4 text-[11px] font-medium">

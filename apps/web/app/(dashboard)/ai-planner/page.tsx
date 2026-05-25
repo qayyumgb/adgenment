@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import {
   Bot,
@@ -362,6 +363,32 @@ function PlanEmptyState() {
 
 /* ───────────────────────────────────────── */
 function GeneratedPlan({ plan }: { plan: CampaignPlan }) {
+  const router = useRouter();
+
+  function applyToCampaign() {
+    const days = Math.max(1, plan.strategy.duration_days || 1);
+    const dailyBudget = Math.round((plan.strategy.total_budget || 0) / days);
+    // Backend Platform enum is uppercase; AI may return mixed-case strings.
+    const platforms = (plan.strategy.platform ?? [])
+      .map((p) => p.toUpperCase())
+      .filter(Boolean);
+    try {
+      sessionStorage.setItem(
+        "aiPlanPrefill",
+        JSON.stringify({
+          platforms,
+          objective: plan.strategy.objective,
+          budget: dailyBudget,
+          name: plan.recommended_campaign_name,
+        })
+      );
+    } catch {
+      // sessionStorage can throw in private-mode browsers — fall back to
+      // just navigating without prefill.
+    }
+    router.push("/campaigns?new=1");
+  }
+
   const allocation = plan.budget_allocation.map((a, i) => ({
     ...a,
     color: ALLOCATION_COLORS[i % ALLOCATION_COLORS.length],
@@ -386,7 +413,7 @@ function GeneratedPlan({ plan }: { plan: CampaignPlan }) {
             </p>
           )}
         </div>
-        <button type="button" className="btn-brand">
+        <button type="button" className="btn-brand" onClick={applyToCampaign}>
           Apply to Campaign
           <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
         </button>

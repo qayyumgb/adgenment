@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import clsx from "clsx";
+import toast from "react-hot-toast";
 import {
   ArrowLeft,
   PauseCircle,
@@ -18,70 +19,44 @@ import {
   Zap,
   Eye,
   MousePointerClick,
-  Plus,
   Sparkles,
   Image as ImageIcon,
   Film,
   Layers,
   Users,
   AlertTriangle,
+  Megaphone,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import MetricCard from "@/components/dashboard/MetricCard";
-import SpendChart from "@/components/dashboard/SpendChart";
+import SpendChart, {
+  type SpendChartPoint,
+} from "@/components/dashboard/SpendChart";
+import {
+  SkeletonCard,
+  SkeletonMetricCard,
+  SkeletonChartCard,
+} from "@/components/ui/Skeleton";
+import EmptyState from "@/components/ui/EmptyState";
+import { useApi } from "@/hooks/useApi";
+import { useApiClient } from "@/lib/api";
+import type {
+  Campaign,
+  CampaignMetric,
+  CampaignStatus,
+  Platform,
+} from "@/lib/api";
 
-type Platform = "META" | "GOOGLE" | "TIKTOK" | "LINKEDIN";
-type Status = "ACTIVE" | "PAUSED" | "DRAFT" | "ENDED";
+type Tab = "overview" | "adsets" | "creatives" | "audience" | "settings";
 
-type CampaignDetail = {
-  id: string;
-  name: string;
-  objective: string;
-  platform: Platform;
-  status: Status;
-  budget: number;
-  spend: number;
-  revenue: number;
-  roas: number;
-  impressions: number;
-  clicks: number;
-  ctr: number;
-  startDate: string;
-  endDate: string;
-};
-
-const KNOWN: Record<string, Partial<CampaignDetail>> = {
-  "summer-sale-2026": {
-    name: "Summer Sale 2026",
-    objective: "Conversions · Retargeting",
-    platform: "META",
-    status: "ACTIVE",
-    budget: 5000,
-    spend: 3240,
-    revenue: 13608,
-    roas: 4.2,
-    impressions: 412000,
-    clicks: 8240,
-    ctr: 2.0,
-    startDate: "2026-04-28",
-    endDate: "2026-06-30",
-  },
-  "brand-q2": {
-    name: "Brand Awareness Q2",
-    objective: "Reach · Top of funnel",
-    platform: "GOOGLE",
-    status: "ACTIVE",
-    budget: 3500,
-    spend: 2890,
-    revenue: 8092,
-    roas: 2.8,
-    impressions: 287000,
-    clicks: 4310,
-    ctr: 1.5,
-    startDate: "2026-05-01",
-    endDate: "2026-06-15",
-  },
-};
+const TABS: { key: Tab; label: string }[] = [
+  { key: "overview", label: "Overview" },
+  { key: "adsets", label: "Ad Sets" },
+  { key: "creatives", label: "Creatives" },
+  { key: "audience", label: "Audience" },
+  { key: "settings", label: "Settings" },
+];
 
 const PLATFORM_META: Record<
   Platform,
@@ -95,10 +70,22 @@ const PLATFORM_META: Record<
     bg: "bg-[#0A66C2]/10",
     text: "text-[#0A66C2]",
   },
+  YOUTUBE: { label: "YouTube", bg: "bg-[#FF0000]/10", text: "text-[#FF0000]" },
+  SNAPCHAT: {
+    label: "Snapchat",
+    bg: "bg-[#FFFC00]/20",
+    text: "text-slate-900",
+  },
+  PINTEREST: {
+    label: "Pinterest",
+    bg: "bg-[#E60023]/10",
+    text: "text-[#E60023]",
+  },
+  X: { label: "X", bg: "bg-slate-900/[0.08]", text: "text-slate-900" },
 };
 
 const STATUS_META: Record<
-  Status,
+  CampaignStatus,
   { label: string; cls: string; dot: "active" | "paused" | "draft" | "ended" }
 > = {
   ACTIVE: { label: "Active", cls: "text-emerald-700", dot: "active" },
@@ -116,60 +103,190 @@ function fmtMoney(n: number) {
 }
 
 function fmtCompact(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000_000)
+    return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
   return n.toString();
 }
 
-type Tab = "overview" | "adsets" | "creatives" | "audience" | "settings";
-
-const TABS: { key: Tab; label: string }[] = [
-  { key: "overview", label: "Overview" },
-  { key: "adsets", label: "Ad Sets" },
-  { key: "creatives", label: "Creatives" },
-  { key: "audience", label: "Audience" },
-  { key: "settings", label: "Settings" },
-];
-
-function buildMockFromId(id: string): CampaignDetail {
-  const known = KNOWN[id];
-  const fallback: CampaignDetail = {
-    id,
-    name: id
-      .split("-")
-      .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
-      .join(" "),
-    objective: "Conversions · Custom audience",
-    platform: "META",
-    status: "ACTIVE",
-    budget: 3500,
-    spend: 2120,
-    revenue: 7420,
-    roas: 3.5,
-    impressions: 184000,
-    clicks: 3680,
-    ctr: 2.0,
-    startDate: "2026-05-01",
-    endDate: "2026-06-30",
-  };
-  return { ...fallback, ...known, id };
-}
-
 export default function CampaignDetailPage() {
   const params = useParams<{ id: string }>();
-  const id = params?.id ?? "unknown";
-  const c = useMemo(() => buildMockFromId(id), [id]);
+  const id = params?.id ?? "";
+
+  const campaignQ = useApi<Campaign>(
+    (client) => client.getCampaign(id),
+    [id]
+  );
+  const metricsQ = useApi<CampaignMetric[]>(
+    (client) => client.getCampaignMetrics(id, 30),
+    [id]
+  );
 
   const [tab, setTab] = useState<Tab>("overview");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [paused, setPaused] = useState(c.status !== "ACTIVE");
 
-  const plat = PLATFORM_META[c.platform];
-  const st = STATUS_META[paused ? "PAUSED" : c.status];
+  const c = campaignQ.data;
+  const metrics = metricsQ.data ?? [];
+
+  if (campaignQ.loading) {
+    return <DetailSkeleton />;
+  }
+
+  if (campaignQ.error || !c) {
+    return (
+      <div className="space-y-6">
+        <Link
+          href="/campaigns"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-primary"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Campaigns
+        </Link>
+        <EmptyState
+          icon={Megaphone}
+          title="Campaign not found"
+          description={
+            campaignQ.error ??
+            "This campaign doesn't exist in your workspace, or you don't have access to it."
+          }
+          action={{
+            label: "Back to Campaigns",
+            onClick: () => (window.location.href = "/campaigns"),
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <CampaignDetail
+      campaign={c}
+      metrics={metrics}
+      metricsLoading={metricsQ.loading}
+      onRefetch={() => {
+        campaignQ.refetch();
+        metricsQ.refetch();
+      }}
+      tab={tab}
+      setTab={setTab}
+      menuOpen={menuOpen}
+      setMenuOpen={setMenuOpen}
+    />
+  );
+}
+
+function DetailSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="h-6 w-32 animate-pulse rounded bg-slate-200/70" />
+      <div className="h-10 w-2/3 animate-pulse rounded bg-slate-200/70" />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <SkeletonMetricCard key={i} />
+        ))}
+      </div>
+      <SkeletonChartCard height={288} />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <SkeletonCard className="h-72" />
+        <SkeletonCard className="h-72" />
+      </div>
+    </div>
+  );
+}
+
+function CampaignDetail({
+  campaign: c,
+  metrics,
+  metricsLoading,
+  onRefetch,
+  tab,
+  setTab,
+  menuOpen,
+  setMenuOpen,
+}: {
+  campaign: Campaign;
+  metrics: CampaignMetric[];
+  metricsLoading: boolean;
+  onRefetch: () => void;
+  tab: Tab;
+  setTab: (t: Tab) => void;
+  menuOpen: boolean;
+  setMenuOpen: (b: boolean) => void;
+}) {
+  const router = useRouter();
+  const api = useApiClient();
+  const [busy, setBusy] = useState(false);
+
+  const plat = PLATFORM_META[c.platform] ?? PLATFORM_META.META;
+  const st = STATUS_META[c.status];
+
+  // Aggregate metric totals for the metric cards
+  const totals = useMemo(() => {
+    return metrics.reduce(
+      (acc, m) => {
+        acc.spend += Number(m.spend) || 0;
+        acc.revenue += Number(m.revenue) || 0;
+        acc.impressions += m.impressions;
+        acc.clicks += m.clicks;
+        acc.conversions += m.conversions;
+        return acc;
+      },
+      { spend: 0, revenue: 0, impressions: 0, clicks: 0, conversions: 0 }
+    );
+  }, [metrics]);
+  const avgRoas = totals.spend > 0 ? totals.revenue / totals.spend : 0;
+
+  const chartData = useMemo<SpendChartPoint[]>(
+    () =>
+      [...metrics]
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((m) => ({
+          date: m.date.slice(0, 10),
+          spend: Number(m.spend) || 0,
+          roas: Number(m.roas) || 0,
+        })),
+    [metrics]
+  );
+
+  async function toggleStatus() {
+    if (busy) return;
+    const nextStatus: CampaignStatus = c.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
+    setBusy(true);
+    try {
+      await api.updateCampaign(c.id, { status: nextStatus });
+      toast.success(
+        nextStatus === "ACTIVE" ? "Campaign resumed" : "Campaign paused"
+      );
+      onRefetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (busy) return;
+    if (
+      !window.confirm(
+        `Delete "${c.name}"? This removes its metrics and creatives.`
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await api.deleteCampaign(c.id);
+      toast.success("Campaign deleted");
+      router.push("/campaigns");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="animate-in stagger-1">
         <Link
           href="/campaigns"
@@ -201,28 +318,27 @@ export default function CampaignDetailPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setPaused((p) => !p)}
+              onClick={toggleStatus}
+              disabled={busy}
               className={clsx(
-                "inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-sm font-semibold transition",
-                paused
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                  : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                "inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-sm font-semibold transition disabled:opacity-60",
+                c.status === "ACTIVE"
+                  ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
               )}
             >
-              {paused ? (
-                <>
-                  <PlayCircle className="h-4 w-4" />
-                  Resume
-                </>
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : c.status === "ACTIVE" ? (
+                <PauseCircle className="h-4 w-4" />
               ) : (
-                <>
-                  <PauseCircle className="h-4 w-4" />
-                  Pause
-                </>
+                <PlayCircle className="h-4 w-4" />
               )}
+              {c.status === "ACTIVE" ? "Pause" : "Resume"}
             </button>
             <button
               type="button"
+              onClick={() => setTab("settings")}
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
             >
               <Pencil className="h-4 w-4" />
@@ -231,7 +347,7 @@ export default function CampaignDetailPage() {
             <div className="relative">
               <button
                 type="button"
-                onClick={() => setMenuOpen((v) => !v)}
+                onClick={() => setMenuOpen(!menuOpen)}
                 aria-label="More actions"
                 className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
               >
@@ -246,7 +362,17 @@ export default function CampaignDetailPage() {
                   <div className="absolute right-0 top-12 z-40 w-44 origin-top-right animate-in rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
                     <MenuItem icon={Copy} label="Duplicate" />
                     <MenuItem icon={Archive} label="Archive" />
-                    <MenuItem icon={Trash2} label="Delete" tone="danger" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        handleDelete();
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </button>
                   </div>
                 </>
               )}
@@ -255,69 +381,79 @@ export default function CampaignDetailPage() {
         </div>
       </div>
 
-      {/* ── Metric cards ── */}
+      {/* Metric cards */}
       <div className="grid grid-cols-2 gap-4 animate-in stagger-2 md:grid-cols-3 lg:grid-cols-5">
-        <MetricCard
-          title="Spend"
-          value={fmtMoney(c.spend).replace("$", "")}
-          change={8.2}
-          changeLabel="vs yesterday"
-          icon={DollarSign}
-          iconColor="#059669"
-          iconBg="rgba(16, 185, 129, 0.12)"
-          trend="up"
-          prefix="$"
-          sparklineData={[280, 310, 340, 320, 410, 380, 460]}
-        />
-        <MetricCard
-          title="Revenue"
-          value={fmtMoney(c.revenue).replace("$", "")}
-          change={14.6}
-          changeLabel="vs yesterday"
-          icon={TrendingUp}
-          iconColor="#2563eb"
-          iconBg="rgba(59, 130, 246, 0.12)"
-          trend="up"
-          prefix="$"
-          sparklineData={[820, 960, 1040, 1180, 1290, 1340, 1480]}
-        />
-        <MetricCard
-          title="ROAS"
-          value={c.roas.toFixed(2)}
-          change={0.3}
-          changeLabel="vs yesterday"
-          icon={Zap}
-          iconColor="#7c3aed"
-          iconBg="rgba(139, 92, 246, 0.12)"
-          trend="up"
-          suffix="x"
-          sparklineData={[3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7]}
-        />
-        <MetricCard
-          title="Impressions"
-          value={fmtCompact(c.impressions)}
-          change={6.4}
-          changeLabel="vs yesterday"
-          icon={Eye}
-          iconColor="#ea580c"
-          iconBg="rgba(249, 115, 22, 0.12)"
-          trend="up"
-          sparklineData={[42, 48, 51, 55, 58, 62, 64]}
-        />
-        <MetricCard
-          title="Clicks"
-          value={fmtCompact(c.clicks)}
-          change={-1.8}
-          changeLabel="vs yesterday"
-          icon={MousePointerClick}
-          iconColor="#0ea5e9"
-          iconBg="rgba(14, 165, 233, 0.12)"
-          trend="down"
-          sparklineData={[920, 880, 940, 900, 870, 860, 820]}
-        />
+        {metricsLoading ? (
+          [0, 1, 2, 3, 4].map((i) => <SkeletonMetricCard key={i} />)
+        ) : metrics.length === 0 ? (
+          <div className="col-span-full">
+            <EmptyState
+              icon={TrendingUp}
+              title="No metrics yet"
+              description="Run a sync from Settings → Integrations to pull metrics for this campaign."
+              compact
+            />
+          </div>
+        ) : (
+          <>
+            <MetricCard
+              title="Spend"
+              value={totals.spend.toFixed(0)}
+              change={0}
+              changeLabel={`${metrics.length}d window`}
+              icon={DollarSign}
+              iconColor="#059669"
+              iconBg="rgba(16, 185, 129, 0.12)"
+              trend="neutral"
+              prefix="$"
+            />
+            <MetricCard
+              title="Revenue"
+              value={totals.revenue.toFixed(0)}
+              change={0}
+              changeLabel={`${metrics.length}d window`}
+              icon={TrendingUp}
+              iconColor="#2563eb"
+              iconBg="rgba(59, 130, 246, 0.12)"
+              trend="neutral"
+              prefix="$"
+            />
+            <MetricCard
+              title="ROAS"
+              value={avgRoas.toFixed(2)}
+              change={0}
+              changeLabel="avg"
+              icon={Zap}
+              iconColor="#7c3aed"
+              iconBg="rgba(139, 92, 246, 0.12)"
+              trend={avgRoas >= 2 ? "up" : avgRoas >= 1 ? "neutral" : "down"}
+              suffix="x"
+            />
+            <MetricCard
+              title="Impressions"
+              value={fmtCompact(totals.impressions)}
+              change={0}
+              changeLabel="total"
+              icon={Eye}
+              iconColor="#ea580c"
+              iconBg="rgba(249, 115, 22, 0.12)"
+              trend="neutral"
+            />
+            <MetricCard
+              title="Clicks"
+              value={fmtCompact(totals.clicks)}
+              change={0}
+              changeLabel="total"
+              icon={MousePointerClick}
+              iconColor="#0ea5e9"
+              iconBg="rgba(14, 165, 233, 0.12)"
+              trend="neutral"
+            />
+          </>
+        )}
       </div>
 
-      {/* ── Tabs ── */}
+      {/* Tabs */}
       <div className="border-b border-slate-200 animate-in stagger-3">
         <div className="flex flex-wrap items-center gap-1">
           {TABS.map((t) => (
@@ -341,36 +477,33 @@ export default function CampaignDetailPage() {
         </div>
       </div>
 
-      {/* ── Tab Panels ── */}
+      {/* Tab Panels */}
       <div className="animate-in stagger-4">
-        {tab === "overview" && <OverviewTab campaign={c} />}
+        {tab === "overview" && (
+          <OverviewTab
+            campaign={c}
+            metrics={metrics}
+            chartData={chartData}
+            totals={totals}
+            avgRoas={avgRoas}
+          />
+        )}
         {tab === "adsets" && <AdSetsTab />}
         {tab === "creatives" && <CreativesTab />}
         {tab === "audience" && <AudienceTab />}
-        {tab === "settings" && <SettingsTab campaign={c} />}
+        {tab === "settings" && (
+          <SettingsTab campaign={c} onSaved={onRefetch} />
+        )}
       </div>
     </div>
   );
 }
 
-function MenuItem({
-  icon: Icon,
-  label,
-  tone = "default",
-}: {
-  icon: LucideIcon;
-  label: string;
-  tone?: "default" | "danger";
-}) {
+function MenuItem({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
   return (
     <button
       type="button"
-      className={clsx(
-        "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold transition",
-        tone === "danger"
-          ? "text-rose-600 hover:bg-rose-50"
-          : "text-slate-700 hover:bg-slate-50"
-      )}
+      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
     >
       <Icon className="h-3.5 w-3.5" />
       {label}
@@ -379,46 +512,134 @@ function MenuItem({
 }
 
 /* ───────────────────────────────────────── */
-/* Tab: Overview                              */
+/* Overview                                   */
 /* ───────────────────────────────────────── */
-function OverviewTab({ campaign }: { campaign: CampaignDetail }) {
-  const days = [
-    { date: "Sat, May 24", spend: 1840, revenue: 6900, roas: 3.75, ctr: 2.1 },
-    { date: "Fri, May 23", spend: 2020, revenue: 7320, roas: 3.62, ctr: 1.9 },
-    { date: "Thu, May 22", spend: 1980, revenue: 7180, roas: 3.63, ctr: 2.2 },
-    { date: "Wed, May 21", spend: 2240, revenue: 8410, roas: 3.75, ctr: 2.3 },
-    { date: "Tue, May 20", spend: 2180, revenue: 7950, roas: 3.65, ctr: 2.0 },
-    { date: "Mon, May 19", spend: 2390, revenue: 9120, roas: 3.82, ctr: 2.4 },
-    { date: "Sun, May 18", spend: 1620, revenue: 6240, roas: 3.85, ctr: 2.0 },
-  ];
 
-  const insights = [
-    {
-      icon: Sparkles,
-      color: "#6366f1",
-      bg: "rgba(99,102,241,0.12)",
-      title: "Audience expansion is paying off",
-      body: "Your 1–3% lookalike segment delivered 28% lower CPA over the last 7 days. Consider scaling its budget by $80/day.",
-    },
-    {
-      icon: TrendingUp,
-      color: "#10b981",
-      bg: "rgba(16,185,129,0.12)",
-      title: "Tuesday & Wednesday outperform",
-      body: "ROAS is 19% higher mid-week. Front-load 60% of weekly budget Mon–Wed for max impact.",
-    },
-    {
-      icon: AlertTriangle,
-      color: "#f59e0b",
-      bg: "rgba(245,158,11,0.12)",
-      title: "Creative fatigue forming",
-      body: "Variant B's CTR dropped 22% since Wednesday. Generate 2 fresh image ads to refresh the rotation.",
-    },
-  ];
+function OverviewTab({
+  campaign,
+  metrics,
+  chartData,
+  totals,
+  avgRoas,
+}: {
+  campaign: Campaign;
+  metrics: CampaignMetric[];
+  chartData: SpendChartPoint[];
+  totals: {
+    spend: number;
+    revenue: number;
+    impressions: number;
+    clicks: number;
+    conversions: number;
+  };
+  avgRoas: number;
+}) {
+  const last7 = useMemo(
+    () =>
+      [...metrics]
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, 7),
+    [metrics]
+  );
+
+  // Smart, deterministic insights based on real metrics — no LLM call per page view.
+  const insights = useMemo(() => {
+    const out: Array<{
+      icon: LucideIcon;
+      color: string;
+      bg: string;
+      title: string;
+      body: string;
+    }> = [];
+    if (metrics.length === 0) {
+      return out;
+    }
+    if (avgRoas < 1) {
+      out.push({
+        icon: AlertTriangle,
+        color: "#f59e0b",
+        bg: "rgba(245,158,11,0.12)",
+        title: "ROAS below break-even",
+        body: `Last 30 days averaged ${avgRoas.toFixed(
+          2
+        )}x. Consider pausing low-performing ad sets or reducing budget.`,
+      });
+    } else if (avgRoas < 2) {
+      out.push({
+        icon: TrendingUp,
+        color: "#6366f1",
+        bg: "rgba(99,102,241,0.12)",
+        title: "ROAS could improve",
+        body: `${avgRoas.toFixed(
+          2
+        )}x is profitable but below the 2x benchmark — test new creatives or refine targeting.`,
+      });
+    } else {
+      out.push({
+        icon: TrendingUp,
+        color: "#10b981",
+        bg: "rgba(16,185,129,0.12)",
+        title: "Healthy ROAS",
+        body: `${avgRoas.toFixed(
+          2
+        )}x is above the 2x benchmark. Consider scaling budget up by 10-20% to capture more demand.`,
+      });
+    }
+    const ctr =
+      totals.impressions > 0 ? totals.clicks / totals.impressions : 0;
+    if (ctr > 0 && ctr < 0.01) {
+      out.push({
+        icon: AlertTriangle,
+        color: "#f59e0b",
+        bg: "rgba(245,158,11,0.12)",
+        title: "CTR below 1%",
+        body: `Click-through rate is ${(ctr * 100).toFixed(
+          2
+        )}%. Creative refresh recommended — try new headlines or imagery.`,
+      });
+    }
+    const budget = Number(campaign.budget) || 0;
+    if (budget > 0 && totals.spend / budget > 0.9) {
+      out.push({
+        icon: AlertTriangle,
+        color: "#ef4444",
+        bg: "rgba(239,68,68,0.12)",
+        title: "Budget nearly depleted",
+        body: `Spent ${fmtMoney(totals.spend)} of ${fmtMoney(
+          budget
+        )} budget — consider increasing to maintain delivery.`,
+      });
+    }
+    if (out.length === 0) {
+      out.push({
+        icon: Sparkles,
+        color: "#6366f1",
+        bg: "rgba(99,102,241,0.12)",
+        title: "Performance looking solid",
+        body: "Keep monitoring. Run an AI Planner session to find opportunities to scale.",
+      });
+    }
+    return out;
+  }, [metrics.length, avgRoas, totals.clicks, totals.impressions, totals.spend, campaign.budget]);
+
+  if (metrics.length === 0) {
+    return (
+      <EmptyState
+        icon={TrendingUp}
+        title="No performance data yet"
+        description="Sync this campaign's platform to pull spend, impressions, clicks, and conversions."
+        action={{
+          label: "Go to Integrations",
+          onClick: () =>
+            (window.location.href = "/settings?tab=integrations"),
+        }}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <SpendChart />
+      <SpendChart data={chartData} showRangeTabs={false} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
@@ -437,28 +658,39 @@ function OverviewTab({ campaign }: { campaign: CampaignDetail }) {
                 </tr>
               </thead>
               <tbody>
-                {days.map((d) => (
-                  <tr
-                    key={d.date}
-                    className="border-t border-slate-50 transition hover:bg-slate-50/60"
-                  >
-                    <td className="py-2.5 text-xs font-medium text-slate-700">
-                      {d.date}
-                    </td>
-                    <td className="py-2.5 text-xs font-semibold text-slate-900">
-                      {fmtMoney(d.spend)}
-                    </td>
-                    <td className="py-2.5 text-xs font-semibold text-slate-900">
-                      {fmtMoney(d.revenue)}
-                    </td>
-                    <td className="py-2.5 text-xs font-bold text-emerald-600">
-                      {d.roas.toFixed(2)}x
-                    </td>
-                    <td className="py-2.5 text-xs font-semibold text-slate-700">
-                      {d.ctr.toFixed(2)}%
-                    </td>
-                  </tr>
-                ))}
+                {last7.map((d) => {
+                  const spend = Number(d.spend) || 0;
+                  const revenue = Number(d.revenue) || 0;
+                  const roas = Number(d.roas) || 0;
+                  const ctr = (Number(d.ctr) || 0) * 100;
+                  return (
+                    <tr
+                      key={d.date}
+                      className="border-t border-slate-50 transition hover:bg-slate-50/60"
+                    >
+                      <td className="py-2.5 text-xs font-medium text-slate-700">
+                        {d.date.slice(0, 10)}
+                      </td>
+                      <td className="py-2.5 text-xs font-semibold text-slate-900">
+                        {fmtMoney(spend)}
+                      </td>
+                      <td className="py-2.5 text-xs font-semibold text-slate-900">
+                        {fmtMoney(revenue)}
+                      </td>
+                      <td
+                        className={clsx(
+                          "py-2.5 text-xs font-bold",
+                          roas >= 2 ? "text-emerald-600" : "text-amber-600"
+                        )}
+                      >
+                        {roas.toFixed(2)}x
+                      </td>
+                      <td className="py-2.5 text-xs font-semibold text-slate-700">
+                        {ctr.toFixed(2)}%
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -469,7 +701,7 @@ function OverviewTab({ campaign }: { campaign: CampaignDetail }) {
             <h3 className="text-base font-bold text-slate-900">AI Insights</h3>
             <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
               <Sparkles className="h-2.5 w-2.5" />
-              Auto-generated
+              Auto-derived
             </span>
           </div>
           <ul className="space-y-3">
@@ -500,353 +732,103 @@ function OverviewTab({ campaign }: { campaign: CampaignDetail }) {
 }
 
 /* ───────────────────────────────────────── */
-/* Tab: Ad Sets                               */
+/* Other tabs — mock until backend lands     */
 /* ───────────────────────────────────────── */
+
+// TODO(phase-3): wire to /api/campaigns/:id/ad-sets
 function AdSetsTab() {
-  const sets = [
-    {
-      name: "Lookalike 1–3% — Purchasers",
-      budget: 1800,
-      spend: 1240,
-      status: "ACTIVE" as Status,
-      roas: 4.6,
-    },
-    {
-      name: "Interest — SaaS Founders",
-      budget: 1200,
-      spend: 980,
-      status: "ACTIVE" as Status,
-      roas: 3.2,
-    },
-    {
-      name: "Retargeting — Last 30 Days",
-      budget: 800,
-      spend: 460,
-      status: "PAUSED" as Status,
-      roas: 1.8,
-    },
-  ];
-
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-base font-bold text-slate-900">Ad Sets</h3>
-        <button type="button" className="btn-brand">
-          <Plus className="h-4 w-4" strokeWidth={2.5} />
-          Add Ad Set
-        </button>
-      </div>
-
-      <div className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              <th className="px-5 py-3">Ad Set</th>
-              <th className="py-3">Status</th>
-              <th className="py-3">Budget</th>
-              <th className="py-3">Spend</th>
-              <th className="py-3">ROAS</th>
-              <th className="px-5 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sets.map((s) => {
-              const st = STATUS_META[s.status];
-              const pct = Math.round((s.spend / s.budget) * 100);
-              return (
-                <tr
-                  key={s.name}
-                  className="border-t border-slate-50 transition hover:bg-slate-50/60"
-                >
-                  <td className="px-5 py-3.5 text-sm font-semibold text-slate-900">
-                    {s.name}
-                  </td>
-                  <td className="py-3.5">
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className={clsx("status-dot", st.dot)} />
-                      <span
-                        className={clsx("text-xs font-semibold", st.cls)}
-                      >
-                        {st.label}
-                      </span>
-                    </span>
-                  </td>
-                  <td className="py-3.5 text-xs font-semibold text-slate-700">
-                    {fmtMoney(s.budget)}
-                  </td>
-                  <td className="py-3.5">
-                    <div className="text-xs font-semibold text-slate-700">
-                      {fmtMoney(s.spend)}
-                    </div>
-                    <div className="mt-1 h-1 w-24 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-primary"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </td>
-                  <td className="py-3.5">
-                    <span
-                      className={clsx(
-                        "text-sm font-bold",
-                        s.roas >= 2 ? "text-emerald-600" : "text-amber-600"
-                      )}
-                    >
-                      {s.roas.toFixed(2)}x
-                    </span>
-                  </td>
-                  <td className="px-5 py-3.5 text-right">
-                    <button
-                      type="button"
-                      className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-                      aria-label="Edit"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <EmptyState
+      icon={Layers}
+      title="Ad Sets coming soon"
+      description="Ad set sync and management is on the Phase 3 roadmap. For now you can manage ad sets directly in the source platform."
+      compact
+    />
   );
 }
 
-/* ───────────────────────────────────────── */
-/* Tab: Creatives                             */
-/* ───────────────────────────────────────── */
+// TODO(phase-3): wire to /api/creatives?campaignId=:id
 function CreativesTab() {
-  const creatives = [
-    {
-      id: "cr-1",
-      kind: "Image",
-      icon: ImageIcon,
-      gradient: "from-indigo-500 via-purple-500 to-pink-500",
-      headline: "Limited Drop · 30% Off Today",
-      body: "Premium summer essentials — straight from our latest drop. Free shipping over $50.",
-      status: "ACTIVE" as Status,
-      ctr: 2.8,
-      impressions: 184000,
-    },
-    {
-      id: "cr-2",
-      kind: "Video 15s",
-      icon: Film,
-      gradient: "from-emerald-500 via-teal-500 to-cyan-500",
-      headline: "Watch How Customers Use It",
-      body: "Real reviews from real buyers. See why 25k people made the switch this month.",
-      status: "ACTIVE" as Status,
-      ctr: 3.4,
-      impressions: 96400,
-    },
-    {
-      id: "cr-3",
-      kind: "Carousel",
-      icon: Layers,
-      gradient: "from-amber-400 via-orange-500 to-rose-500",
-      headline: "Shop the Best Sellers",
-      body: "5 must-have items. Swipe through to find your favorite.",
-      status: "PAUSED" as Status,
-      ctr: 1.6,
-      impressions: 41200,
-    },
-  ];
-
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-base font-bold text-slate-900">Creatives</h3>
-        <button type="button" className="btn-brand">
-          <Sparkles className="h-4 w-4" strokeWidth={2.5} />
-          Generate with AI
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {creatives.map((cr) => {
-          const st = STATUS_META[cr.status];
-          return (
-            <div
-              key={cr.id}
-              className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover"
-            >
-              <div
-                className={clsx(
-                  "relative flex h-40 items-center justify-center bg-gradient-to-br p-5 text-white",
-                  cr.gradient
-                )}
-              >
-                <cr.icon className="h-12 w-12 opacity-30" strokeWidth={1.5} />
-                <div className="absolute left-4 top-4 inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur">
-                  {cr.kind}
-                </div>
-                <div className="absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-2 py-0.5 ring-1 ring-inset ring-white/40">
-                  <span className={clsx("status-dot", st.dot)} />
-                  <span className={clsx("text-[10px] font-bold", st.cls)}>
-                    {st.label}
-                  </span>
-                </div>
-              </div>
-              <div className="p-4">
-                <p className="text-sm font-bold text-slate-900">
-                  {cr.headline}
-                </p>
-                <p className="mt-1 line-clamp-2 text-xs text-slate-500">
-                  {cr.body}
-                </p>
-                <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      CTR
-                    </p>
-                    <p
-                      className={clsx(
-                        "text-sm font-bold",
-                        cr.ctr > 2 ? "text-emerald-600" : "text-amber-600"
-                      )}
-                    >
-                      {cr.ctr.toFixed(2)}%
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      Impressions
-                    </p>
-                    <p className="text-sm font-bold text-slate-900">
-                      {fmtCompact(cr.impressions)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <EmptyState
+      icon={ImageIcon}
+      title="Creatives for this campaign"
+      description="Once you generate creatives in the Creatives page and link them to this campaign, they'll appear here."
+      action={{
+        label: "Open Creatives",
+        onClick: () => (window.location.href = "/creatives"),
+        icon: Film,
+      }}
+      compact
+    />
   );
 }
 
-/* ───────────────────────────────────────── */
-/* Tab: Audience                              */
-/* ───────────────────────────────────────── */
+// TODO(phase-3): wire to /api/audiences?campaignId=:id
 function AudienceTab() {
-  const interests = [
-    "Business",
-    "Entrepreneurship",
-    "SaaS",
-    "Productivity Tools",
-    "Marketing",
-  ];
-  const locations = ["United States", "Canada", "United Kingdom"];
   return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-base font-bold text-slate-900">
-            Current Targeting
-          </h3>
-          <button type="button" className="btn-brand">
-            <Sparkles className="h-4 w-4" strokeWidth={2.5} />
-            Optimize with AI
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <TargetingBlock label="Age">
-            <span className="chip">25–45</span>
-          </TargetingBlock>
-
-          <TargetingBlock label="Gender">
-            <span className="chip">All genders</span>
-          </TargetingBlock>
-
-          <TargetingBlock label="Interests">
-            <div className="flex flex-wrap gap-1.5">
-              {interests.map((i) => (
-                <span key={i} className="chip">
-                  {i}
-                </span>
-              ))}
-            </div>
-          </TargetingBlock>
-
-          <TargetingBlock label="Locations">
-            <div className="flex flex-wrap gap-1.5">
-              {locations.map((l) => (
-                <span key={l} className="chip">
-                  {l}
-                </span>
-              ))}
-            </div>
-          </TargetingBlock>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-5 text-white shadow-glow">
-        <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15 backdrop-blur">
-            <Users className="h-5 w-5" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-white/80">
-              Estimated audience size
-            </p>
-            <p className="text-2xl font-bold">2.4M people</p>
-            <p className="text-xs text-white/80">
-              within your targeting parameters
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-primary-700 shadow-md transition hover:-translate-y-0.5 hover:shadow-lg"
-        >
-          Refine Audience
-        </button>
-      </div>
-
-      <style jsx>{`
-        :global(.chip) {
-          display: inline-flex;
-          align-items: center;
-          padding: 0.25rem 0.625rem;
-          border-radius: 0.5rem;
-          background: #f1f5f9;
-          color: #334155;
-          font-size: 0.75rem;
-          font-weight: 600;
-        }
-      `}</style>
-    </div>
+    <EmptyState
+      icon={Users}
+      title="Audience targeting"
+      description="Audience-level reporting comes online when audience-management APIs are wired up in Phase 3."
+      action={{
+        label: "Open Audiences",
+        onClick: () => (window.location.href = "/audiences"),
+      }}
+      compact
+    />
   );
 }
 
-function TargetingBlock({
-  label,
-  children,
+/* ───────────────────────────────────────── */
+/* Settings                                   */
+/* ───────────────────────────────────────── */
+
+function SettingsTab({
+  campaign: c,
+  onSaved,
 }: {
-  label: string;
-  children: React.ReactNode;
+  campaign: Campaign;
+  onSaved: () => void;
 }) {
-  return (
-    <div>
-      <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-        {label}
-      </p>
-      <div>{children}</div>
-    </div>
-  );
-}
+  const api = useApiClient();
+  const [name, setName] = useState(c.name);
+  const [budget, setBudget] = useState(Number(c.budget) || 0);
+  const [busy, setBusy] = useState(false);
 
-/* ───────────────────────────────────────── */
-/* Tab: Settings                              */
-/* ───────────────────────────────────────── */
-function SettingsTab({ campaign }: { campaign: CampaignDetail }) {
-  const [name, setName] = useState(campaign.name);
-  const [budget, setBudget] = useState(campaign.budget);
-  const [active, setActive] = useState(campaign.status === "ACTIVE");
+  const dirty = name !== c.name || budget !== Number(c.budget);
+
+  async function save() {
+    if (busy || !dirty) return;
+    setBusy(true);
+    try {
+      await api.updateCampaign(c.id, { name: name.trim(), budget });
+      toast.success("Campaign saved");
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteCampaign() {
+    if (
+      !window.confirm(
+        `Delete "${c.name}"? This removes all its metrics and creatives.`
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await api.deleteCampaign(c.id);
+      toast.success("Campaign deleted");
+      window.location.href = "/campaigns";
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -881,33 +863,17 @@ function SettingsTab({ campaign }: { campaign: CampaignDetail }) {
               />
             </div>
           </div>
-          <div className="flex items-center justify-between rounded-xl bg-slate-50 p-3">
-            <div>
-              <p className="text-sm font-bold text-slate-900">Campaign status</p>
-              <p className="text-xs text-slate-500">
-                {active ? "Currently serving" : "Currently paused"}
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={active}
-              onClick={() => setActive((v) => !v)}
-              className={clsx(
-                "relative h-6 w-11 rounded-full transition",
-                active ? "bg-primary" : "bg-slate-300"
-              )}
-            >
-              <span
-                className={clsx(
-                  "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all",
-                  active ? "left-[22px]" : "left-0.5"
-                )}
-              />
-            </button>
-          </div>
-          <button type="button" className="btn-brand">
-            Save Changes
+          <button
+            type="button"
+            onClick={save}
+            disabled={!dirty || busy}
+            className={clsx("btn-brand", (!dirty || busy) && "opacity-60")}
+          >
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>Save Changes</>
+            )}
           </button>
         </div>
       </div>
@@ -920,15 +886,20 @@ function SettingsTab({ campaign }: { campaign: CampaignDetail }) {
           <div className="flex-1">
             <h4 className="text-sm font-bold text-rose-900">Danger zone</h4>
             <p className="mt-0.5 text-xs text-rose-700/80">
-              Permanently delete this campaign and all its ad sets, creatives,
-              and historical data. This cannot be undone.
+              Permanently delete this campaign and all its metrics + creatives.
             </p>
           </div>
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700"
+            onClick={deleteCampaign}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
           >
-            <Trash2 className="h-4 w-4" />
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
             Delete Campaign
           </button>
         </div>
@@ -936,3 +907,4 @@ function SettingsTab({ campaign }: { campaign: CampaignDetail }) {
     </div>
   );
 }
+

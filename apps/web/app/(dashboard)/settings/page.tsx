@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useApiClient, type AdAccount } from "@/lib/api";
+import { useApi } from "@/hooks/useApi";
 import MetaConnect from "@/components/settings/MetaConnect";
 import GoogleConnect from "@/components/settings/GoogleConnect";
 import TikTokConnect from "@/components/settings/TikTokConnect";
@@ -239,14 +240,48 @@ function Switch({
 /* ───────────────────────────────────────── */
 
 function GeneralTab() {
-  const [fullName, setFullName] = useState("Alex Carter");
+  const api = useApiClient();
+  const me = useApi((c) => c.getMe(), []);
+
+  const [fullName, setFullName] = useState("");
   const [timezone, setTimezone] = useState("America/Los_Angeles");
   const [language, setLanguage] = useState("English");
-  const [workspaceName, setWorkspaceName] = useState("My Workspace");
-  const [slug, setSlug] = useState("my-workspace");
-  const [industry, setIndustry] = useState("SaaS");
-  const [companySize, setCompanySize] = useState("11-50");
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [industry, setIndustry] = useState("");
+  const [companySize, setCompanySize] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Hydrate form from real data on first load + any refetch.
+  useEffect(() => {
+    if (!me.data) return;
+    setFullName(me.data.user.name ?? "");
+    setWorkspaceName(me.data.workspace?.name ?? "");
+    // Workspace.slug / industry / companySize aren't in the MeResponse type
+    // today (they're returned by /auth/workspace). We hydrate them lazily
+    // when the user opens the General tab.
+    setDirty(false);
+  }, [me.data]);
+
+  // Also fetch the full workspace (with slug/industry/companySize)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const ws = await api.getWorkspace();
+        if (cancelled) return;
+        setSlug(ws.slug ?? "");
+        setIndustry(ws.industry ?? "");
+        setCompanySize(ws.companySize ?? "");
+      } catch {
+        // ignore — defaults stay empty
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
 
   function markDirty<T>(setter: (v: T) => void) {
     return (v: T) => {
@@ -254,6 +289,39 @@ function GeneralTab() {
       setDirty(true);
     };
   }
+
+  async function save() {
+    if (saving || !dirty) return;
+    setSaving(true);
+    try {
+      await api.updateWorkspace({
+        name: workspaceName.trim() || undefined,
+        slug: slug.trim() || undefined,
+        industry: industry || undefined,
+        companySize: companySize || undefined,
+      });
+      // TODO: persist `fullName` + `timezone` + `language` once user-level
+      // settings endpoints exist (User.timezone / User.language fields).
+      toast.success("Workspace saved");
+      setDirty(false);
+      me.refetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Compute initials for the avatar bubble
+  const initials = (() => {
+    const n = fullName || me.data?.user.email || "?";
+    return n
+      .split(/\s+|@/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((p) => p[0]?.toUpperCase())
+      .join("");
+  })();
 
   return (
     <div className="space-y-6">
@@ -263,7 +331,7 @@ function GeneralTab() {
       >
         <div className="flex items-center gap-4">
           <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-lg font-bold text-white shadow-md ring-2 ring-white">
-            AC
+            {initials || "?"}
           </div>
           <button
             type="button"
@@ -278,11 +346,16 @@ function GeneralTab() {
           <Input
             value={fullName}
             onChange={(e) => markDirty(setFullName)(e.target.value)}
+            placeholder={me.loading ? "Loading…" : "Your name"}
           />
         </Field>
 
         <Field label="Email">
-          <Input value="alex@adgenius.ai" disabled readOnlyBadge="Clerk" />
+          <Input
+            value={me.data?.user.email ?? ""}
+            disabled
+            readOnlyBadge="Clerk"
+          />
         </Field>
 
         <Field label="Timezone">
@@ -374,14 +447,14 @@ function GeneralTab() {
         )}
         <button
           type="button"
-          onClick={() => {
-            setDirty(false);
-            toast.success("Settings saved");
-          }}
-          disabled={!dirty}
-          className={clsx("btn-brand", !dirty && "pointer-events-none opacity-50")}
+          onClick={save}
+          disabled={!dirty || saving}
+          className={clsx(
+            "btn-brand",
+            (!dirty || saving) && "pointer-events-none opacity-50"
+          )}
         >
-          Save Changes
+          {saving ? "Saving…" : "Save Changes"}
         </button>
       </div>
     </div>
@@ -392,47 +465,85 @@ function GeneralTab() {
 /* Workspace                                  */
 /* ───────────────────────────────────────── */
 
-type Member = {
-  id: string;
-  name: string;
-  email: string;
-  role: "Owner" | "Admin" | "Editor" | "Viewer";
-  initials: string;
-  gradient: string;
-};
+type AssignableRole = "ADMIN" | "EDITOR" | "VIEWER";
 
-const INIT_MEMBERS: Member[] = [
-  {
-    id: "m1",
-    name: "Alex Carter",
-    email: "alex@adgenius.ai",
-    role: "Owner",
-    initials: "AC",
-    gradient: "from-indigo-500 to-purple-600",
-  },
-  {
-    id: "m2",
-    name: "Jamie Rivera",
-    email: "jamie@adgenius.ai",
-    role: "Editor",
-    initials: "JR",
-    gradient: "from-emerald-500 to-cyan-600",
-  },
-];
+const ROLE_GRADIENTS = [
+  "from-indigo-500 to-purple-600",
+  "from-emerald-500 to-cyan-600",
+  "from-amber-500 to-rose-500",
+  "from-pink-500 to-fuchsia-600",
+  "from-sky-500 to-blue-600",
+] as const;
+
+function initialsOf(name: string | null | undefined, email: string): string {
+  const src = name && name.trim() ? name : email;
+  return src
+    .split(/\s+|@/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase())
+    .join("");
+}
 
 function WorkspaceTab() {
-  const [members, setMembers] = useState<Member[]>(INIT_MEMBERS);
+  const api = useApiClient();
+  const membersQ = useApi((c) => c.getMembers(), []);
+
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<Member["role"]>("Editor");
+  const [inviteRole, setInviteRole] = useState<AssignableRole>("EDITOR");
+  const [inviting, setInviting] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  function updateRole(id: string, role: Member["role"]) {
-    setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, role } : m)));
+  async function sendInvite() {
+    if (inviting) return;
+    const email = inviteEmail.trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast.error("Enter a valid email");
+      return;
+    }
+    setInviting(true);
+    try {
+      await api.inviteMember(email, inviteRole);
+      toast.success(`Invite sent to ${email}`);
+      setInviteEmail("");
+      setInviteOpen(false);
+      membersQ.refetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Invite failed");
+    } finally {
+      setInviting(false);
+    }
   }
-  function removeMember(id: string) {
-    setMembers((prev) => prev.filter((m) => m.id !== id));
-    toast.success("Member removed");
+
+  async function changeRole(memberId: string, role: AssignableRole) {
+    setBusyId(memberId);
+    try {
+      await api.updateMemberRole(memberId, role);
+      toast.success("Role updated");
+      membersQ.refetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setBusyId(null);
+    }
   }
+
+  async function removeMember(memberId: string) {
+    if (!window.confirm("Remove this teammate from the workspace?")) return;
+    setBusyId(memberId);
+    try {
+      await api.removeMember(memberId);
+      toast.success("Member removed");
+      membersQ.refetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Remove failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const members = membersQ.data ?? [];
 
   return (
     <div className="space-y-6">
@@ -469,115 +580,117 @@ function WorkspaceTab() {
                   <Select
                     value={inviteRole}
                     onChange={(e) =>
-                      setInviteRole(e.target.value as Member["role"])
+                      setInviteRole(e.target.value as AssignableRole)
                     }
                   >
-                    <option>Admin</option>
-                    <option>Editor</option>
-                    <option>Viewer</option>
+                    <option value="ADMIN">Admin</option>
+                    <option value="EDITOR">Editor</option>
+                    <option value="VIEWER">Viewer</option>
                   </Select>
                 </Field>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  if (!inviteEmail.trim()) {
-                    toast.error("Enter an email");
-                    return;
-                  }
-                  toast.success(`Invite sent to ${inviteEmail}`);
-                  setInviteEmail("");
-                  setInviteOpen(false);
-                }}
-                className="btn-brand"
+                onClick={sendInvite}
+                disabled={inviting}
+                className={clsx("btn-brand", inviting && "opacity-60")}
               >
                 <Send className="h-4 w-4" />
-                Send Invite
+                {inviting ? "Sending…" : "Send Invite"}
               </button>
             </div>
           </div>
         )}
 
-        <ul className="space-y-2">
-          {members.map((m) => (
-            <li
-              key={m.id}
-              className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 transition hover:border-slate-300"
-            >
-              <div
-                className={clsx(
-                  "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-xs font-bold text-white shadow-sm",
-                  m.gradient
-                )}
+        {membersQ.loading ? (
+          <ul className="space-y-2">
+            {[0, 1, 2].map((i) => (
+              <li
+                key={i}
+                className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3"
               >
-                {m.initials}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-slate-900">
-                  {m.name}
-                </p>
-                <p className="truncate text-xs text-slate-500">{m.email}</p>
-              </div>
-              {m.role === "Owner" ? (
-                <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
-                  Owner
-                </span>
-              ) : (
-                <>
-                  <Select
-                    value={m.role}
-                    onChange={(e) =>
-                      updateRole(m.id, e.target.value as Member["role"])
-                    }
-                    className="h-8 w-28 text-xs"
+                <div className="h-10 w-10 animate-pulse rounded-xl bg-slate-200/70" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-3 w-32 animate-pulse rounded bg-slate-200/70" />
+                  <div className="h-2 w-48 animate-pulse rounded bg-slate-200/70" />
+                </div>
+                <div className="h-8 w-24 animate-pulse rounded bg-slate-200/70" />
+              </li>
+            ))}
+          </ul>
+        ) : members.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+            No team members yet. Invite teammates with the button above.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {members.map((m, i) => {
+              const gradient = ROLE_GRADIENTS[i % ROLE_GRADIENTS.length];
+              const isOwner = m.role === "OWNER";
+              return (
+                <li
+                  key={m.id}
+                  className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 transition hover:border-slate-300"
+                >
+                  <div
+                    className={clsx(
+                      "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-xs font-bold text-white shadow-sm",
+                      gradient
+                    )}
                   >
-                    <option>Admin</option>
-                    <option>Editor</option>
-                    <option>Viewer</option>
-                  </Select>
-                  <button
-                    type="button"
-                    onClick={() => removeMember(m.id)}
-                    className="text-xs font-semibold text-rose-600 transition hover:underline"
-                  >
-                    Remove
-                  </button>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
+                    {initialsOf(m.user.name, m.user.email)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-slate-900">
+                      {m.user.name || m.user.email}
+                    </p>
+                    <p className="truncate text-xs text-slate-500">
+                      {m.user.email}
+                    </p>
+                  </div>
+                  {isOwner ? (
+                    <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+                      Owner
+                    </span>
+                  ) : (
+                    <>
+                      <Select
+                        value={m.role}
+                        onChange={(e) =>
+                          changeRole(m.id, e.target.value as AssignableRole)
+                        }
+                        disabled={busyId === m.id}
+                        className="h-8 w-28 text-xs"
+                      >
+                        <option value="ADMIN">Admin</option>
+                        <option value="EDITOR">Editor</option>
+                        <option value="VIEWER">Viewer</option>
+                      </Select>
+                      <button
+                        type="button"
+                        onClick={() => removeMember(m.id)}
+                        disabled={busyId === m.id}
+                        className="text-xs font-semibold text-rose-600 transition hover:underline disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </Card>
 
+      {/* TODO(phase-3): persist pending invites in DB + render real list here */}
       <Card
         title="Pending Invites"
-        description="Invites that haven't been accepted yet."
+        description="Invites that haven't been accepted yet (placeholder — real invite records in Phase 3)."
       >
-        <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/40 p-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-200 text-xs font-bold text-slate-500">
-            ?
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-slate-700">
-              priya@startup.io
-            </p>
-            <p className="truncate text-xs text-slate-500">
-              Invited 3 days ago · Editor
-            </p>
-          </div>
-          <button
-            type="button"
-            className="text-xs font-semibold text-primary transition hover:underline"
-          >
-            Resend
-          </button>
-          <button
-            type="button"
-            className="text-xs font-semibold text-slate-500 transition hover:text-rose-600"
-          >
-            Cancel
-          </button>
-        </div>
+        <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 p-4 text-center text-xs text-slate-500">
+          No pending invites.
+        </p>
       </Card>
     </div>
   );

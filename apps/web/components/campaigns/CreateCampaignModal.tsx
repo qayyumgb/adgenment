@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import clsx from "clsx";
 import {
   X,
@@ -11,16 +12,20 @@ import {
   Sparkles,
   Calendar,
   DollarSign,
+  AlertCircle,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
+import { useApi } from "@/hooks/useApi";
+import { useApiClient } from "@/lib/api";
+import type { AdAccount, Platform as ApiPlatform } from "@/lib/api";
 
-type Platform = {
-  id: "meta" | "google" | "tiktok" | "linkedin" | "youtube" | "snapchat";
+type PlatformUI = {
+  id: ApiPlatform;
   name: string;
   sub: string;
   color: string;
   textOnColor: "white" | "black";
-  connected: boolean;
   initial: string;
 };
 
@@ -32,110 +37,59 @@ type Objective = {
     | "video"
     | "leads"
     | "catalog";
+  /** Backend-facing string stored on the Campaign row. */
+  value: string;
   name: string;
   desc: string;
   emoji: string;
 };
 
-const PLATFORMS: Platform[] = [
-  {
-    id: "meta",
-    name: "Meta",
-    sub: "Facebook + Instagram",
-    color: "#1877F2",
-    textOnColor: "white",
-    connected: true,
-    initial: "M",
-  },
-  {
-    id: "google",
-    name: "Google Ads",
-    sub: "Search · YouTube · Display",
-    color: "#EA4335",
-    textOnColor: "white",
-    connected: true,
-    initial: "G",
-  },
-  {
-    id: "tiktok",
-    name: "TikTok Ads",
-    sub: "For You feed · Spark Ads",
-    color: "#010101",
-    textOnColor: "white",
-    connected: true,
-    initial: "T",
-  },
-  {
-    id: "linkedin",
-    name: "LinkedIn Ads",
-    sub: "Sponsored content · InMail",
-    color: "#0A66C2",
-    textOnColor: "white",
-    connected: false,
-    initial: "in",
-  },
-  {
-    id: "youtube",
-    name: "YouTube Ads",
-    sub: "TrueView · Bumper · Shorts",
-    color: "#FF0000",
-    textOnColor: "white",
-    connected: true,
-    initial: "Y",
-  },
-  {
-    id: "snapchat",
-    name: "Snapchat Ads",
-    sub: "Stories · AR Lenses",
-    color: "#FFFC00",
-    textOnColor: "black",
-    connected: false,
-    initial: "S",
-  },
+// Platforms supported by both UI and backend. The modal only ENABLES the ones
+// that have a connected ad account; the rest are disabled with a "connect"
+// link.
+const PLATFORMS_UI: PlatformUI[] = [
+  { id: "META", name: "Meta", sub: "Facebook + Instagram", color: "#1877F2", textOnColor: "white", initial: "M" },
+  { id: "GOOGLE", name: "Google Ads", sub: "Search · YouTube · Display", color: "#EA4335", textOnColor: "white", initial: "G" },
+  { id: "TIKTOK", name: "TikTok Ads", sub: "For You feed · Spark Ads", color: "#010101", textOnColor: "white", initial: "T" },
+  { id: "LINKEDIN", name: "LinkedIn Ads", sub: "Sponsored content · InMail", color: "#0A66C2", textOnColor: "white", initial: "in" },
+  { id: "YOUTUBE", name: "YouTube Ads", sub: "TrueView · Bumper · Shorts", color: "#FF0000", textOnColor: "white", initial: "Y" },
+  { id: "SNAPCHAT", name: "Snapchat Ads", sub: "Stories · AR Lenses", color: "#FFFC00", textOnColor: "black", initial: "S" },
 ];
 
 const OBJECTIVES: Objective[] = [
-  {
-    id: "conversions",
-    name: "Conversions",
-    desc: "Drive purchases or sign-ups",
-    emoji: "🎯",
-  },
-  {
-    id: "awareness",
-    name: "Awareness",
-    desc: "Reach more people",
-    emoji: "👁",
-  },
-  {
-    id: "traffic",
-    name: "Traffic",
-    desc: "Send people to your website",
-    emoji: "🖱",
-  },
-  {
-    id: "video",
-    name: "Video Views",
-    desc: "Get more video plays",
-    emoji: "🎬",
-  },
-  {
-    id: "leads",
-    name: "Lead Generation",
-    desc: "Collect contact info",
-    emoji: "🤝",
-  },
-  {
-    id: "catalog",
-    name: "Catalog Sales",
-    desc: "Promote product catalog",
-    emoji: "🛍",
-  },
+  { id: "conversions", value: "Conversions", name: "Conversions", desc: "Drive purchases or sign-ups", emoji: "🎯" },
+  { id: "awareness", value: "Awareness", name: "Awareness", desc: "Reach more people", emoji: "👁" },
+  { id: "traffic", value: "Traffic", name: "Traffic", desc: "Send people to your website", emoji: "🖱" },
+  { id: "video", value: "Video Views", name: "Video Views", desc: "Get more video plays", emoji: "🎬" },
+  { id: "leads", value: "Lead Generation", name: "Lead Generation", desc: "Collect contact info", emoji: "🤝" },
+  { id: "catalog", value: "Catalog Sales", name: "Catalog Sales", desc: "Promote product catalog", emoji: "🛍" },
 ];
+
+/**
+ * Optional pre-fill data. Used by AI Planner ("Apply to Campaign") which
+ * stores its generated plan in sessionStorage and routes the user here
+ * with `?new=1`.
+ */
+export interface CampaignPrefill {
+  /** Backend platform enum names (uppercase) — only those with a
+   *  connected ad account will end up selected. */
+  platforms?: string[];
+  /** Backend objective string ("Conversions", "Awareness", …) OR the
+   *  internal modal id ("conversions", "awareness", …). */
+  objective?: string;
+  /** Daily budget in workspace currency. */
+  budget?: number;
+  /** Suggested campaign name. */
+  name?: string;
+}
 
 interface CreateCampaignModalProps {
   open: boolean;
   onClose: () => void;
+  /** Called after one or more campaigns have been successfully created. */
+  onCreated?: () => void;
+  /** When provided, the wizard opens with these fields pre-filled. */
+  prefill?: CampaignPrefill | null;
 }
 
 const STEP_LABELS = ["Platform", "Objective", "Budget & Schedule", "Review"];
@@ -143,11 +97,18 @@ const STEP_LABELS = ["Platform", "Objective", "Budget & Schedule", "Review"];
 export default function CreateCampaignModal({
   open,
   onClose,
+  onCreated,
+  prefill,
 }: CreateCampaignModalProps) {
-  const [step, setStep] = useState(1);
-  const [selectedPlatforms, setSelectedPlatforms] = useState<Platform["id"][]>(
-    []
+  const client = useApiClient();
+  // Only fetch the ad-accounts list while the modal is open.
+  const accounts = useApi<AdAccount[]>(
+    (c) => (open ? c.getAdAccounts() : Promise.resolve([])),
+    [open]
   );
+
+  const [step, setStep] = useState(1);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<ApiPlatform[]>([]);
   const [objective, setObjective] = useState<Objective["id"] | null>(null);
   const [budgetType, setBudgetType] = useState<"daily" | "lifetime">("daily");
   const [budgetAmount, setBudgetAmount] = useState<number>(75);
@@ -157,6 +118,20 @@ export default function CreateCampaignModal({
   const [endDate, setEndDate] = useState<string>("");
   const [runContinuously, setRunContinuously] = useState(true);
   const [campaignName, setCampaignName] = useState<string>("");
+  const [submitting, setSubmitting] = useState<null | "launch" | "draft">(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Build a lookup of active ad accounts grouped by platform.
+  const accountsByPlatform = useMemo(() => {
+    const map = new Map<ApiPlatform, AdAccount[]>();
+    for (const a of accounts.data ?? []) {
+      if (!a.isActive) continue;
+      const arr = map.get(a.platform) ?? [];
+      arr.push(a);
+      map.set(a.platform, arr);
+    }
+    return map;
+  }, [accounts.data]);
 
   // Reset on close
   useEffect(() => {
@@ -170,27 +145,59 @@ export default function CreateCampaignModal({
         setEndDate("");
         setRunContinuously(true);
         setCampaignName("");
+        setSubmitError(null);
+        setSubmitting(null);
       }, 250);
       return () => clearTimeout(t);
     }
   }, [open]);
 
-  // ESC to close
+  // Apply pre-fill on open. Platform pre-fill is filtered against the user's
+  // actually-connected ad accounts so we never auto-select something the
+  // backend would reject.
+  useEffect(() => {
+    if (!open || !prefill) return;
+    if (prefill.platforms && prefill.platforms.length > 0) {
+      const allowed = prefill.platforms
+        .map((p) => p.toUpperCase() as ApiPlatform)
+        .filter((p) => accountsByPlatform.has(p));
+      if (allowed.length > 0) setSelectedPlatforms(allowed);
+    }
+    if (prefill.objective) {
+      const lower = prefill.objective.toLowerCase();
+      // Match either the modal id OR the backend-facing label.
+      const obj = OBJECTIVES.find(
+        (o) =>
+          o.id === lower ||
+          o.value.toLowerCase() === lower ||
+          o.name.toLowerCase() === lower
+      );
+      if (obj) setObjective(obj.id);
+    }
+    if (typeof prefill.budget === "number" && prefill.budget > 0) {
+      setBudgetAmount(Math.round(prefill.budget));
+    }
+    if (prefill.name) setCampaignName(prefill.name);
+    // The accountsByPlatform map can arrive after the first render; rerun
+    // when it's populated so we don't silently drop platform pre-selection.
+  }, [open, prefill, accountsByPlatform]);
+
+  // ESC to close (but not while a submit is in flight)
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !submitting) onClose();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, submitting]);
 
-  // Auto-generated name
+  // Auto-generated default name
   useEffect(() => {
     if (!campaignName && selectedPlatforms.length > 0 && objective) {
       const platformLabel =
         selectedPlatforms.length === 1
-          ? PLATFORMS.find((p) => p.id === selectedPlatforms[0])?.name
+          ? PLATFORMS_UI.find((p) => p.id === selectedPlatforms[0])?.name
           : `Multi-platform`;
       const objLabel = OBJECTIVES.find((o) => o.id === objective)?.name;
       const month = new Date().toLocaleString("en-US", {
@@ -210,7 +217,8 @@ export default function CreateCampaignModal({
 
   if (!open) return null;
 
-  const togglePlatform = (id: Platform["id"]) => {
+  const togglePlatform = (id: ApiPlatform) => {
+    if (!accountsByPlatform.has(id)) return; // disabled
     setSelectedPlatforms((prev) =>
       prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
     );
@@ -219,11 +227,66 @@ export default function CreateCampaignModal({
   const reachLow = Math.max(2000, budgetAmount * 160);
   const reachHigh = Math.max(8000, budgetAmount * 600);
 
+  async function handleSubmit(mode: "launch" | "draft") {
+    if (selectedPlatforms.length === 0 || !objective) return;
+    setSubmitting(mode);
+    setSubmitError(null);
+    const objMeta = OBJECTIVES.find((o) => o.id === objective)!;
+    const name = campaignName.trim() || "Untitled campaign";
+
+    try {
+      // Create one campaign per selected platform, using that platform's first
+      // active ad account.
+      const created = await Promise.all(
+        selectedPlatforms.map((platform) => {
+          const acct = accountsByPlatform.get(platform)?.[0];
+          if (!acct) {
+            throw new Error(`No connected ${platform} ad account`);
+          }
+          const finalName =
+            selectedPlatforms.length > 1
+              ? `${name} (${platform.charAt(0) + platform.slice(1).toLowerCase()})`
+              : name;
+          return client.createCampaign({
+            name: finalName,
+            platform,
+            objective: objMeta.value,
+            budget: budgetAmount,
+            budgetType: budgetType === "daily" ? "DAILY" : "LIFETIME",
+            startDate: startDate || null,
+            endDate: runContinuously ? null : endDate || null,
+            adAccountId: acct.id,
+            targeting: null,
+          });
+        })
+      );
+
+      if (mode === "launch") {
+        // Flip each newly-created campaign to ACTIVE.
+        await Promise.all(
+          created.map((c) =>
+            client.updateCampaign(c.id, { status: "ACTIVE" })
+          )
+        );
+      }
+
+      onCreated?.();
+      onClose();
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to create campaign");
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  const noAccounts =
+    !accounts.loading && (accounts.data?.filter((a) => a.isActive).length ?? 0) === 0;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && !submitting) onClose();
       }}
     >
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
@@ -241,8 +304,9 @@ export default function CreateCampaignModal({
           <button
             type="button"
             onClick={onClose}
+            disabled={!!submitting}
             aria-label="Close"
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
           >
             <X className="h-4 w-4" />
           </button>
@@ -299,9 +363,13 @@ export default function CreateCampaignModal({
         <div className="max-h-[60vh] overflow-y-auto px-8 py-6">
           {step === 1 && (
             <StepPlatform
-              platforms={PLATFORMS}
+              platforms={PLATFORMS_UI}
+              accountsByPlatform={accountsByPlatform}
               selected={selectedPlatforms}
               onToggle={togglePlatform}
+              loading={accounts.loading}
+              noAccounts={noAccounts}
+              error={accounts.error}
             />
           )}
           {step === 2 && (
@@ -337,16 +405,25 @@ export default function CreateCampaignModal({
               setCampaignName={setCampaignName}
               reachLow={reachLow}
               reachHigh={reachHigh}
+              accountsByPlatform={accountsByPlatform}
             />
           )}
         </div>
+
+        {submitError && (
+          <div className="mx-8 mb-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{submitError}</span>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/50 px-8 py-4">
           <button
             type="button"
+            disabled={!!submitting}
             onClick={() => (step === 1 ? onClose() : setStep((s) => s - 1))}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
           >
             <ChevronLeft className="h-4 w-4" />
             {step === 1 ? "Cancel" : "Back"}
@@ -367,16 +444,31 @@ export default function CreateCampaignModal({
             </button>
           ) : (
             <div className="flex flex-col items-end gap-2">
-              <button type="button" className="btn-brand" onClick={onClose}>
-                <Rocket className="h-4 w-4" strokeWidth={2.5} />
-                Launch Campaign
+              <button
+                type="button"
+                disabled={!!submitting}
+                className="btn-brand disabled:pointer-events-none disabled:opacity-60"
+                onClick={() => handleSubmit("launch")}
+              >
+                {submitting === "launch" ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Launching…
+                  </>
+                ) : (
+                  <>
+                    <Rocket className="h-4 w-4" strokeWidth={2.5} />
+                    Launch Campaign
+                  </>
+                )}
               </button>
               <button
                 type="button"
-                onClick={onClose}
-                className="text-xs font-semibold text-slate-500 hover:text-primary"
+                disabled={!!submitting}
+                onClick={() => handleSubmit("draft")}
+                className="text-xs font-semibold text-slate-500 hover:text-primary disabled:opacity-50"
               >
-                Save as Draft
+                {submitting === "draft" ? "Saving…" : "Save as Draft"}
               </button>
             </div>
           )}
@@ -391,12 +483,20 @@ export default function CreateCampaignModal({
 /* ───────────────────────────────────────── */
 function StepPlatform({
   platforms,
+  accountsByPlatform,
   selected,
   onToggle,
+  loading,
+  noAccounts,
+  error,
 }: {
-  platforms: Platform[];
-  selected: Platform["id"][];
-  onToggle: (id: Platform["id"]) => void;
+  platforms: PlatformUI[];
+  accountsByPlatform: Map<ApiPlatform, AdAccount[]>;
+  selected: ApiPlatform[];
+  onToggle: (id: ApiPlatform) => void;
+  loading: boolean;
+  noAccounts: boolean;
+  error: string | null;
 }) {
   return (
     <div>
@@ -404,21 +504,50 @@ function StepPlatform({
         Where do you want to advertise?
       </h3>
       <p className="mb-5 text-sm text-slate-500">
-        Pick one or more platforms. You can add more later.
+        Only platforms with a connected ad account can be selected.
       </p>
+
+      {error && (
+        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700">
+          Couldn&apos;t load your ad accounts — {error}
+        </div>
+      )}
+
+      {noAccounts && !loading && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <div>
+            <p className="text-sm font-bold text-amber-900">No ad accounts connected yet</p>
+            <p className="mt-0.5 text-xs text-amber-800">
+              Connect Meta, Google, TikTok or LinkedIn before creating a campaign.
+            </p>
+          </div>
+          <Link
+            href="/settings?tab=integrations"
+            className="shrink-0 rounded-lg bg-amber-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800"
+          >
+            Connect →
+          </Link>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {platforms.map((p) => {
+          const accountsForPlat = accountsByPlatform.get(p.id) ?? [];
+          const connected = accountsForPlat.length > 0;
           const isSelected = selected.includes(p.id);
           return (
             <button
               key={p.id}
               type="button"
               onClick={() => onToggle(p.id)}
+              disabled={!connected}
               className={clsx(
                 "group relative rounded-xl border-2 p-4 text-left transition",
                 isSelected
                   ? "border-primary bg-primary/5 shadow-glow"
-                  : "border-slate-200 bg-white hover:border-slate-300"
+                  : connected
+                    ? "border-slate-200 bg-white hover:border-slate-300"
+                    : "cursor-not-allowed border-dashed border-slate-200 bg-slate-50 opacity-70"
               )}
             >
               <div className="flex items-center gap-3">
@@ -436,19 +565,19 @@ function StepPlatform({
                     {p.name}
                   </div>
                   <div className="truncate text-[11px] text-slate-500">
-                    {p.sub}
+                    {connected ? accountsForPlat[0].accountName : p.sub}
                   </div>
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-between">
-                {p.connected ? (
+                {connected ? (
                   <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-600">
                     <span className="status-dot active" />
                     Connected
                   </span>
                 ) : (
-                  <span className="text-[10px] font-semibold text-slate-500 hover:text-primary">
-                    Connect account →
+                  <span className="text-[10px] font-semibold text-slate-400">
+                    Not connected
                   </span>
                 )}
               </div>
@@ -461,6 +590,10 @@ function StepPlatform({
           );
         })}
       </div>
+
+      {loading && (
+        <p className="mt-3 text-xs text-slate-400">Loading connected platforms…</p>
+      )}
     </div>
   );
 }
@@ -561,7 +694,6 @@ function StepBudget({
         </p>
       </div>
 
-      {/* Budget type toggle */}
       <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
         {(["daily", "lifetime"] as const).map((t) => (
           <button
@@ -580,7 +712,6 @@ function StepBudget({
         ))}
       </div>
 
-      {/* Budget input */}
       <div>
         <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">
           {budgetType === "daily" ? "Daily budget" : "Total budget"}
@@ -604,7 +735,6 @@ function StepBudget({
         </p>
       </div>
 
-      {/* Schedule */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -649,7 +779,6 @@ function StepBudget({
         Run continuously
       </label>
 
-      {/* AI recommendation */}
       <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/[0.06] via-purple-500/[0.04] to-pink-500/[0.04] p-4 ring-1 ring-inset ring-primary/15">
         <div className="flex items-start gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md">
@@ -686,8 +815,9 @@ function StepReview({
   setCampaignName,
   reachLow,
   reachHigh,
+  accountsByPlatform,
 }: {
-  selectedPlatforms: Platform["id"][];
+  selectedPlatforms: ApiPlatform[];
   objective: Objective["id"] | null;
   budgetType: "daily" | "lifetime";
   budgetAmount: number;
@@ -698,8 +828,11 @@ function StepReview({
   setCampaignName: (s: string) => void;
   reachLow: number;
   reachHigh: number;
+  accountsByPlatform: Map<ApiPlatform, AdAccount[]>;
 }) {
-  const platforms = PLATFORMS.filter((p) => selectedPlatforms.includes(p.id));
+  const platforms = PLATFORMS_UI.filter((p) =>
+    selectedPlatforms.includes(p.id)
+  );
   const objMeta = OBJECTIVES.find((o) => o.id === objective);
 
   const impressionsLow = reachLow * 4;
@@ -716,23 +849,26 @@ function StepReview({
         </p>
       </div>
 
-      {/* Summary card */}
       <div className="rounded-2xl p-[1px] bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
         <div className="space-y-4 rounded-[15px] bg-white p-5">
           <Row label="Platforms">
             <div className="flex flex-wrap gap-1.5">
-              {platforms.map((p) => (
-                <span
-                  key={p.id}
-                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold text-white"
-                  style={{
-                    backgroundColor: p.color,
-                    color: p.textOnColor === "black" ? "#0f172a" : "#ffffff",
-                  }}
-                >
-                  {p.name}
-                </span>
-              ))}
+              {platforms.map((p) => {
+                const acct = accountsByPlatform.get(p.id)?.[0];
+                return (
+                  <span
+                    key={p.id}
+                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold"
+                    style={{
+                      backgroundColor: p.color,
+                      color: p.textOnColor === "black" ? "#0f172a" : "#ffffff",
+                    }}
+                    title={acct?.accountName}
+                  >
+                    {p.name}
+                  </span>
+                );
+              })}
             </div>
           </Row>
 
@@ -795,6 +931,11 @@ function StepReview({
           placeholder="My new campaign"
           className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm font-medium text-slate-900 transition focus:border-primary focus:outline-none"
         />
+        {selectedPlatforms.length > 1 && (
+          <p className="mt-1.5 text-[11px] text-slate-500">
+            One campaign will be created per platform — the platform name will be appended to each.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -817,5 +958,4 @@ function Row({
   );
 }
 
-// Unused but exported for potential future Lucide icon props pattern
 export type ModalIcon = LucideIcon;

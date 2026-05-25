@@ -11,14 +11,29 @@ type Platform = {
   color: string;
 };
 
-const PLATFORMS: Platform[] = [
+export type PlatformBreakdownPoint = {
+  platform: string;
+  spend: number;
+  revenue?: number;
+};
+
+const FALLBACK_PLATFORMS: Platform[] = [
   { name: "Meta", pct: 42, spend: 10300, color: "#6366f1" },
   { name: "Google", pct: 31, spend: 7600, color: "#8b5cf6" },
   { name: "TikTok", pct: 18, spend: 4400, color: "#ec4899" },
   { name: "LinkedIn", pct: 9, spend: 2220, color: "#06b6d4" },
 ];
 
-const TOTAL = PLATFORMS.reduce((sum, p) => sum + p.spend, 0);
+const PALETTE = [
+  "#6366f1",
+  "#8b5cf6",
+  "#ec4899",
+  "#06b6d4",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#0ea5e9",
+];
 
 function fmtMoney(n: number) {
   return n.toLocaleString("en-US", {
@@ -28,8 +43,55 @@ function fmtMoney(n: number) {
   });
 }
 
-export default function PlatformBreakdown() {
+function prettyPlatform(p: string): string {
+  // Convert enum-style "META" → "Meta"
+  if (p === p.toUpperCase()) {
+    return p.charAt(0) + p.slice(1).toLowerCase();
+  }
+  return p;
+}
+
+interface PlatformBreakdownProps {
+  data?: PlatformBreakdownPoint[];
+}
+
+export default function PlatformBreakdown({ data }: PlatformBreakdownProps = {}) {
   const [active, setActive] = useState<string | null>(null);
+
+  const PLATFORMS: Platform[] = data
+    ? (() => {
+        const total =
+          data.reduce((s, p) => s + (Number(p.spend) || 0), 0) || 1;
+        return data
+          .map((p, i) => {
+            const spend = Number(p.spend) || 0;
+            return {
+              name: prettyPlatform(p.platform),
+              spend,
+              pct: Math.round((spend / total) * 100),
+              color: PALETTE[i % PALETTE.length],
+            };
+          })
+          .filter((p) => p.spend > 0)
+          .sort((a, b) => b.spend - a.spend);
+      })()
+    : FALLBACK_PLATFORMS;
+
+  const TOTAL = PLATFORMS.reduce((sum, p) => sum + p.spend, 0);
+
+  if (data && PLATFORMS.length === 0) {
+    return (
+      <section className="flex h-full flex-col items-center justify-center rounded-2xl border border-slate-200/70 bg-white p-5 text-center shadow-card">
+        <h3 className="text-base font-bold text-slate-900">
+          Spend by Platform
+        </h3>
+        <p className="mt-1 text-xs text-slate-500">No platform data yet</p>
+        <p className="mt-4 max-w-[14rem] text-[11px] text-slate-400">
+          Sync your ad accounts to see spend split per platform.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section className="flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">

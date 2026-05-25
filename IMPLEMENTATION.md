@@ -416,6 +416,90 @@ All tokens live in [apps/web/app/globals.css](apps/web/app/globals.css) and [app
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-05-26 — Onboarding flow, dashboard polish, creatives delete, AI Planner → modal handoff
+
+New users no longer land on a broken dashboard. AI Planner now actually applies generated plans. Creatives are deletable. Dashboard adapts copy to real numbers.
+
+**PART A — Onboarding (critical):**
+- [auth.ts](apps/api/src/routes/auth.ts) — `POST /auth/complete-onboarding` is now idempotent: if the user already owns a workspace, it returns `200 { workspace, member }` instead of `409`. Also persists `industry` and `companySize` on the Workspace row (schema already had the columns; previous handler ignored both).
+- [(onboarding)/layout.tsx](apps/web/app/%28onboarding%29/layout.tsx) + [(onboarding)/onboarding/page.tsx](apps/web/app/%28onboarding%29/onboarding/page.tsx) — new 4-step wizard (Workspace name → Industry → Team size → Review). Self-skips via `getMe()` if a workspace already exists. Final step calls `completeOnboarding({ workspaceName, industry, companySize })`, toasts success, redirects to `/dashboard`. Spinner on the "Go to Dashboard" button while submitting.
+- [middleware.ts](apps/web/middleware.ts) — clarified comment: `/onboarding` requires auth (so it stays out of `isPublicRoute`) but does NOT require workspace; workspace gate lives in the dashboard layout.
+- [(dashboard)/layout.tsx](apps/web/app/%28dashboard%29/layout.tsx) — workspace gate. Layout calls `getMe()` once and redirects to `/onboarding` if `workspace === null`. Until that completes, renders a centered spinner instead of mounting Sidebar/Header (which would each fan out their own NO_WORKSPACE-triggering fetches).
+
+**PART B — Dashboard:**
+- Conditional AI insight banner copy derived from real metrics — high-ROAS ("Consider scaling budget"), low-ROAS ("Pause underperformers"), spend-spike ("Monitor ROAS closely"), or neutral. Banner only renders when `spend > 0`.
+- Full welcome empty state when the workspace truly has no campaigns AND no spend — replaces charts/active-campaigns/AI-activity/quick-actions with one `EmptyState` linking to `/settings?tab=integrations` and `/ai-planner`.
+
+**PART E — Creatives:**
+- [creatives/page.tsx](apps/web/app/%28dashboard%29/creatives/page.tsx) — `CreativeCard` now accepts `onDeleted` and renders a hover-visible delete button (bottom-right, rose-tinted). Click → `window.confirm` → `deleteCreative(id)` → toast + `refetch()`. Inline `Loader2` while deleting.
+
+**PART F — AI Planner Apply → CreateCampaignModal prefill:**
+- [ai-planner/page.tsx](apps/web/app/%28dashboard%29/ai-planner/page.tsx) — `GeneratedPlan` now wires "Apply to Campaign" to stash `{ platforms, objective, budget (daily, derived from total/duration), name }` into `sessionStorage.aiPlanPrefill` and `router.push('/campaigns?new=1')`. Platform strings are upper-cased to match backend enum.
+- [CreateCampaignModal.tsx](apps/web/components/campaigns/CreateCampaignModal.tsx) — exports `CampaignPrefill` type. New `prefill?: CampaignPrefill | null` prop. On open, applies prefill: filters platforms against actually-connected ad accounts (won't auto-select disconnected platforms), matches objective against modal id / value / name, rounds budget to integer.
+- [campaigns/page.tsx](apps/web/app/%28dashboard%29/campaigns/page.tsx) — the `?new=1` effect now also pops `sessionStorage.aiPlanPrefill` (one-shot read + remove) and feeds it into the modal via the new `prefill` prop.
+
+**PART G — API methods:**
+- No new methods needed — `deleteCreative` + `getAnalyticsCampaigns` were already in [api.ts](apps/web/lib/api.ts) (with stricter typing than the spec's sketch). `includeLatestMetrics=true` is already supported on `GET /campaigns`.
+
+`tsc --noEmit` clean on both apps. `next lint` clean.
+
+### 2026-05-26 — Create-campaign flow + working card actions
+
+The previous wire-up shipped data-only — every Pause/Resume/Duplicate/Delete on the Campaigns page was a no-op, the "New Campaign" button in the Header went nowhere, and the 4-step CreateCampaignModal closed without ever calling `POST /campaigns`. All fixed now.
+
+- [CreateCampaignModal.tsx](apps/web/components/campaigns/CreateCampaignModal.tsx) — full rebuild:
+  - Step 1 (Platform) now reads live `getAdAccounts()` via `useApi`. Platforms with a connected, `isActive` ad account become selectable; the rest render in a dashed, disabled state. When zero accounts are connected the modal shows an amber callout linking to `/settings?tab=integrations`.
+  - Multi-platform selection now means "create N campaigns, one per platform" — each uses that platform's first active ad account; if 2+ platforms are picked the platform name is appended to each campaign's name automatically.
+  - Objective IDs map to backend strings ("Conversions", "Awareness", etc.).
+  - "Launch Campaign" → `createCampaign(...)` per platform, then `updateCampaign(id, { status: 'ACTIVE' })` per result.
+  - "Save as Draft" → `createCampaign(...)` only (backend creates rows in `DRAFT` by default).
+  - Submit state disables both buttons + close + ESC, shows inline error in a rose card, and calls `onCreated` so the page refetches both the list and the count chips.
+- [Campaigns list](apps/web/app/(dashboard)/campaigns/page.tsx) — `useCampaignActions(c, refetch)` hook drives all card buttons. Pause/Resume hits `updateCampaign(id, { status })`, Duplicate hits `createCampaign(...)` with the existing row's platform/objective/budget/dates/targeting/adAccountId and a "(copy)" suffix, Delete confirms then hits `deleteCampaign(id)`. Per-action loading spinners; other actions on the same card are disabled while one is in flight. Page accepts `?new=1` to auto-open the modal then strips the param.
+- [List-view row](apps/web/app/(dashboard)/campaigns/page.tsx) — was just an "Open →" link. Now has the same Pause/Duplicate/Delete icon buttons inline before the link, sharing the same `useCampaignActions` hook + `refetchAll` callback.
+- [Header.tsx](apps/web/components/layout/Header.tsx) — "New Campaign" is now a `<Link href="/campaigns?new=1">` that routes to the campaigns page and auto-opens the modal.
+- [Dashboard.tsx](apps/web/app/(dashboard)/dashboard/page.tsx) — `QUICK_ACTIONS[0].href` updated from `/campaigns` to `/campaigns?new=1` so the "Launch Campaign" quick action also opens the modal.
+
+`tsc --noEmit` + `next lint` both pass clean.
+
+### 2026-05-26 — Wired every page to real backend APIs
+
+End of mock data on the dashboard, campaigns list, campaign detail, analytics, creatives, settings (General + Workspace), header (plan badge), and sidebar (live campaign count + connected platforms strip + Clerk user). Audiences / Billing / Insights stay on mocks for Phase 3.
+
+**New foundations:**
+- [apps/web/components/ui/Skeleton.tsx](apps/web/components/ui/Skeleton.tsx) — `SkeletonCard`, `SkeletonText`, `SkeletonMetricCard`, `SkeletonTableRow`, `SkeletonCampaignCard`, `SkeletonChartCard` reusable placeholders.
+- [apps/web/components/ui/EmptyState.tsx](apps/web/components/ui/EmptyState.tsx) — branded empty state w/ icon, title, description, primary + secondary actions.
+- [apps/web/hooks/useApi.ts](apps/web/hooks/useApi.ts) — generic `useApi<T>(fetcher, deps)` hook returning `{ data, loading, error, refetch }`. Uses a ref for the fetcher so callers don't need to memoize. Cancellable via cleanup flag.
+
+**Backend:**
+- [routes/campaigns.ts](apps/api/src/routes/campaigns.ts) — `GET /campaigns` now accepts `?includeLatestMetrics=true` and includes the most recent `CampaignMetrics` row inline on each campaign so the list page can show last-day spend/ROAS/CTR per card without N+1 queries.
+
+**API client:**
+- [apps/web/lib/api.ts](apps/web/lib/api.ts) — `Campaign` type gained optional `metrics?: CampaignMetric[]`. `getCampaigns` defaults `includeLatestMetrics: 'true'`. `Workspace` type gained `slug`, `industry`, `companySize`.
+
+**Chart components made data-driven:**
+- [SpendChart.tsx](apps/web/components/dashboard/SpendChart.tsx) — now accepts `data?: SpendChartPoint[]` + `showRangeTabs` props. Falls back to generated mock for storybook/preview if no data passed.
+- [PlatformBreakdown.tsx](apps/web/components/dashboard/PlatformBreakdown.tsx) — accepts `data?: PlatformBreakdownPoint[]`. Auto-assigns colors from a palette. Empty state when data array is empty.
+
+**Pages rewired:**
+- [Dashboard](apps/web/app/(dashboard)/dashboard/page.tsx) — `useApi` for overview + timeseries (spend + ROAS) + platform breakdown + top-5 active campaigns. Time-based greeting (`Good morning/afternoon/evening`) + Clerk first name. AI insight banner hidden when spend = 0. Skeleton loading state for every section. EmptyState in the campaigns sub-card when no campaigns. Recent AI Activity + Quick Actions kept as static placeholders with TODO comments.
+- [Campaigns list](apps/web/app/(dashboard)/campaigns/page.tsx) — `useApi` with debounced search + platform/status filters + pagination. Stats chips use 4 parallel `getCampaigns({ limit: 1 })` count fetches. Skeleton grid/table during load. EmptyState differentiates "no campaigns at all" vs "filters returned nothing".
+- [Campaign Detail](apps/web/app/(dashboard)/campaigns/[id]/page.tsx) — `useApi` for `getCampaign(id)` + `getCampaignMetrics(id, 30)`. Aggregates totals for the 5 metric cards. SpendChart renders real metric data. AI Insights are **deterministic** — derived from real metrics (ROAS, CTR, budget-burn) instead of calling Claude per page view. Pause/Resume + Save + Delete all hit the real API. Ad Sets / Creatives / Audience tabs become explicit "coming soon" EmptyStates with TODO comments.
+- [Analytics](apps/web/app/(dashboard)/analytics/page.tsx) — `useApi` for overview, timeseries (re-fetched on metric switch), platform breakdown (real BarChart), and analytics campaign list (sortable, re-fetches on column click). Funnel is now derived from real `overview.impressions/clicks/conversions` numbers. Whole-page EmptyState when workspace has zero spend.
+- [Settings/General tab](apps/web/app/(dashboard)/settings/page.tsx) — pulls workspace via `getMe` + `getWorkspace`, pre-fills form. `Save Changes` calls `updateWorkspace({ name, slug, industry, companySize })`. Email field is read-only with "Clerk" badge.
+- [Settings/Workspace tab](apps/web/app/(dashboard)/settings/page.tsx) — `getMembers` for the live member list. Invite calls `inviteMember`; role change calls `updateMemberRole`; remove calls `removeMember`. Owner row is non-editable. Pending invites card is a placeholder (real invite records = Phase 3).
+- [Creatives](apps/web/app/(dashboard)/creatives/page.tsx) — `useApi(getCreatives({...}))` with type/platform/status/search filters. API → display mapper (gradients by id hash, status enum mapping). "Use This Creative" in the AI modal now calls `createCreative` with `aiGenerated: true` and refetches the grid.
+- [Sidebar](apps/web/components/layout/Sidebar.tsx) — Connected platforms strip pulls live `getAdAccounts()` (dedup by platform, hides inactive). Campaign count badge overrides static "12" with real `getCampaigns({ limit: 1 }).total`. User profile uses Clerk's `useUser()` for avatar + name + email.
+- [Header](apps/web/components/layout/Header.tsx) — Plan pill pulls `meQ.data.workspace.plan` (or user.plan as fallback). Label + CTA + color vary by tier. Links to `/billing` instead of being inert.
+
+**Mock data still in place (Phase 3):**
+- Audiences page, Billing page, Insights page
+- Settings tabs: Notifications, API Keys, Security, Danger Zone
+- Header notifications popover (still hardcoded list)
+- Recent AI Activity card on Dashboard
+- AI Insights card on Analytics page
+
+`tsc --noEmit` passes clean on both apps after one fix (added `slug/industry/companySize` to the `Workspace` API type to match the new schema).
+
 ### 2026-05-26 — Integration guide extended for TikTok + LinkedIn
 
 [docs/integrations.md](docs/integrations.md) now covers all 4 active ad platforms with the same step-by-step structure used for Meta and Google:

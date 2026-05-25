@@ -36,6 +36,9 @@ export interface User {
 export interface Workspace {
   id: string;
   name: string;
+  slug: string | null;
+  industry: string | null;
+  companySize: string | null;
   ownerId: string;
   plan: PlanType;
   createdAt: string;
@@ -68,6 +71,7 @@ export interface Campaign {
   objective: string;
   budget: string | number;
   budgetType: BudgetType;
+  externalId?: string | null;
   startDate: string | null;
   endDate: string | null;
   targeting: unknown;
@@ -75,6 +79,8 @@ export interface Campaign {
   updatedAt: string;
   adAccount?: { platform: Platform; accountName: string };
   _count?: { metrics: number };
+  /** Populated when `includeLatestMetrics=true` was passed to /campaigns. */
+  metrics?: CampaignMetric[];
 }
 
 export interface CampaignMetric {
@@ -284,7 +290,9 @@ export function useApiClient() {
     return {
     /* Campaigns */
     getCampaigns: (params?: Record<string, string | number | undefined>) =>
-      apiFetch<CampaignsResponse>(`/campaigns${buildQuery(params)}`),
+      apiFetch<CampaignsResponse>(
+        `/campaigns${buildQuery({ includeLatestMetrics: "true", ...params })}`
+      ),
     getCampaign: (id: string) =>
       apiFetch<Campaign>(`/campaigns/${id}`),
     createCampaign: (data: CreateCampaignInput) =>
@@ -346,7 +354,8 @@ export function useApiClient() {
     getMe: () => apiFetch<MeResponse>("/auth/me"),
     completeOnboarding: (data: {
       workspaceName: string;
-      industry: string;
+      industry?: string;
+      companySize?: string;
       plan?: PlanType;
     }) =>
       apiFetch<{ workspace: Workspace; member: Member }>(

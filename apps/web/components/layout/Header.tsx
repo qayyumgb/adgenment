@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { UserButton } from "@clerk/nextjs";
 import {
@@ -12,6 +13,25 @@ import {
   AlertCircle,
 } from "lucide-react";
 import clsx from "clsx";
+import { useApi } from "@/hooks/useApi";
+
+const PLAN_META: Record<
+  string,
+  { label: string; muted: string; cta: string }
+> = {
+  FREE: { label: "Free Plan", muted: "text-slate-500", cta: "Upgrade" },
+  STARTER: {
+    label: "Starter",
+    muted: "text-emerald-700",
+    cta: "Manage",
+  },
+  PRO: { label: "Pro", muted: "text-primary-700", cta: "Manage" },
+  ENTERPRISE: {
+    label: "Enterprise",
+    muted: "text-amber-700",
+    cta: "Manage",
+  },
+};
 
 type Notification = {
   id: string;
@@ -63,6 +83,12 @@ export default function Header() {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const unreadCount = NOTIFICATIONS.filter((n) => n.unread).length;
 
+  // Live plan badge — pulls from /auth/me. Cheap call, gets cached by SWR
+  // pattern in useApi.
+  const meQ = useApi((c) => c.getMe(), []);
+  const planKey = meQ.data?.workspace?.plan ?? meQ.data?.user.plan ?? "FREE";
+  const plan = PLAN_META[planKey] ?? PLAN_META.FREE;
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (
@@ -101,10 +127,13 @@ export default function Header() {
 
       <div className="ml-auto flex items-center gap-3">
         {/* New Campaign */}
-        <button type="button" className="btn-brand hidden sm:inline-flex">
+        <Link
+          href="/campaigns?new=1"
+          className="btn-brand hidden sm:inline-flex"
+        >
           <Plus className="h-4 w-4" strokeWidth={2.5} />
           <span>New Campaign</span>
-        </button>
+        </Link>
 
         {/* Notifications */}
         <div className="relative" ref={popoverRef}>
@@ -191,14 +220,14 @@ export default function Header() {
         </div>
 
         {/* Plan Pill */}
-        <button
-          type="button"
+        <Link
+          href="/billing"
           className="hidden items-center gap-1.5 rounded-full border border-primary/20 bg-primary/[0.06] px-3 py-1.5 text-xs font-semibold text-primary-700 transition hover:bg-primary/[0.1] md:inline-flex"
         >
-          <span className="text-slate-500">Free Plan</span>
+          <span className={plan.muted}>{plan.label}</span>
           <Zap className="h-3.5 w-3.5 fill-amber-400 text-amber-500" />
-          <span className="text-primary">Upgrade</span>
-        </button>
+          <span className="text-primary">{plan.cta}</span>
+        </Link>
 
         {/* User */}
         <div className="ml-1 flex h-9 w-9 items-center justify-center">
