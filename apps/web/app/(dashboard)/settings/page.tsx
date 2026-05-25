@@ -25,6 +25,8 @@ import {
 import { useApiClient, type AdAccount } from "@/lib/api";
 import MetaConnect from "@/components/settings/MetaConnect";
 import GoogleConnect from "@/components/settings/GoogleConnect";
+import TikTokConnect from "@/components/settings/TikTokConnect";
+import LinkedInConnect from "@/components/settings/LinkedInConnect";
 
 type Tab =
   | "general"
@@ -587,20 +589,6 @@ function WorkspaceTab() {
 
 const STATIC_PLATFORMS = [
   {
-    id: "tiktok",
-    name: "TikTok Ads",
-    color: "#0f172a",
-    initial: "T",
-    textOnColor: "white" as const,
-  },
-  {
-    id: "linkedin",
-    name: "LinkedIn Ads",
-    color: "#0A66C2",
-    initial: "in",
-    textOnColor: "white" as const,
-  },
-  {
     id: "youtube",
     name: "YouTube Ads",
     color: "#FF0000",
@@ -678,6 +666,26 @@ function IntegrationsTab() {
       toast.error("Finish onboarding before connecting Google");
     } else if (error === "google_no_customers") {
       toast.error("That Google account has no Google Ads customers");
+    } else if (connected === "tiktok") {
+      toast.success("TikTok Ads account connected");
+    } else if (error === "tiktok_failed") {
+      toast.error("TikTok connect failed. Please try again.");
+    } else if (error === "tiktok_cancelled") {
+      toast("TikTok connect cancelled");
+    } else if (error === "tiktok_no_workspace") {
+      toast.error("Finish onboarding before connecting TikTok");
+    } else if (error === "tiktok_no_advertisers") {
+      toast.error("That TikTok account has no advertiser access");
+    } else if (connected === "linkedin") {
+      toast.success("LinkedIn Ads account connected");
+    } else if (error === "linkedin_failed") {
+      toast.error("LinkedIn connect failed. Please try again.");
+    } else if (error === "linkedin_cancelled") {
+      toast("LinkedIn connect cancelled");
+    } else if (error === "linkedin_no_workspace") {
+      toast.error("Finish onboarding before connecting LinkedIn");
+    } else if (error === "linkedin_no_accounts") {
+      toast.error("That LinkedIn account has no ad accounts");
     }
     if (connected || error) {
       const cleaned = new URLSearchParams(window.location.search);
@@ -692,6 +700,8 @@ function IntegrationsTab() {
 
   const meta = (accounts ?? []).find((a) => a.platform === "META");
   const google = (accounts ?? []).find((a) => a.platform === "GOOGLE");
+  const tiktok = (accounts ?? []).find((a) => a.platform === "TIKTOK");
+  const linkedin = (accounts ?? []).find((a) => a.platform === "LINKEDIN");
 
   return (
     <div className="space-y-6">
@@ -718,6 +728,20 @@ function IntegrationsTab() {
                 adAccountId={google?.id}
                 accountName={google?.accountName}
                 lastSynced={timeAgo(google?.createdAt)}
+                onChange={refresh}
+              />
+              <TikTokConnect
+                connected={!!tiktok}
+                adAccountId={tiktok?.id}
+                accountName={tiktok?.accountName}
+                lastSynced={timeAgo(tiktok?.createdAt)}
+                onChange={refresh}
+              />
+              <LinkedInConnect
+                connected={!!linkedin}
+                adAccountId={linkedin?.id}
+                accountName={linkedin?.accountName}
+                lastSynced={timeAgo(linkedin?.createdAt)}
                 onChange={refresh}
               />
               {STATIC_PLATFORMS.map((p) => (

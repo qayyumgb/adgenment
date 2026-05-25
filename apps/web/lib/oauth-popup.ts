@@ -207,3 +207,39 @@ export function openGoogleOAuthPopup(): Promise<OAuthPopupResult> {
     },
   });
 }
+
+/**
+ * Same as `openMetaOAuthPopup` but for TikTok Ads.
+ */
+export function openTikTokOAuthPopup(): Promise<OAuthPopupResult> {
+  return openOAuthPopup({
+    windowName: "adgenius_tiktok_connect",
+    expectedPlatform: "tiktok",
+    async getUrl() {
+      const res = await fetch("/api/tiktok/connect");
+      const data = await res.json();
+      if (!res.ok || !data?.url) {
+        throw new Error(data?.error ?? "Could not start TikTok connect");
+      }
+      return data.url as string;
+    },
+  });
+}
+
+/**
+ * Same as `openMetaOAuthPopup` but for LinkedIn Ads.
+ */
+export function openLinkedInOAuthPopup(): Promise<OAuthPopupResult> {
+  return openOAuthPopup({
+    windowName: "adgenius_linkedin_connect",
+    expectedPlatform: "linkedin",
+    async getUrl() {
+      const res = await fetch("/api/linkedin/connect");
+      const data = await res.json();
+      if (!res.ok || !data?.url) {
+        throw new Error(data?.error ?? "Could not start LinkedIn connect");
+      }
+      return data.url as string;
+    },
+  });
+}

@@ -8,6 +8,8 @@ import creativeRouter from "./creatives";
 import workspaceRouter from "./workspace";
 import metaRouter from "./meta";
 import googleRouter from "./google";
+import tiktokRouter from "./tiktok";
+import linkedinRouter from "./linkedin";
 
 const router = Router();
 
@@ -20,5 +22,7 @@ router.use("/creatives", creativeRouter);
 router.use("/workspace", workspaceRouter);
 router.use("/meta", metaRouter);
 router.use("/google", googleRouter);
+router.use("/tiktok", tiktokRouter);
+router.use("/linkedin", linkedinRouter);
 
 export default router;

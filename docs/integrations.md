@@ -10,6 +10,8 @@ This document walks you through connecting each ad platform end-to-end. **Everyt
 - [Generate an ENCRYPTION_KEY (do this first)](#encryption-key)
 - [Meta (Facebook + Instagram) integration](#meta-integration)
 - [Google Ads integration](#google-ads-integration)
+- [TikTok Ads integration](#tiktok-ads-integration)
+- [LinkedIn Ads integration](#linkedin-ads-integration)
 - [Production: verification & launch checklist](#production)
 - [Troubleshooting](#troubleshooting)
 
@@ -31,8 +33,10 @@ That's it. No env vars, no developer tokens, no Google Cloud Console.
 
 | Platform | Cost | One-time setup time | Production gating |
 |---|---|---|---|
-| Meta | Free | ~15 min | App review for some scopes |
+| Meta | Free | ~15 min | App review for `ads_management`, `business_management` |
 | Google Ads | Free (if you use a Manager account) | ~30 min | OAuth verification + developer token tier upgrade |
+| TikTok Ads | Free | ~20 min | Production app review by TikTok (~5 business days) |
+| LinkedIn Ads | Free | ~20 min | Marketing Developer Platform (MDP) approval (~1–3 weeks) |
 
 ### Environment variables this guide will set
 
@@ -52,6 +56,16 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://localhost:4000/api/google/callback
 GOOGLE_DEVELOPER_TOKEN=
+
+# TikTok Ads
+TIKTOK_APP_ID=
+TIKTOK_APP_SECRET=
+TIKTOK_REDIRECT_URI=http://localhost:4000/api/tiktok/callback
+
+# LinkedIn Ads
+LINKEDIN_CLIENT_ID=
+LINKEDIN_CLIENT_SECRET=
+LINKEDIN_REDIRECT_URI=http://localhost:4000/api/linkedin/callback
 
 # Where OAuth callbacks redirect after success/failure
 FRONTEND_URL=http://localhost:3000
@@ -300,16 +314,214 @@ That confirms the popup + OAuth half works. To complete the integration, finish 
 
 ---
 
+## TikTok Ads integration
+
+### Prerequisites
+
+- A TikTok account (personal is fine for sandbox; Business account recommended for production)
+- A **TikTok For Business** account — sign up at <https://business.tiktok.com/> if you don't have one
+- About 20 minutes
+
+### Step 1 — Sign in to the TikTok Marketing API portal
+
+1. Go to <https://business-api.tiktok.com/portal/>
+2. Click **Login** (top right) → sign in with your TikTok account
+3. If this is your first time, you'll be asked to accept the developer terms
+
+### Step 2 — Create an app
+
+1. Top-right → **My Apps** → click the **+** / **Create an app** button
+2. Fill in:
+   - **App name**: `AdGenius AI Dev` (visible to users at consent)
+   - **App description**: a sentence describing what your app does (e.g. "AI-powered ad management dashboard for SMBs")
+   - **Brand name**: `AdGenius AI`
+   - **App icon**: optional in dev; required for production
+   - **Category**: pick "Marketing" or whatever fits
+3. Click **Confirm** / **Create**
+
+You'll land on the app's detail page.
+
+### Step 3 — Configure OAuth settings
+
+Still on the app detail page:
+
+1. Scroll to the **Auth** / **Permissions** section
+2. **Redirect URL** (sometimes called "Callback URL"): paste exactly
+   ```
+   http://localhost:4000/api/tiktok/callback
+   ```
+3. **Scopes**: enable
+   - `tt.advertiser.read` (or "Advertisement Management" Read)
+   - `tt.advertiser.write` (or "Advertisement Management" Write)
+4. Click **Save**
+
+### Step 4 — Copy your App ID and App Secret
+
+1. App detail page → top section → copy **App ID**
+2. **App Secret** → click **Show** / eye icon → copy the value
+3. ⚠️ The secret may only be shown once — store it immediately
+
+### Step 5 — Add yourself as a test user (sandbox mode)
+
+While your app is in **sandbox** mode, only manually-added testers can authenticate.
+
+1. App detail page → **Testers** / **Sandbox** section
+2. Add your TikTok handle (or your tester's handle) as an authorized tester
+3. Save
+
+### Step 6 — Update `apps/api/.env`
+
+```
+TIKTOK_APP_ID=<your App ID>
+TIKTOK_APP_SECRET=<your App Secret>
+TIKTOK_REDIRECT_URI=http://localhost:4000/api/tiktok/callback
+```
+
+### Step 7 — Test
+
+1. Restart the API: `Ctrl+C` → `npm run dev`
+2. Dashboard → **Connect Apps** → click **Connect** next to TikTok Ads
+3. Popup opens at `tiktok.com/v2/auth/authorize`
+4. Sign in with the TikTok account that's an authorized tester
+5. Grant the requested ad permissions
+6. Popup auto-closes → modal updates to **Connected** with your TikTok advertiser name
+
+### TikTok scopes used
+
+- `tt.advertiser.read` — read ad campaigns, ad sets, ads, reporting
+- `tt.advertiser.write` — create / pause / update campaigns and ads
+
+### TikTok common errors
+
+| Error | Cause | Fix |
+|---|---|---|
+| `code: 40001 — Invalid auth_code` | Auth code expired (codes are single-use, ~10 min lifetime) | Click Connect again to get a fresh code |
+| `code: 40002 — App not authorized` | Scopes not granted or not whitelisted in app settings | Step 3 — make sure the scopes are enabled on the app |
+| `code: 40105 — Permission denied` | Your TikTok account isn't an authorized tester | Step 5 — add yourself as a tester |
+| Popup shows "TikTok Business Center" picker | TikTok wants you to choose which business unit's advertisers to grant access to | Pick the BC that owns the advertisers you want to manage |
+
+### TikTok token lifetime
+
+⚠️ TikTok access tokens last **24 hours by default** and do NOT come with a refresh token. After expiry, the user has to reconnect. A future enhancement could use TikTok's "long-lived token" feature, but it's not wired today — flagged in [IMPLEMENTATION.md → Known TODOs](../IMPLEMENTATION.md).
+
+### TikTok production approval
+
+For your app to leave sandbox mode and let real users authenticate:
+
+1. App detail page → **Apply for review** / **Switch to production**
+2. Provide: app description, demo video, privacy policy URL, terms URL
+3. TikTok reviews → usually ~5 business days
+4. Once approved, any TikTok user can complete the OAuth flow
+
+---
+
+## LinkedIn Ads integration
+
+### Prerequisites
+
+- A LinkedIn account (personal — same one you'll use to administer the app)
+- About 20 minutes for the setup itself; **~1–3 weeks** of waiting if you need ad-platform access (see below)
+- ⚠️ **LinkedIn restricts ad-platform APIs.** Out of the box, your app can only do basic sign-in. To call `r_ads` / `r_ads_reporting`, you need approval from the LinkedIn **Marketing Developer Platform (MDP)** program — see Step 6 below
+
+### Step 1 — Create a LinkedIn app
+
+1. Go to <https://www.linkedin.com/developers/apps>
+2. Click **Create app**
+3. Fill in:
+   - **App name**: `AdGenius AI Dev`
+   - **LinkedIn Page**: select a company page you control. If you don't have one, create one first at <https://www.linkedin.com/company/setup/new/> (takes 2 minutes — just a name + URL)
+   - **Privacy policy URL**: any URL (your landing page works for dev; required to be a real privacy policy for production)
+   - **App logo**: upload any image
+   - Accept terms → **Create app**
+
+### Step 2 — Configure OAuth redirect URL
+
+1. App dashboard → **Auth** tab
+2. **Authorized redirect URLs for your app** → click **+ Add redirect URL** → paste:
+   ```
+   http://localhost:4000/api/linkedin/callback
+   ```
+3. Click **Update**
+
+### Step 3 — Copy your Client ID and Client Secret
+
+1. Same **Auth** tab → top section
+2. **Client ID** — copy it
+3. **Client Secret** → click **Show** → copy the value
+
+### Step 4 — Add the products your app needs
+
+LinkedIn calls feature bundles "Products". You need a few:
+
+1. App dashboard → **Products** tab
+2. Find **Sign In with LinkedIn using OpenID Connect** → click **Request access** (instantly approved)
+3. Find **Marketing Developer Platform** → click **Request access**
+   - This opens an application form — see Step 6
+
+### Step 5 — Update `apps/api/.env` (you can test sign-in immediately)
+
+```
+LINKEDIN_CLIENT_ID=<your Client ID>
+LINKEDIN_CLIENT_SECRET=<your Client Secret>
+LINKEDIN_REDIRECT_URI=http://localhost:4000/api/linkedin/callback
+```
+
+### Step 6 — Apply for Marketing Developer Platform (MDP) access
+
+This is the gate that lets your app actually read/write ad data. Without it, the OAuth flow will succeed but `getAdAccounts` / `getCampaigns` will return permission errors.
+
+1. Products tab → **Marketing Developer Platform** → **Request access**
+2. The application form asks for:
+   - **Business use case** (1–2 paragraphs): how your app uses LinkedIn ads data
+   - **Integration type**: pick "Advertising automation" or similar
+   - **Expected user base**: rough estimate (B2B SaaS customers, etc.)
+   - **Demo / mockup**: link to your landing page or a demo video
+3. Submit → LinkedIn reviews → response in **1–3 weeks** typically (sometimes faster)
+4. Once approved, your app's `r_ads`, `r_ads_reporting`, and `rw_ads` scopes become usable
+
+### Step 7 — Test (OAuth flow, even without MDP)
+
+You can test the OAuth half right now even without MDP approval:
+
+1. Restart the API: `Ctrl+C` → `npm run dev`
+2. Dashboard → **Connect Apps** → **Connect** next to LinkedIn Ads
+3. Popup opens at `linkedin.com/oauth/v2/authorization`
+4. Sign in
+5. **Expected without MDP**: LinkedIn shows an error or asks you to grant only basic scopes. The backend will fall over at `getAdAccounts` → toast shows "linkedin failed"
+6. **Expected with MDP approved**: You see the full consent screen, authorize → popup closes → modal shows your LinkedIn ad accounts as **Connected**
+
+### LinkedIn scopes used
+
+- `r_ads` — read ad accounts, campaigns, ad sets, creatives
+- `r_ads_reporting` — read campaign analytics / reporting endpoints
+- `w_organization_social` — post to company pages (we ask for it because the spec required it; future "AI-published creatives" feature may use it)
+
+### LinkedIn common errors
+
+| Error | Cause | Fix |
+|---|---|---|
+| `Bummer, something went wrong` on LinkedIn consent screen | The app is requesting a scope it hasn't been approved for | Either remove the scope from `linkedin.service.ts` or wait for MDP approval (Step 6) |
+| `unauthorized_scope_error` in URL after redirect | Same as above | Same fix |
+| `redirect_uri does not match the registered value` | Mismatch between code and Auth tab | Step 2 — must match exactly including `http://`, port, trailing slash, etc. |
+| 403 on `/adAccountsV2` after successful auth | App doesn't have MDP access yet | Step 6 — submit application; you can test other parts in the meantime |
+| Popup shows LinkedIn login then immediately closes | LinkedIn's session validation rejected the cookies | Try in incognito; or check that your LinkedIn account is in good standing |
+
+### LinkedIn production considerations
+
+LinkedIn doesn't have a "test mode" like Meta or TikTok — once MDP is approved, any LinkedIn user can authenticate with your app. The MDP approval IS your production gate. Plan for the 1–3 week wait when you're moving toward launch.
+
+---
+
 ## Production
 
-### Before going live, both platforms require verification
+### Before going live, every platform has its own verification path
 
-| Step | Meta | Google |
-|---|---|---|
-| App review for sensitive scopes | Required for `ads_management`, `business_management` | Required for `adwords` |
-| Time | 1–4 weeks | 4–8 weeks |
-| What you submit | Privacy policy URL, ToS, demo video, app icon, screencast | Same + DNS-verified domain ownership |
-| In the meantime | Up to ~25 users via Test Users list | Up to ~100 users via Test Users list |
+| Step | Meta | Google | TikTok | LinkedIn |
+|---|---|---|---|---|
+| Review required | `ads_management`, `business_management` | `adwords` scope + Basic developer token | Production app review | Marketing Developer Platform |
+| Time | 1–4 weeks | 4–8 weeks | ~5 business days | 1–3 weeks |
+| Submit | Privacy policy, ToS, demo video, app icon, screencast | Same + DNS-verified domain ownership | App description, demo video, privacy URL | Business use case writeup, integration type, demo |
+| In the meantime | Up to ~25 users via Test Users list | Up to ~100 users via Test Users list | Sandbox testers only | No production access until MDP approved |
 
 ### Developer token tier (Google only)
 
@@ -326,10 +538,12 @@ In your production `apps/api/.env` (managed in your hosting provider's secret ma
 ```
 META_REDIRECT_URI=https://api.adgenius.ai/api/meta/callback
 GOOGLE_REDIRECT_URI=https://api.adgenius.ai/api/google/callback
+TIKTOK_REDIRECT_URI=https://api.adgenius.ai/api/tiktok/callback
+LINKEDIN_REDIRECT_URI=https://api.adgenius.ai/api/linkedin/callback
 FRONTEND_URL=https://app.adgenius.ai
 ```
 
-Then go back to Meta App Dashboard / Google Cloud Console and add the production URLs to the authorized redirect lists (alongside the localhost ones — keep both for parallel dev access).
+Then go to each platform's developer portal and add the production URLs to the authorized redirect lists (alongside the localhost ones — keep both for parallel dev access).
 
 ### Production launch checklist
 
@@ -338,11 +552,14 @@ Then go back to Meta App Dashboard / Google Cloud Console and add the production
 - [ ] DNS-verified domain ownership in Google Cloud Console
 - [ ] Meta App submitted for review (`ads_management`, `business_management`, `ads_read`)
 - [ ] Google Ads developer token at **Basic access** tier
-- [ ] Production `GOOGLE_REDIRECT_URI` + `META_REDIRECT_URI` added to authorized lists
+- [ ] TikTok app submitted for production review (sandbox → production)
+- [ ] LinkedIn Marketing Developer Platform application submitted + approved
+- [ ] Production redirect URIs added to authorized lists at all 4 platforms
 - [ ] `ENCRYPTION_KEY` is a fresh 64-hex-char value (not reused from dev)
 - [ ] Database `DATABASE_URL` points at your production Postgres
 - [ ] Rate limiter switched from in-memory to Redis (see [IMPLEMENTATION.md → Known TODOs](../IMPLEMENTATION.md))
-- [ ] OAuth `state` parameter is a server-side random nonce, not the user ID (see SECURITY TODO in `routes/meta.ts` and `routes/google.ts`)
+- [ ] OAuth `state` parameter is a server-side random nonce, not the user ID (`SECURITY TODO` in all 4 route files)
+- [ ] TikTok token-refresh path is wired (24h tokens currently force a manual reconnect — see Known TODOs)
 
 ---
 
@@ -364,11 +581,18 @@ Then go back to Meta App Dashboard / Google Cloud Console and add the production
 
 - **Meta**: long-lived tokens last ~60 days. After expiry, the user has to reconnect (no automatic refresh path yet).
 - **Google**: access tokens last ~1 hour but we store the refresh token. The sync service auto-refreshes on 401 in [sync.service.ts](../apps/api/src/services/sync.service.ts).
+- **TikTok**: access tokens last ~24 hours. **No refresh wired today** — user must reconnect daily. Adding refresh is a future TODO; in the meantime users will see a "sync failed" toast once a day until they reconnect.
+- **LinkedIn**: access tokens last ~60 days; refresh tokens last ~1 year. The token is stored encrypted; refresh-on-401 is not wired yet but the refresh_token column is populated for when it is.
 
 ### "GOOGLE_DEVELOPER_TOKEN is not configured"
 
 - The OAuth flow worked but the next Ads API call needs the token
 - See [Google Step 6](#step-6--get-the-developer-token-manager-account) or just leave Google connect alone if you're focusing on Meta
+
+### "TIKTOK_APP_ID is not configured" / similar for any platform
+
+- Means the env var is missing in `apps/api/.env`. Set it (and the matching `_SECRET` / `_REDIRECT_URI`) following the relevant section above
+- Restart the API after changing env vars (`tsx watch` should auto-reload, but worst case do `Ctrl+C` → `npm run dev`)
 
 ### Encryption errors when sync runs
 

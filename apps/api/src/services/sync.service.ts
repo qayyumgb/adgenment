@@ -14,6 +14,8 @@ import { prisma } from "../lib/prisma";
 import { decryptToken, encryptToken } from "../lib/crypto";
 import { metaService, type MetaCampaign } from "./meta.service";
 import { googleService, isGoogleAuthError } from "./google.service";
+import { tiktokService } from "./tiktok.service";
+import { linkedinService } from "./linkedin.service";
 
 export type SyncResult = {
   platform: string;
@@ -91,6 +93,45 @@ function mapGoogleChannelType(type: string): string {
 
 // Google uses 2037-12-30 as the "no end date" sentinel for ongoing campaigns.
 const GOOGLE_NO_END_DATE = "2037-12-30";
+
+function mapTikTokStatus(status: string): CampaignStatus {
+  switch (status) {
+    case "ENABLE":
+    case "CAMPAIGN_STATUS_ENABLE":
+    case "ACTIVE":
+      return "ACTIVE";
+    case "DISABLE":
+    case "CAMPAIGN_STATUS_DISABLE":
+    case "PAUSE":
+      return "PAUSED";
+    case "DELETE":
+    case "CAMPAIGN_STATUS_DELETE":
+      return "ENDED";
+    default:
+      return "DRAFT";
+  }
+}
+
+function mapLinkedInStatus(status: string): CampaignStatus {
+  switch (status) {
+    case "ACTIVE":
+      return "ACTIVE";
+    case "PAUSED":
+      return "PAUSED";
+    case "DRAFT":
+      return "DRAFT";
+    case "ARCHIVED":
+    case "CANCELED":
+    case "COMPLETED":
+      return "ENDED";
+    default:
+      return "DRAFT";
+  }
+}
+
+// LinkedIn assumes $50 / external website conversion when revenue isn't
+// reported by the API. Rough heuristic — see TODO in IMPLEMENTATION.md.
+const LINKEDIN_REVENUE_PER_CONVERSION = 50;
 
 class SyncService {
   async syncMetaAccount(adAccount: AdAccount): Promise<SyncResult> {
@@ -351,6 +392,253 @@ class SyncService {
     }
 
     return { platform: "GOOGLE", campaignsSynced, metricsSynced };
+  }
+
+  /**
+   * Sync a TikTok Ads advertiser. TikTok returns budgets and spend in the
+   * advertiser's currency (not micros) so no conversion is needed.
+   */
+  async syncTikTokAccount(adAccount: AdAccount): Promise<SyncResult> {
+    const accessToken = decryptToken(adAccount.accessToken);
+    const advertiserId = adAccount.accountId;
+
+    // 1. Pull campaigns and upsert.
+    const campaigns = await tiktokService.getCampaigns(
+      accessToken,
+      advertiserId
+    );
+    const idMap: Record<string, string> = {};
+    let campaignsSynced = 0;
+
+    for (const tc of campaigns) {
+      if (!tc.campaign_id) continue;
+      const status = mapTikTokStatus(tc.status);
+      const budgetType: BudgetType =
+        tc.budget_mode === "BUDGET_MODE_TOTAL" ? "LIFETIME" : "DAILY";
+
+      const campaign = await prisma.campaign.upsert({
+        where: {
+          adAccountId_externalId: {
+            adAccountId: adAccount.id,
+            externalId: tc.campaign_id,
+          },
+        },
+        create: {
+          workspaceId: adAccount.workspaceId,
+          adAccountId: adAccount.id,
+          platform: "TIKTOK",
+          externalId: tc.campaign_id,
+          name: tc.campaign_name,
+          status,
+          objective: tc.objective_type,
+          budget: new Prisma.Decimal((tc.budget ?? 0).toFixed(2)),
+          budgetType,
+          startDate: tc.create_time ? new Date(tc.create_time) : null,
+          endDate: null,
+          targeting: Prisma.JsonNull,
+        },
+        update: {
+          name: tc.campaign_name,
+          status,
+          objective: tc.objective_type,
+          budget: new Prisma.Decimal((tc.budget ?? 0).toFixed(2)),
+          budgetType,
+        },
+      });
+      idMap[tc.campaign_id] = campaign.id;
+      campaignsSynced++;
+    }
+
+    // 2. Pull last-30d daily metrics.
+    const today = new Date();
+    const start = new Date(today);
+    start.setUTCDate(today.getUTCDate() - 30);
+    const startStr = start.toISOString().slice(0, 10);
+    const endStr = today.toISOString().slice(0, 10);
+
+    const metrics = await tiktokService.getCampaignMetrics(
+      accessToken,
+      advertiserId,
+      startStr,
+      endStr
+    );
+
+    let metricsSynced = 0;
+    for (const m of metrics) {
+      const ourCampaignId = idMap[m.campaign_id];
+      if (!ourCampaignId || !m.stat_time_day) continue;
+
+      const spend = parseFloat(m.spend || "0") || 0;
+      const impressions = parseInt(m.impressions || "0", 10) || 0;
+      const clicks = parseInt(m.clicks || "0", 10) || 0;
+      const conversions = parseFloat(m.conversions || "0") || 0;
+      // TikTok doesn't return revenue directly — use 2x spend as a coarse
+      // ROAS-2 placeholder. Real revenue should come from the merchant's
+      // own pixel/conversion tracking in a future enhancement.
+      const revenue = spend * 2;
+
+      const ctr = impressions > 0 ? clicks / impressions : 0;
+      const cpc = clicks > 0 ? spend / clicks : 0;
+      const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+      const roas = spend > 0 ? revenue / spend : 0;
+
+      const date = dayUTC(m.stat_time_day);
+
+      const data = {
+        impressions,
+        clicks,
+        spend: new Prisma.Decimal(spend.toFixed(2)),
+        conversions: Math.round(conversions),
+        revenue: new Prisma.Decimal(revenue.toFixed(2)),
+        ctr,
+        cpc,
+        cpm,
+        roas,
+      };
+
+      await prisma.campaignMetrics.upsert({
+        where: { campaignId_date: { campaignId: ourCampaignId, date } },
+        create: { campaignId: ourCampaignId, date, ...data },
+        update: data,
+      });
+      metricsSynced++;
+    }
+
+    return { platform: "TIKTOK", campaignsSynced, metricsSynced };
+  }
+
+  /**
+   * Sync a LinkedIn Ads account. LinkedIn returns budgets nested as
+   * `{ amount, currencyCode }` and run schedules as epoch milliseconds.
+   */
+  async syncLinkedInAccount(adAccount: AdAccount): Promise<SyncResult> {
+    const accessToken = decryptToken(adAccount.accessToken);
+    const accountId = adAccount.accountId;
+
+    // 1. Pull campaigns and upsert.
+    const campaigns = await linkedinService.getCampaigns(
+      accessToken,
+      accountId
+    );
+    const idMap: Record<string, string> = {};
+    let campaignsSynced = 0;
+
+    for (const lc of campaigns) {
+      if (!lc.id) continue;
+      const status = mapLinkedInStatus(lc.status);
+      const hasDailyBudget =
+        lc.dailyBudget && parseFloat(lc.dailyBudget.amount) > 0;
+      const budgetType: BudgetType = hasDailyBudget ? "DAILY" : "LIFETIME";
+      const budgetAmount = hasDailyBudget
+        ? parseFloat(lc.dailyBudget!.amount)
+        : lc.totalBudget
+          ? parseFloat(lc.totalBudget.amount)
+          : 0;
+
+      const startDate = lc.runSchedule.start
+        ? new Date(lc.runSchedule.start)
+        : null;
+      const endDate = lc.runSchedule.end
+        ? new Date(lc.runSchedule.end)
+        : null;
+
+      const campaign = await prisma.campaign.upsert({
+        where: {
+          adAccountId_externalId: {
+            adAccountId: adAccount.id,
+            externalId: lc.id,
+          },
+        },
+        create: {
+          workspaceId: adAccount.workspaceId,
+          adAccountId: adAccount.id,
+          platform: "LINKEDIN",
+          externalId: lc.id,
+          name: lc.name,
+          status,
+          objective: lc.objectiveType,
+          budget: new Prisma.Decimal(budgetAmount.toFixed(2)),
+          budgetType,
+          startDate,
+          endDate,
+          targeting: Prisma.JsonNull,
+        },
+        update: {
+          name: lc.name,
+          status,
+          objective: lc.objectiveType,
+          budget: new Prisma.Decimal(budgetAmount.toFixed(2)),
+          budgetType,
+          startDate,
+          endDate,
+        },
+      });
+      idMap[lc.id] = campaign.id;
+      campaignsSynced++;
+    }
+
+    // 2. Pull last-30d daily metrics via the analytics endpoint.
+    const today = new Date();
+    const start = new Date(today);
+    start.setUTCDate(today.getUTCDate() - 30);
+
+    const startDate = {
+      year: start.getUTCFullYear(),
+      month: start.getUTCMonth() + 1,
+      day: start.getUTCDate(),
+    };
+    const endDate = {
+      year: today.getUTCFullYear(),
+      month: today.getUTCMonth() + 1,
+      day: today.getUTCDate(),
+    };
+
+    const analytics = await linkedinService.getCampaignAnalytics(
+      accessToken,
+      accountId,
+      startDate,
+      endDate
+    );
+
+    let metricsSynced = 0;
+    for (const a of analytics) {
+      const ourCampaignId = idMap[a.campaignId];
+      if (!ourCampaignId || !a.dateStart) continue;
+
+      const spend = parseFloat(a.costInLocalCurrency || "0") || 0;
+      const impressions = a.impressions || 0;
+      const clicks = a.clicks || 0;
+      const conversions = a.externalWebsiteConversions || 0;
+      const revenue = conversions * LINKEDIN_REVENUE_PER_CONVERSION;
+
+      const ctr = impressions > 0 ? clicks / impressions : 0;
+      const cpc = clicks > 0 ? spend / clicks : 0;
+      const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+      const roas = spend > 0 ? revenue / spend : 0;
+
+      const date = dayUTC(a.dateStart);
+
+      const data = {
+        impressions,
+        clicks,
+        spend: new Prisma.Decimal(spend.toFixed(2)),
+        conversions: Math.round(conversions),
+        revenue: new Prisma.Decimal(revenue.toFixed(2)),
+        ctr,
+        cpc,
+        cpm,
+        roas,
+      };
+
+      await prisma.campaignMetrics.upsert({
+        where: { campaignId_date: { campaignId: ourCampaignId, date } },
+        create: { campaignId: ourCampaignId, date, ...data },
+        update: data,
+      });
+      metricsSynced++;
+    }
+
+    return { platform: "LINKEDIN", campaignsSynced, metricsSynced };
   }
 }
 

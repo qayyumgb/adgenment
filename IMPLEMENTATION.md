@@ -17,7 +17,7 @@ A multi-platform AI-powered ad management dashboard. Premium SaaS UI, Claude-pow
 | Backend | Express 4 · TypeScript · Helmet · express-rate-limit |
 | ORM / DB | Prisma 5 · PostgreSQL |
 | AI | Anthropic Claude Sonnet 4 (`claude-sonnet-4-20250514`) via native `fetch` |
-| Ad platforms | Meta Marketing API v19.0 · Google Ads API v17 (OAuth 2.0 + AES-256-CBC encrypted tokens, refresh-token auto-rotation) |
+| Ad platforms | Meta Marketing API v19.0 · Google Ads API v17 · TikTok Marketing API v1.3 · LinkedIn Marketing API v2 (OAuth 2.0 + AES-256-CBC encrypted tokens, refresh-token auto-rotation for Google) |
 | Monorepo | Turborepo |
 
 ---
@@ -48,12 +48,16 @@ adgenius-ai/
 │   │       │   ├── workspace.ts      # /members, /invite, role updates
 │   │       │   ├── meta.ts           # Meta OAuth + sync + ad accounts
 │   │       │   ├── google.ts         # Google OAuth + sync + customers
+│   │       │   ├── tiktok.ts         # TikTok OAuth + sync
+│   │       │   ├── linkedin.ts       # LinkedIn OAuth + sync
 │   │       │   └── ai.ts             # /plan-campaign /generate-copy /health
 │   │       ├── services/
-│   │       │   ├── ai.service.ts     # Anthropic Messages API wrapper
-│   │       │   ├── meta.service.ts   # Meta Marketing API
-│   │       │   ├── google.service.ts # Google Ads API v17 (GAQL search, refresh)
-│   │       │   └── sync.service.ts   # Pull campaigns + metrics for Meta + Google
+│   │       │   ├── ai.service.ts       # Anthropic Messages API wrapper
+│   │       │   ├── meta.service.ts     # Meta Marketing API
+│   │       │   ├── google.service.ts   # Google Ads API v17 (GAQL search, refresh)
+│   │       │   ├── tiktok.service.ts   # TikTok Marketing API v1.3
+│   │       │   ├── linkedin.service.ts # LinkedIn Marketing API v2 (URN-based)
+│   │       │   └── sync.service.ts     # Pull campaigns + metrics for all 4 platforms
 │   │       └── types/
 │   │           └── express.d.ts      # Augments Request with userId/dbUserId/user
 │   │
@@ -66,7 +70,7 @@ adgenius-ai/
 │       │   ├── dashboard/            # MetricCard, SpendChart, CampaignTable, PlatformBreakdown
 │       │   ├── campaigns/            # CreateCampaignModal
 │       │   ├── connect/              # ConnectModal (lists all platforms, opens OAuth popup)
-│       │   └── settings/             # MetaConnect + GoogleConnect (inline card variants)
+│       │   └── settings/             # MetaConnect + GoogleConnect + TikTokConnect + LinkedInConnect
 │       ├── lib/
 │       │   ├── api.ts                # useApiClient() — typed REST hook
 │       │   └── oauth-popup.ts        # openOAuthPopup() / openMetaOAuthPopup()
@@ -93,8 +97,12 @@ adgenius-ai/
 │               │   └── generate-copy/route.ts
 │               ├── meta/
 │               │   └── connect/route.ts    # Forwards Clerk session, returns Meta OAuth URL
-│               └── google/
-│                   └── connect/route.ts    # Forwards Clerk session, returns Google OAuth URL
+│               ├── google/
+│               │   └── connect/route.ts    # Forwards Clerk session, returns Google OAuth URL
+│               ├── tiktok/
+│               │   └── connect/route.ts    # Forwards Clerk session, returns TikTok OAuth URL
+│               └── linkedin/
+│                   └── connect/route.ts    # Forwards Clerk session, returns LinkedIn OAuth URL
 └── packages/
     └── shared/                       # Cross-app shared code
 ```
@@ -214,12 +222,28 @@ Rate-limited at 20 req / 15min per IP (vs 100 for the rest of `/api`).
 | POST | `/api/google/sync/:adAccountId` | Auth required. Calls `syncService.syncGoogleAccount` — refreshes access token on 401 via stored refresh token, persists the new access token, upserts Campaign + 30-day daily CampaignMetrics |
 | GET | `/api/google/customers` | Auth required. Returns stored Google customers enriched with live name/currency/timezone/status (tokens never returned) |
 
+### TikTok — [tiktok.ts](apps/api/src/routes/tiktok.ts)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/tiktok/oauth-url` | Auth required. Returns TikTok OAuth URL |
+| GET | `/api/tiktok/callback` | **No auth** — TikTok redirects browser here. Exchanges code for access token + returned `advertiser_ids`, fetches advertiser info for each, upserts AdAccount per advertiser, redirects to `/connect/done?connected=tiktok` |
+| POST | `/api/tiktok/sync/:adAccountId` | Auth required. Calls `syncService.syncTikTokAccount` → upserts Campaign + last-30d daily CampaignMetrics from the `report/integrated/get` endpoint |
+
+### LinkedIn — [linkedin.ts](apps/api/src/routes/linkedin.ts)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/linkedin/oauth-url` | Auth required. Returns LinkedIn OAuth URL |
+| GET | `/api/linkedin/callback` | **No auth** — LinkedIn redirects browser here. Exchanges code for access + refresh tokens (both encrypted), pulls all `BUSINESS / ACTIVE` ad accounts via `adAccountsV2`, upserts one AdAccount per account, redirects to `/connect/done?connected=linkedin` |
+| POST | `/api/linkedin/sync/:adAccountId` | Auth required. Calls `syncService.syncLinkedInAccount` → upserts Campaign (URN-based; budget = dailyBudget.amount or totalBudget.amount) + last-30d daily CampaignMetrics via `adAnalyticsV2` |
+
 ### Next.js proxies — [app/api/](apps/web/app/api/)
 Server-side proxies that hide the backend URL + add Clerk auth forwarding + validation:
 - [ai/plan-campaign/route.ts](apps/web/app/api/ai/plan-campaign/route.ts) — POST `/api/ai/plan-campaign`
 - [ai/generate-copy/route.ts](apps/web/app/api/ai/generate-copy/route.ts) — POST `/api/ai/generate-copy`
 - [meta/connect/route.ts](apps/web/app/api/meta/connect/route.ts) — GET returns `{ url }` for Meta OAuth (uses `auth()` to attach Bearer token to backend call)
-- [google/connect/route.ts](apps/web/app/api/google/connect/route.ts) — same as Meta but for Google OAuth
+- [google/connect/route.ts](apps/web/app/api/google/connect/route.ts) — same pattern for Google
+- [tiktok/connect/route.ts](apps/web/app/api/tiktok/connect/route.ts) — same pattern for TikTok
+- [linkedin/connect/route.ts](apps/web/app/api/linkedin/connect/route.ts) — same pattern for LinkedIn
 
 ### Health
 - `GET /health` → `{ status, timestamp, uptime, version }`
@@ -291,6 +315,12 @@ GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 GOOGLE_REDIRECT_URI=http://localhost:4000/api/google/callback
 GOOGLE_DEVELOPER_TOKEN=...   # from Google Ads → Tools & Settings → API Center
+TIKTOK_APP_ID=...
+TIKTOK_APP_SECRET=...
+TIKTOK_REDIRECT_URI=http://localhost:4000/api/tiktok/callback
+LINKEDIN_CLIENT_ID=...
+LINKEDIN_CLIENT_SECRET=...
+LINKEDIN_REDIRECT_URI=http://localhost:4000/api/linkedin/callback
 ENCRYPTION_KEY=...           # hashed to 32 bytes via SHA-256 at runtime; any string works
 FRONTEND_URL=http://localhost:3000
 WEB_ORIGIN=http://localhost:3000
@@ -385,6 +415,33 @@ All tokens live in [apps/web/app/globals.css](apps/web/app/globals.css) and [app
 ## Change Log
 
 > Most recent first. Add a new dated entry for every significant change.
+
+### 2026-05-26 — Integration guide extended for TikTok + LinkedIn
+
+[docs/integrations.md](docs/integrations.md) now covers all 4 active ad platforms with the same step-by-step structure used for Meta and Google:
+
+- **TikTok section** — TikTok For Business signup + Marketing API portal app creation, OAuth redirect setup, App ID + Secret retrieval, sandbox tester whitelist, `.env` values, test walkthrough, scopes used, common error table (auth_code expiry, permission denied, missing scopes), 24-hour token caveat, and the path to production review.
+- **LinkedIn section** — LinkedIn Developer Portal app creation (including the LinkedIn Page requirement), Auth tab + redirect URI, Client ID/Secret, the **Marketing Developer Platform (MDP)** application form details + 1–3 week wait time, OAuth-flow smoke test path without MDP approval, scopes explained, common errors (unauthorized_scope_error, redirect_uri_mismatch, 403 on adAccountsV2).
+- **Production verification table** expanded from 2 columns to 4 (Meta / Google / TikTok / LinkedIn) with each platform's review process + timeline + what to submit + what works in the meantime.
+- **Launch checklist** extended with TikTok production review, LinkedIn MDP application, all 4 platforms' production redirect URIs, and TikTok token refresh TODO.
+- **Troubleshooting** — token expiry section now lists all 4 platforms' token lifetimes and refresh status; added a generic "platform not configured" entry.
+
+### 2026-05-26 — TikTok + LinkedIn Ads integrations
+
+Third and fourth ad platform connections, parity with Meta/Google. Same popup OAuth + `/connect/done` + BroadcastChannel pattern.
+
+- **TikTokAdsService** ([apps/api/src/services/tiktok.service.ts](apps/api/src/services/tiktok.service.ts)) — wraps the v1.3 Marketing API. TikTok responses are nested as `{ code, message, data }` — internal `tiktokFetch` helper throws on any non-zero `code`. OAuth via `/v2/auth/authorize`, token via `/open_api/v2/oauth2/access_token` (returns `advertiser_ids` directly in the token response — no separate "list accounts" step). `getCampaigns` and `getCampaignMetrics` (via `report/integrated/get` with `data_level=AUCTION_CAMPAIGN` + daily breakdown). `createCampaign` + `updateCampaignStatus` mutations. Scopes: `tt.advertiser.read,tt.advertiser.write`.
+- **LinkedInAdsService** ([apps/api/src/services/linkedin.service.ts](apps/api/src/services/linkedin.service.ts)) — wraps Marketing API v2. URN-based (`urn:li:sponsoredAccount:{id}`, `urn:li:sponsoredCampaign:{id}`), date ranges as `{year, month, day}` objects, `runSchedule` as epoch milliseconds. Standard `Authorization: Bearer` + `LinkedIn-Version: 202401` + `X-Restli-Protocol-Version: 2.0.0` headers. `adAccountsV2`, `adCampaignsV2`, `adAnalyticsV2` with `pivot=CAMPAIGN` + `timeGranularity=DAILY`. Scopes: `r_ads,r_ads_reporting,w_organization_social`. Refresh-token support (LinkedIn issues both at consent time). Exports `isLinkedInAuthError` mirroring Google's pattern.
+- **SyncService** extended with `syncTikTokAccount` and `syncLinkedInAccount` in [sync.service.ts](apps/api/src/services/sync.service.ts). TikTok budgets are already in currency (no micros conversion); LinkedIn budgets are nested as `{ amount, currencyCode }`. Status mappers `mapTikTokStatus` / `mapLinkedInStatus`. Revenue heuristics: TikTok = `2 × spend` placeholder; LinkedIn = `conversions × $50`. Both flagged for future enhancement when real conversion-value tracking lands.
+- **Routes** ([routes/tiktok.ts](apps/api/src/routes/tiktok.ts), [routes/linkedin.ts](apps/api/src/routes/linkedin.ts)) — `GET /oauth-url`, `GET /callback` (no auth, browser target, upserts AdAccounts per advertiser/account, redirects to `/connect/done?connected=<platform>`), `POST /sync/:adAccountId`. Mounted under `/tiktok` and `/linkedin` in [routes/index.ts](apps/api/src/routes/index.ts).
+- **Frontend popup helpers** — `openTikTokOAuthPopup()` and `openLinkedInOAuthPopup()` added to [oauth-popup.ts](apps/web/lib/oauth-popup.ts). Both inherit the COOP-resistant polling + BroadcastChannel pattern.
+- **Next.js proxies** — [tiktok/connect/route.ts](apps/web/app/api/tiktok/connect/route.ts) and [linkedin/connect/route.ts](apps/web/app/api/linkedin/connect/route.ts). Forward Clerk Bearer token, return `{ url }`.
+- **Settings components** — [TikTokConnect.tsx](apps/web/components/settings/TikTokConnect.tsx) (black `T` logo, hover #010101) and [LinkedInConnect.tsx](apps/web/components/settings/LinkedInConnect.tsx) (blue `in` logo, hover #0A66C2). Same structure as `GoogleConnect`/`MetaConnect`.
+- **ConnectModal** — TikTok + LinkedIn flipped to `available: true`. `startConnect` now dispatches across all 4 platforms.
+- **Settings → Integrations tab** — renders `<TikTokConnect />` and `<LinkedInConnect />` between `<GoogleConnect />` and the YouTube/Snapchat "Coming Soon" placeholders. URL params `?connected=tiktok|linkedin` and `?error=tiktok_*|linkedin_*` surface as toasts.
+- **.env.example** — added `TIKTOK_APP_ID`, `TIKTOK_APP_SECRET`, `TIKTOK_REDIRECT_URI`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI` with provenance notes pointing to the developer portals.
+- **No schema changes** — both platforms reuse the existing `AdAccount` + `Campaign` + `CampaignMetrics` tables. LinkedIn uses the existing `refreshToken` column; TikTok stores only `accessToken` (TikTok tokens last 24 hours by default — reconnect or refresh logic is a future improvement).
+- `tsc --noEmit` passes clean on both apps on first run.
 
 ### 2026-05-26 — Popup helper: stop trusting `popup.closed` under COOP
 

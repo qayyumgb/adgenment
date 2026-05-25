@@ -15,6 +15,8 @@ import { useApiClient, type AdAccount, type Platform } from "@/lib/api";
 import {
   openMetaOAuthPopup,
   openGoogleOAuthPopup,
+  openTikTokOAuthPopup,
+  openLinkedInOAuthPopup,
 } from "@/lib/oauth-popup";
 
 interface ConnectModalProps {
@@ -54,20 +56,20 @@ const PLATFORMS: PlatformRow[] = [
   {
     id: "TIKTOK",
     name: "TikTok Ads",
-    sub: "For You feed · Spark Ads",
+    sub: "For You feed · Spark Ads · Top View",
     color: "#0f172a",
     textOnColor: "white",
     initial: "T",
-    available: false,
+    available: true,
   },
   {
     id: "LINKEDIN",
     name: "LinkedIn Ads",
-    sub: "Sponsored content · InMail",
+    sub: "Sponsored content · Message ads · Dynamic ads",
     color: "#0A66C2",
     textOnColor: "white",
     initial: "in",
-    available: false,
+    available: true,
   },
   {
     id: "YOUTUBE",
@@ -135,7 +137,11 @@ export default function ConnectModal({ open, onClose }: ConnectModalProps) {
           ? await openMetaOAuthPopup()
           : platform === "GOOGLE"
             ? await openGoogleOAuthPopup()
-            : null;
+            : platform === "TIKTOK"
+              ? await openTikTokOAuthPopup()
+              : platform === "LINKEDIN"
+                ? await openLinkedInOAuthPopup()
+                : null;
       if (!result) return;
       if (result.success) {
         toast.success(`${platformLabel(platform)} connected`);
@@ -144,7 +150,9 @@ export default function ConnectModal({ open, onClose }: ConnectModalProps) {
         toast.error("Popup blocked — please allow popups and try again");
       } else if (
         result.error === "meta_cancelled" ||
-        result.error === "google_cancelled"
+        result.error === "google_cancelled" ||
+        result.error === "tiktok_cancelled" ||
+        result.error === "linkedin_cancelled"
       ) {
         toast("Cancelled — you can try again any time");
       } else if (result.error === "popup_closed") {
