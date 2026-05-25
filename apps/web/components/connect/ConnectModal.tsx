@@ -12,7 +12,10 @@ import {
   Plug,
 } from "lucide-react";
 import { useApiClient, type AdAccount, type Platform } from "@/lib/api";
-import { openMetaOAuthPopup } from "@/lib/oauth-popup";
+import {
+  openMetaOAuthPopup,
+  openGoogleOAuthPopup,
+} from "@/lib/oauth-popup";
 
 interface ConnectModalProps {
   open: boolean;
@@ -42,11 +45,11 @@ const PLATFORMS: PlatformRow[] = [
   {
     id: "GOOGLE",
     name: "Google Ads",
-    sub: "Search · YouTube · Display",
+    sub: "Search · YouTube · Display · Shopping",
     color: "#EA4335",
     textOnColor: "white",
     initial: "G",
-    available: false,
+    available: true,
   },
   {
     id: "TIKTOK",
@@ -90,7 +93,9 @@ export default function ConnectModal({ open, onClose }: ConnectModalProps) {
   const api = useApiClient();
   const [accounts, setAccounts] = useState<AdAccount[] | null>(null);
   const [loading, setLoading] = useState(true);
-  const [connectingMeta, setConnectingMeta] = useState(false);
+  const [connectingPlatform, setConnectingPlatform] = useState<Platform | null>(
+    null
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -121,17 +126,26 @@ export default function ConnectModal({ open, onClose }: ConnectModalProps) {
 
   if (!open) return null;
 
-  async function startMetaConnect() {
-    if (connectingMeta) return;
-    setConnectingMeta(true);
+  async function startConnect(platform: Platform) {
+    if (connectingPlatform) return;
+    setConnectingPlatform(platform);
     try {
-      const result = await openMetaOAuthPopup();
+      const result =
+        platform === "META"
+          ? await openMetaOAuthPopup()
+          : platform === "GOOGLE"
+            ? await openGoogleOAuthPopup()
+            : null;
+      if (!result) return;
       if (result.success) {
-        toast.success("Meta account connected");
+        toast.success(`${platformLabel(platform)} connected`);
         await refresh();
       } else if (result.error === "popup_blocked") {
         toast.error("Popup blocked — please allow popups and try again");
-      } else if (result.error === "meta_cancelled") {
+      } else if (
+        result.error === "meta_cancelled" ||
+        result.error === "google_cancelled"
+      ) {
         toast("Cancelled — you can try again any time");
       } else if (result.error === "popup_closed") {
         // user dismissed; silent
@@ -139,8 +153,12 @@ export default function ConnectModal({ open, onClose }: ConnectModalProps) {
         toast.error(result.error.replace(/_/g, " "));
       }
     } finally {
-      setConnectingMeta(false);
+      setConnectingPlatform(null);
     }
+  }
+
+  function platformLabel(p: Platform): string {
+    return PLATFORMS.find((x) => x.id === p)?.name ?? p;
   }
 
   async function disconnect(account: AdAccount) {
@@ -256,18 +274,16 @@ export default function ConnectModal({ open, onClose }: ConnectModalProps) {
                   ) : p.available ? (
                     <button
                       type="button"
-                      onClick={
-                        p.id === "META" ? startMetaConnect : undefined
-                      }
-                      disabled={connectingMeta && p.id === "META"}
+                      onClick={() => startConnect(p.id)}
+                      disabled={connectingPlatform === p.id}
                       className={clsx(
                         "inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition",
-                        connectingMeta && p.id === "META"
+                        connectingPlatform === p.id
                           ? "bg-slate-400"
                           : "bg-primary hover:-translate-y-0.5 hover:shadow-md"
                       )}
                     >
-                      {connectingMeta && p.id === "META" ? (
+                      {connectingPlatform === p.id ? (
                         <>
                           <Loader2 className="h-3 w-3 animate-spin" />
                           Connecting…

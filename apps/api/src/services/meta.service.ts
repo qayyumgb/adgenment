@@ -5,7 +5,7 @@
  * creation, and AES-256-CBC encryption of stored access tokens.
  */
 
-import crypto from "node:crypto";
+import { encryptToken, decryptToken } from "../lib/crypto";
 
 const GRAPH_BASE = "https://graph.facebook.com/v19.0";
 const FB_DIALOG = "https://www.facebook.com/v19.0/dialog/oauth";
@@ -74,14 +74,6 @@ class MetaAdsService {
     const v = process.env.META_REDIRECT_URI;
     if (!v) throw new Error("META_REDIRECT_URI is not configured");
     return v;
-  }
-
-  /** Build a stable 32-byte key from the configured ENCRYPTION_KEY env var. */
-  private encryptionKey(): Buffer {
-    const raw = process.env.ENCRYPTION_KEY;
-    if (!raw) throw new Error("ENCRYPTION_KEY is not configured");
-    // SHA-256 always yields 32 bytes — works for any length input.
-    return crypto.createHash("sha256").update(raw).digest();
   }
 
   /* ───────────────────────────────── */
@@ -270,34 +262,16 @@ class MetaAdsService {
   }
 
   /* ───────────────────────────────── */
-  /* Encryption                        */
+  /* Encryption — delegated to shared  */
+  /* lib/crypto so Google reuses it.   */
   /* ───────────────────────────────── */
 
   encryptToken(token: string): string {
-    const key = this.encryptionKey();
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-    const encrypted = Buffer.concat([
-      cipher.update(token, "utf8"),
-      cipher.final(),
-    ]);
-    return `${iv.toString("hex")}:${encrypted.toString("hex")}`;
+    return encryptToken(token);
   }
 
   decryptToken(encrypted: string): string {
-    const [ivHex, dataHex] = encrypted.split(":");
-    if (!ivHex || !dataHex) {
-      throw new Error("Invalid encrypted token format");
-    }
-    const key = this.encryptionKey();
-    const iv = Buffer.from(ivHex, "hex");
-    const data = Buffer.from(dataHex, "hex");
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-    const decrypted = Buffer.concat([
-      decipher.update(data),
-      decipher.final(),
-    ]);
-    return decrypted.toString("utf8");
+    return decryptToken(encrypted);
   }
 
   /* ───────────────────────────────── */

@@ -17,7 +17,7 @@ A multi-platform AI-powered ad management dashboard. Premium SaaS UI, Claude-pow
 | Backend | Express 4 · TypeScript · Helmet · express-rate-limit |
 | ORM / DB | Prisma 5 · PostgreSQL |
 | AI | Anthropic Claude Sonnet 4 (`claude-sonnet-4-20250514`) via native `fetch` |
-| Ad platforms | Meta Marketing API v19.0 (OAuth 2.0 + AES-256-CBC encrypted tokens) |
+| Ad platforms | Meta Marketing API v19.0 · Google Ads API v17 (OAuth 2.0 + AES-256-CBC encrypted tokens, refresh-token auto-rotation) |
 | Monorepo | Turborepo |
 
 ---
@@ -33,7 +33,8 @@ adgenius-ai/
 │   │       ├── index.ts              # Server entry (helmet, rate-limit, graceful shutdown)
 │   │       ├── lib/
 │   │       │   ├── prisma.ts         # Singleton PrismaClient
-│   │       │   └── workspace.ts      # getUserWorkspace / requireWorkspace / role helpers
+│   │       │   ├── workspace.ts      # getUserWorkspace / requireWorkspace / role helpers
+│   │       │   └── crypto.ts         # AES-256-CBC encryptToken/decryptToken (shared)
 │   │       ├── middleware/
 │   │       │   ├── auth.ts           # Clerk JWT → User auto-create → req.user
 │   │       │   └── errorHandler.ts   # Prisma + custom error mapping
@@ -46,11 +47,13 @@ adgenius-ai/
 │   │       │   ├── creatives.ts      # /creatives CRUD
 │   │       │   ├── workspace.ts      # /members, /invite, role updates
 │   │       │   ├── meta.ts           # Meta OAuth + sync + ad accounts
+│   │       │   ├── google.ts         # Google OAuth + sync + customers
 │   │       │   └── ai.ts             # /plan-campaign /generate-copy /health
 │   │       ├── services/
 │   │       │   ├── ai.service.ts     # Anthropic Messages API wrapper
-│   │       │   ├── meta.service.ts   # Meta Marketing API + AES-256-CBC token crypto
-│   │       │   └── sync.service.ts   # Pull campaigns + insights into DB (Meta today)
+│   │       │   ├── meta.service.ts   # Meta Marketing API
+│   │       │   ├── google.service.ts # Google Ads API v17 (GAQL search, refresh)
+│   │       │   └── sync.service.ts   # Pull campaigns + metrics for Meta + Google
 │   │       └── types/
 │   │           └── express.d.ts      # Augments Request with userId/dbUserId/user
 │   │
@@ -63,7 +66,7 @@ adgenius-ai/
 │       │   ├── dashboard/            # MetricCard, SpendChart, CampaignTable, PlatformBreakdown
 │       │   ├── campaigns/            # CreateCampaignModal
 │       │   ├── connect/              # ConnectModal (lists all platforms, opens OAuth popup)
-│       │   └── settings/             # MetaConnect (inline card variant)
+│       │   └── settings/             # MetaConnect + GoogleConnect (inline card variants)
 │       ├── lib/
 │       │   ├── api.ts                # useApiClient() — typed REST hook
 │       │   └── oauth-popup.ts        # openOAuthPopup() / openMetaOAuthPopup()
@@ -88,8 +91,10 @@ adgenius-ai/
 │               ├── ai/
 │               │   ├── plan-campaign/route.ts
 │               │   └── generate-copy/route.ts
-│               └── meta/
-│                   └── connect/route.ts    # Forwards Clerk session, returns Meta OAuth URL
+│               ├── meta/
+│               │   └── connect/route.ts    # Forwards Clerk session, returns Meta OAuth URL
+│               └── google/
+│                   └── connect/route.ts    # Forwards Clerk session, returns Google OAuth URL
 └── packages/
     └── shared/                       # Cross-app shared code
 ```
@@ -197,15 +202,24 @@ Rate-limited at 20 req / 15min per IP (vs 100 for the rest of `/api`).
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/meta/oauth-url` | Auth required. Returns Facebook OAuth URL with `state=dbUserId` |
-| GET | `/api/meta/callback` | **No auth** — Meta redirects user's browser here. Exchanges code → short-lived → long-lived token, encrypts, upserts AdAccount per Meta ad account, redirects to `/settings?tab=integrations&connected=meta` |
+| GET | `/api/meta/callback` | **No auth** — Meta redirects browser here. Exchanges code → short-lived → long-lived token, encrypts, upserts AdAccount per Meta ad account, redirects to `/connect/done?connected=meta` |
 | POST | `/api/meta/sync/:adAccountId` | Auth required. Calls `syncService.syncMetaAccount` → upserts Campaign + 30-day CampaignMetrics |
 | GET | `/api/meta/ad-accounts` | Auth required. Returns stored Meta ad accounts enriched with fresh Graph API data (tokens never returned) |
+
+### Google — [google.ts](apps/api/src/routes/google.ts)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/google/oauth-url` | Auth required. Returns Google OAuth URL with `access_type=offline` + `prompt=consent` to guarantee a refresh token |
+| GET | `/api/google/callback` | **No auth** — Google redirects browser here. Exchanges code for access + refresh tokens (both encrypted), lists accessible customers, upserts one AdAccount per Google Ads customer, redirects to `/connect/done?connected=google` |
+| POST | `/api/google/sync/:adAccountId` | Auth required. Calls `syncService.syncGoogleAccount` — refreshes access token on 401 via stored refresh token, persists the new access token, upserts Campaign + 30-day daily CampaignMetrics |
+| GET | `/api/google/customers` | Auth required. Returns stored Google customers enriched with live name/currency/timezone/status (tokens never returned) |
 
 ### Next.js proxies — [app/api/](apps/web/app/api/)
 Server-side proxies that hide the backend URL + add Clerk auth forwarding + validation:
 - [ai/plan-campaign/route.ts](apps/web/app/api/ai/plan-campaign/route.ts) — POST `/api/ai/plan-campaign`
 - [ai/generate-copy/route.ts](apps/web/app/api/ai/generate-copy/route.ts) — POST `/api/ai/generate-copy`
 - [meta/connect/route.ts](apps/web/app/api/meta/connect/route.ts) — GET returns `{ url }` for Meta OAuth (uses `auth()` to attach Bearer token to backend call)
+- [google/connect/route.ts](apps/web/app/api/google/connect/route.ts) — same as Meta but for Google OAuth
 
 ### Health
 - `GET /health` → `{ status, timestamp, uptime, version }`
@@ -248,6 +262,10 @@ Enums: `Platform`, `PlanType`, `WorkspaceRole`, `CampaignStatus`, `BudgetType`, 
 
 ---
 
+## Ad platform setup
+
+For step-by-step Meta + Google integration setup (including production verification, scope details, and troubleshooting), see **[docs/integrations.md](docs/integrations.md)**.
+
 ## Setup
 
 ### Prerequisites
@@ -269,6 +287,10 @@ CLERK_PUBLISHABLE_KEY=pk_test_...
 META_APP_ID=...
 META_APP_SECRET=...
 META_REDIRECT_URI=http://localhost:4000/api/meta/callback
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REDIRECT_URI=http://localhost:4000/api/google/callback
+GOOGLE_DEVELOPER_TOKEN=...   # from Google Ads → Tools & Settings → API Center
 ENCRYPTION_KEY=...           # hashed to 32 bytes via SHA-256 at runtime; any string works
 FRONTEND_URL=http://localhost:3000
 WEB_ORIGIN=http://localhost:3000
@@ -363,6 +385,41 @@ All tokens live in [apps/web/app/globals.css](apps/web/app/globals.css) and [app
 ## Change Log
 
 > Most recent first. Add a new dated entry for every significant change.
+
+### 2026-05-26 — Popup helper: stop trusting `popup.closed` under COOP
+
+- Google's `accounts.google.com` sets `Cross-Origin-Opener-Policy: same-origin`, which causes the browser to block `popup.closed` reads from cross-origin parents and return `true` falsely (with a noisy console warning).
+- Old behavior: 500ms poller in [oauth-popup.ts](apps/web/lib/oauth-popup.ts) read `popup.closed === true` on the first tick after the popup landed on Google's domain, then resolved as `popup_closed` before OAuth could even start. Net effect for the user: clicking Connect Google Ads always failed with no chance to authorize.
+- Fix:
+  - Poll at 2s instead of 500ms.
+  - Wrap `popup.closed` in try/catch.
+  - Only resolve as `popup_closed` after 3 consecutive `true` readings (~6s), so any in-flight `postMessage` / `BroadcastChannel` signal wins.
+  - Added a hard 5-minute timeout so the promise can never leak if the user abandons the popup without authorizing.
+- Meta was unaffected because Facebook's OAuth flow is short and `postMessage` always arrived before the false-positive could land.
+
+### 2026-05-26 — Ad platform integration guide
+
+- New file: **[docs/integrations.md](docs/integrations.md)** — step-by-step setup walkthroughs for Meta and Google Ads, with troubleshooting and production launch checklists.
+- Linked from the main README section in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+- Decision: Google Ads integration code is shipped but the full developer-token + MCC setup is deferred. The Google connect button still works as an OAuth-flow smoke test — popup loads, sign-in works, token exchange works — but throws "GOOGLE_DEVELOPER_TOKEN is not configured" at the final API step. End-to-end Google sync will be wired when a real customer needs it.
+
+### 2026-05-25 — Google Ads API integration
+
+Second ad platform connection, parity with Meta. Same popup OAuth flow + `/connect/done` page.
+
+- **Shared crypto** — extracted `encryptToken`/`decryptToken` from `meta.service.ts` into [apps/api/src/lib/crypto.ts](apps/api/src/lib/crypto.ts) so both Meta and Google use the same AES-256-CBC code path. `meta.service` still exposes `encryptToken`/`decryptToken` as thin delegates to avoid churn in [routes/meta.ts](apps/api/src/routes/meta.ts).
+- **GoogleAdsService** ([apps/api/src/services/google.service.ts](apps/api/src/services/google.service.ts)) — OAuth URL with `access_type=offline` + `prompt=consent` (guarantees a refresh token); `exchangeCodeForTokens` and `refreshAccessToken` against Google Identity; `getCustomerAccounts` calls `customers:listAccessibleCustomers` then per-customer GAQL probes for name/currency/timezone; `getCampaigns` and `getCampaignMetrics` issue GAQL queries against `customers/{id}/googleAds:search` with `developer-token` + `login-customer-id` headers; `createCampaign` does two-step budget→campaign create; `updateCampaignStatus` uses the standard mutate+updateMask pattern. Errors throw `Error("Google Ads API: <message> (code: <code>)")` and tag `httpStatus` so the sync service can detect 401 for token refresh. Exported helper `isGoogleAuthError`.
+- **SyncService.syncGoogleAccount** ([apps/api/src/services/sync.service.ts](apps/api/src/services/sync.service.ts)) — converts micros → currency for budget and spend; maps `ENABLED/PAUSED/REMOVED` → our enum; handles Google's `2037-12-30` sentinel as "no end date"; upserts campaigns by `(adAccountId, externalId)`; pulls last 30 days of daily metrics via `segments.date`; pulls `metrics.conversions_value` → revenue (Google reports conversion value directly, simpler than Meta's purchase_roas). **Auto-refreshes access token on 401** — decrypts stored refresh token, calls Google's token endpoint, persists the new access token encrypted before retrying the sync.
+- **Google routes** ([apps/api/src/routes/google.ts](apps/api/src/routes/google.ts)) — `GET /oauth-url`, `GET /callback` (no auth, browser redirect target — upserts one AdAccount per accessible customer, redirects to `/connect/done?connected=google` on success or `/connect/done?error=google_failed|google_cancelled|google_no_workspace|google_no_customers`), `POST /sync/:adAccountId`, `GET /customers` (enriched with live data, tokens never returned). Mounted under `/google` in [routes/index.ts](apps/api/src/routes/index.ts).
+- **Frontend popup helper** ([apps/web/lib/oauth-popup.ts](apps/web/lib/oauth-popup.ts)) — added `openGoogleOAuthPopup()` that mirrors `openMetaOAuthPopup()`. Listens on both `postMessage` and `BroadcastChannel`.
+- **Next.js proxy** ([apps/web/app/api/google/connect/route.ts](apps/web/app/api/google/connect/route.ts)) — uses Clerk `auth()` to attach Bearer token to backend call, returns `{ url }`.
+- **GoogleConnect component** ([apps/web/components/settings/GoogleConnect.tsx](apps/web/components/settings/GoogleConnect.tsx)) — same structure as `MetaConnect.tsx`. Red "G" logo, permissions list, popup-based connect, sync now, disconnect with confirmation.
+- **ConnectModal** ([apps/web/components/connect/ConnectModal.tsx](apps/web/components/connect/ConnectModal.tsx)) — Google now `available: true`. Refactored the Meta-specific `connectingMeta` state into a generic `connectingPlatform: Platform | null` so each row can show its own loading state.
+- **Settings → Integrations** — renders `<GoogleConnect />` next to `<MetaConnect />`. Removed Google from the static "Coming Soon" tiles. Reads `?connected=google` / `?error=google_*` URL params and surfaces them as toasts.
+- **.env.example** ([apps/api/.env.example](apps/api/.env.example)) — added `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_DEVELOPER_TOKEN` with one-line provenance notes.
+- **AdAccount.refreshToken** was already in the schema from the original design — no schema migration needed.
+
+To use Google integration end-to-end: get a Google Cloud OAuth client (with `http://localhost:4000/api/google/callback` whitelisted), a Google Ads developer token (Tools & Settings → API Center, basic-access is enough for OAuth + read), put both in `apps/api/.env`, restart the API.
 
 ### 2026-05-25 — Popup OAuth fixes: COOP, BroadcastChannel, no fallback redirect
 

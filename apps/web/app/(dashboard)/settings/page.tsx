@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useApiClient, type AdAccount } from "@/lib/api";
 import MetaConnect from "@/components/settings/MetaConnect";
+import GoogleConnect from "@/components/settings/GoogleConnect";
 
 type Tab =
   | "general"
@@ -586,13 +587,6 @@ function WorkspaceTab() {
 
 const STATIC_PLATFORMS = [
   {
-    id: "google",
-    name: "Google Ads",
-    color: "#EA4335",
-    initial: "G",
-    textOnColor: "white" as const,
-  },
-  {
     id: "tiktok",
     name: "TikTok Ads",
     color: "#0f172a",
@@ -668,12 +662,22 @@ function IntegrationsTab() {
     const error = params.get("error");
     if (connected === "meta") {
       toast.success("Meta account connected");
+    } else if (connected === "google") {
+      toast.success("Google Ads account connected");
     } else if (error === "meta_failed") {
       toast.error("Meta connect failed. Please try again.");
     } else if (error === "meta_cancelled") {
       toast("Meta connect cancelled");
     } else if (error === "meta_no_workspace") {
       toast.error("Finish onboarding before connecting Meta");
+    } else if (error === "google_failed") {
+      toast.error("Google connect failed. Please try again.");
+    } else if (error === "google_cancelled") {
+      toast("Google connect cancelled");
+    } else if (error === "google_no_workspace") {
+      toast.error("Finish onboarding before connecting Google");
+    } else if (error === "google_no_customers") {
+      toast.error("That Google account has no Google Ads customers");
     }
     if (connected || error) {
       const cleaned = new URLSearchParams(window.location.search);
@@ -687,6 +691,7 @@ function IntegrationsTab() {
   }, []);
 
   const meta = (accounts ?? []).find((a) => a.platform === "META");
+  const google = (accounts ?? []).find((a) => a.platform === "GOOGLE");
 
   return (
     <div className="space-y-6">
@@ -706,6 +711,13 @@ function IntegrationsTab() {
                 adAccountId={meta?.id}
                 accountName={meta?.accountName}
                 lastSynced={timeAgo(meta?.createdAt)}
+                onChange={refresh}
+              />
+              <GoogleConnect
+                connected={!!google}
+                adAccountId={google?.id}
+                accountName={google?.accountName}
+                lastSynced={timeAgo(google?.createdAt)}
                 onChange={refresh}
               />
               {STATIC_PLATFORMS.map((p) => (

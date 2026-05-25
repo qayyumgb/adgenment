@@ -11,7 +11,9 @@ import {
   type BudgetType,
 } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { decryptToken, encryptToken } from "../lib/crypto";
 import { metaService, type MetaCampaign } from "./meta.service";
+import { googleService, isGoogleAuthError } from "./google.service";
 
 export type SyncResult = {
   platform: string;
@@ -49,9 +51,50 @@ function dayUTC(iso: string): Date {
   return d;
 }
 
+function mapGoogleStatus(status: string): CampaignStatus {
+  switch (status) {
+    case "ENABLED":
+      return "ACTIVE";
+    case "PAUSED":
+      return "PAUSED";
+    case "REMOVED":
+      return "ENDED";
+    default:
+      return "DRAFT";
+  }
+}
+
+function mapGoogleChannelType(type: string): string {
+  switch (type) {
+    case "SEARCH":
+      return "Search";
+    case "DISPLAY":
+      return "Display";
+    case "SHOPPING":
+      return "Shopping";
+    case "VIDEO":
+      return "Video";
+    case "PERFORMANCE_MAX":
+      return "Performance Max";
+    case "LOCAL":
+      return "Local";
+    case "SMART":
+      return "Smart";
+    case "DISCOVERY":
+      return "Discovery";
+    case "DEMAND_GEN":
+      return "Demand Gen";
+    default:
+      return type;
+  }
+}
+
+// Google uses 2037-12-30 as the "no end date" sentinel for ongoing campaigns.
+const GOOGLE_NO_END_DATE = "2037-12-30";
+
 class SyncService {
   async syncMetaAccount(adAccount: AdAccount): Promise<SyncResult> {
-    const token = metaService.decryptToken(adAccount.accessToken);
+    const token = decryptToken(adAccount.accessToken);
     const accountId = adAccount.accountId;
 
     // 1. Pull campaigns and upsert by (adAccountId, externalId).
@@ -166,6 +209,148 @@ class SyncService {
     }
 
     return { platform: "META", campaignsSynced, metricsSynced };
+  }
+
+  /**
+   * Sync a Google Ads customer account. Refreshes the access token via
+   * the stored refresh token if Google returns a 401.
+   */
+  async syncGoogleAccount(adAccount: AdAccount): Promise<SyncResult> {
+    const customerId = googleService.normalizeCustomerId(adAccount.accountId);
+
+    // Returns a working access token, refreshing + persisting it if needed.
+    const getAccessToken = async (): Promise<string> => {
+      let accessToken = decryptToken(adAccount.accessToken);
+      // We trust the stored access token first; if any call returns 401,
+      // refresh via the stored refresh_token and persist the new one.
+      try {
+        // Cheap "is the token live" probe — pull one campaign row.
+        await googleService.getCampaigns(accessToken, customerId);
+        return accessToken;
+      } catch (err) {
+        if (!isGoogleAuthError(err) || !adAccount.refreshToken) throw err;
+        const refresh = decryptToken(adAccount.refreshToken);
+        const fresh = await googleService.refreshAccessToken(refresh);
+        accessToken = fresh.access_token;
+        await prisma.adAccount.update({
+          where: { id: adAccount.id },
+          data: { accessToken: encryptToken(accessToken) },
+        });
+        return accessToken;
+      }
+    };
+
+    const accessToken = await getAccessToken();
+
+    // 1. Pull campaigns and upsert.
+    const campaigns = await googleService.getCampaigns(accessToken, customerId);
+    const idMap: Record<string, string> = {};
+    let campaignsSynced = 0;
+
+    for (const gc of campaigns) {
+      if (!gc.id) continue;
+      const status = mapGoogleStatus(gc.status);
+      const objective = mapGoogleChannelType(gc.advertisingChannelType);
+      const budget = gc.budgetAmountMicros
+        ? Number(BigInt(gc.budgetAmountMicros)) / 1_000_000
+        : 0;
+      const startDate = gc.startDate ? new Date(gc.startDate) : null;
+      const endDate =
+        gc.endDate && gc.endDate !== GOOGLE_NO_END_DATE
+          ? new Date(gc.endDate)
+          : null;
+      const budgetType: BudgetType = "DAILY";
+
+      const campaign = await prisma.campaign.upsert({
+        where: {
+          adAccountId_externalId: {
+            adAccountId: adAccount.id,
+            externalId: gc.id,
+          },
+        },
+        create: {
+          workspaceId: adAccount.workspaceId,
+          adAccountId: adAccount.id,
+          platform: "GOOGLE",
+          externalId: gc.id,
+          name: gc.name,
+          status,
+          objective,
+          budget: new Prisma.Decimal(budget.toFixed(2)),
+          budgetType,
+          startDate,
+          endDate,
+          targeting: Prisma.JsonNull,
+        },
+        update: {
+          name: gc.name,
+          status,
+          objective,
+          budget: new Prisma.Decimal(budget.toFixed(2)),
+          budgetType,
+          startDate,
+          endDate,
+        },
+      });
+      idMap[gc.id] = campaign.id;
+      campaignsSynced++;
+    }
+
+    // 2. Pull last-30d daily metrics and upsert.
+    const today = new Date();
+    const start = new Date(today);
+    start.setUTCDate(today.getUTCDate() - 30);
+    const startStr = start.toISOString().slice(0, 10);
+    const endStr = today.toISOString().slice(0, 10);
+
+    const metrics = await googleService.getCampaignMetrics(
+      accessToken,
+      customerId,
+      startStr,
+      endStr
+    );
+
+    let metricsSynced = 0;
+    for (const m of metrics) {
+      const ourCampaignId = idMap[m.campaignId];
+      if (!ourCampaignId || !m.date) continue;
+
+      const spend = m.costMicros
+        ? Number(BigInt(m.costMicros)) / 1_000_000
+        : 0;
+      const impressions = parseInt(m.impressions || "0", 10) || 0;
+      const clicks = parseInt(m.clicks || "0", 10) || 0;
+      const conversions = parseFloat(m.conversions || "0") || 0;
+      const revenue = parseFloat(m.conversionValue || "0") || 0;
+
+      const ctr = impressions > 0 ? clicks / impressions : 0;
+      const cpc = clicks > 0 ? spend / clicks : 0;
+      const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+      const roas = spend > 0 ? revenue / spend : 0;
+
+      const date = dayUTC(m.date);
+
+      const data = {
+        impressions,
+        clicks,
+        spend: new Prisma.Decimal(spend.toFixed(2)),
+        conversions: Math.round(conversions),
+        revenue: new Prisma.Decimal(revenue.toFixed(2)),
+        ctr,
+        cpc,
+        cpm,
+        roas,
+      };
+
+      await prisma.campaignMetrics.upsert({
+        where: { campaignId_date: { campaignId: ourCampaignId, date } },
+        create: { campaignId: ourCampaignId, date, ...data },
+        update: data,
+      });
+      metricsSynced++;
+    }
+
+    return { platform: "GOOGLE", campaignsSynced, metricsSynced };
   }
 }
 

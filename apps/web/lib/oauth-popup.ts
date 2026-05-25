@@ -76,6 +76,7 @@ export function openOAuthPopup({
     function cleanup() {
       window.removeEventListener("message", onMessage);
       window.clearInterval(closedPoller);
+      window.clearTimeout(hardTimeout);
       try {
         channel?.close();
       } catch {
@@ -133,11 +134,40 @@ export function openOAuthPopup({
       channel.onmessage = (event) => handlePayload(event.data);
     }
 
+    // We cannot trust `popup.closed` while the popup is on the OAuth
+    // provider's origin — providers like accounts.google.com set
+    // `Cross-Origin-Opener-Policy: same-origin`, which makes the browser
+    // block the read and return `true` (with a noisy console warning).
+    // Polling would resolve as `popup_closed` before OAuth even starts.
+    //
+    // Strategy: poll slowly (2s), guard with try/catch, and only resolve
+    // after seeing `closed === true` 3 times in a row. By that point any
+    // in-flight postMessage / BroadcastChannel signal will have settled
+    // the promise first.
+    let closedReadings = 0;
     const closedPoller = window.setInterval(() => {
-      if (popup.closed) {
+      let isClosed = false;
+      try {
+        isClosed = popup.closed;
+      } catch {
+        return;
+      }
+      if (!isClosed) {
+        closedReadings = 0;
+        return;
+      }
+      closedReadings += 1;
+      if (closedReadings >= 3) {
         settle({ success: false, error: "popup_closed" });
       }
-    }, 500);
+    }, 2000);
+
+    // Hard ceiling — if neither message nor close fires, give up after
+    // 5 minutes so the promise doesn't leak.
+    const hardTimeout = window.setTimeout(
+      () => settle({ success: false, error: "popup_timeout" }),
+      5 * 60 * 1000
+    );
   });
 }
 
@@ -154,6 +184,24 @@ export function openMetaOAuthPopup(): Promise<OAuthPopupResult> {
       const data = await res.json();
       if (!res.ok || !data?.url) {
         throw new Error(data?.error ?? "Could not start Meta connect");
+      }
+      return data.url as string;
+    },
+  });
+}
+
+/**
+ * Same as `openMetaOAuthPopup` but for Google Ads.
+ */
+export function openGoogleOAuthPopup(): Promise<OAuthPopupResult> {
+  return openOAuthPopup({
+    windowName: "adgenius_google_connect",
+    expectedPlatform: "google",
+    async getUrl() {
+      const res = await fetch("/api/google/connect");
+      const data = await res.json();
+      if (!res.ok || !data?.url) {
+        throw new Error(data?.error ?? "Could not start Google connect");
       }
       return data.url as string;
     },
