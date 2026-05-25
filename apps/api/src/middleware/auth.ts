@@ -1,16 +1,91 @@
-import { Request, Response, NextFunction } from "express";
-import { clerkMiddleware, getAuth } from "@clerk/express";
+import type { Request, Response, NextFunction } from "express";
+import { createClerkClient, verifyToken } from "@clerk/backend";
+import { prisma } from "../lib/prisma";
 
-export const clerkAuth = clerkMiddleware();
+const clerk = createClerkClient({
+  secretKey: process.env.CLERK_SECRET_KEY,
+});
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  clerkAuth(req, res, (err?: unknown) => {
-    if (err) return next(err);
-    const auth = getAuth(req);
-    if (!auth?.userId) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-    (req as Request & { auth: typeof auth }).auth = auth;
-    next();
+async function loadUserFromToken(token: string) {
+  const payload = await verifyToken(token, {
+    secretKey: process.env.CLERK_SECRET_KEY,
   });
+  const clerkId = payload.sub;
+
+  let user = await prisma.user.findUnique({ where: { clerkId } });
+
+  if (!user) {
+    const clerkUser = await clerk.users.getUser(clerkId);
+    const email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
+    const name = `${clerkUser.firstName ?? ""} ${clerkUser.lastName ?? ""}`.trim();
+    user = await prisma.user.create({
+      data: {
+        clerkId,
+        email,
+        name: name || null,
+        plan: "FREE",
+      },
+    });
+  }
+
+  return { clerkId, user };
+}
+
+export async function requireAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing authorization header" });
+    }
+    const token = authHeader.slice("Bearer ".length).trim();
+    if (!token) {
+      return res.status(401).json({ error: "Missing authorization header" });
+    }
+
+    const { clerkId, user } = await loadUserFromToken(token);
+
+    req.userId = clerkId;
+    req.clerkId = clerkId;
+    req.user = user;
+    req.dbUserId = user.id;
+
+    next();
+  } catch (err) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[requireAuth] verify failed:", err);
+    }
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+
+export async function optionalAuth(
+  req: Request,
+  _res: Response,
+  next: NextFunction
+) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith("Bearer ")) {
+      req.user = null;
+      return next();
+    }
+    const token = authHeader.slice("Bearer ".length).trim();
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+    const { clerkId, user } = await loadUserFromToken(token);
+    req.userId = clerkId;
+    req.clerkId = clerkId;
+    req.user = user;
+    req.dbUserId = user.id;
+    next();
+  } catch {
+    req.user = null;
+    next();
+  }
 }

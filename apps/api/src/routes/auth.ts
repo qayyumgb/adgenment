@@ -1,10 +1,141 @@
-import { Router, Request, Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { requireAuth } from "../middleware/auth";
+import { prisma } from "../lib/prisma";
+import { getUserWorkspace } from "../lib/workspace";
 
 const router = Router();
 
-router.get("/me", requireAuth, (req: Request, res: Response) => {
-  res.json({ userId: (req as Request & { auth?: { userId?: string } }).auth?.userId ?? null });
+router.use(requireAuth);
+
+/**
+ * GET /auth/me
+ */
+router.get("/me", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.dbUserId!;
+    const workspace = await getUserWorkspace(userId);
+    let workspaceWithCount = null;
+    if (workspace) {
+      workspaceWithCount = await prisma.workspace.findUnique({
+        where: { id: workspace.id },
+        include: {
+          _count: { select: { members: true } },
+        },
+      });
+    }
+    res.json({
+      user: req.user,
+      workspace: workspaceWithCount,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
+
+/**
+ * POST /auth/complete-onboarding
+ */
+router.post(
+  "/complete-onboarding",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.dbUserId!;
+      const { workspaceName, industry: _industry, plan } = req.body ?? {};
+
+      if (typeof workspaceName !== "string" || workspaceName.trim() === "") {
+        return res.status(400).json({ error: "workspaceName is required" });
+      }
+
+      const existing = await getUserWorkspace(userId);
+      if (existing) {
+        return res.status(409).json({
+          error: "Onboarding already completed",
+          workspace: existing,
+        });
+      }
+
+      const validPlan =
+        plan === "STARTER" || plan === "PRO" || plan === "ENTERPRISE"
+          ? plan
+          : "FREE";
+
+      const workspace = await prisma.workspace.create({
+        data: {
+          name: workspaceName.trim(),
+          ownerId: userId,
+          plan: validPlan,
+        },
+      });
+      const member = await prisma.workspaceMember.create({
+        data: {
+          workspaceId: workspace.id,
+          userId,
+          role: "OWNER",
+        },
+      });
+
+      // TODO: persist `industry` on workspace once schema is extended.
+
+      res.status(201).json({ workspace, member });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /auth/workspace
+ */
+router.post(
+  "/workspace",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.dbUserId!;
+      const { name } = req.body ?? {};
+      if (typeof name !== "string" || name.trim() === "") {
+        return res.status(400).json({ error: "name is required" });
+      }
+      const workspace = await prisma.workspace.create({
+        data: { name: name.trim(), ownerId: userId, plan: "FREE" },
+      });
+      await prisma.workspaceMember.create({
+        data: { workspaceId: workspace.id, userId, role: "OWNER" },
+      });
+      res.status(201).json(workspace);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /auth/workspace
+ */
+router.get(
+  "/workspace",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.dbUserId!;
+      const workspace = await getUserWorkspace(userId);
+      if (!workspace) {
+        return res.status(404).json({ error: "No workspace found" });
+      }
+      const full = await prisma.workspace.findUnique({
+        where: { id: workspace.id },
+        include: {
+          members: {
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
+          _count: { select: { adAccounts: true } },
+        },
+      });
+      res.json(full);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 export default router;

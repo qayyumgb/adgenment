@@ -1,14 +1,20 @@
 import { Router } from "express";
-import authRoutes from "./auth";
-import campaignRoutes from "./campaigns";
-import analyticsRoutes from "./analytics";
-import aiRoutes from "./ai";
+import authRouter from "./auth";
+import campaignRouter from "./campaigns";
+import analyticsRouter from "./analytics";
+import aiRouter from "./ai";
+import adAccountRouter from "./ad-accounts";
+import creativeRouter from "./creatives";
+import workspaceRouter from "./workspace";
 
 const router = Router();
 
-router.use("/auth", authRoutes);
-router.use("/campaigns", campaignRoutes);
-router.use("/analytics", analyticsRoutes);
-router.use("/ai", aiRoutes);
+router.use("/auth", authRouter);
+router.use("/campaigns", campaignRouter);
+router.use("/analytics", analyticsRouter);
+router.use("/ai", aiRouter);
+router.use("/ad-accounts", adAccountRouter);
+router.use("/creatives", creativeRouter);
+router.use("/workspace", workspaceRouter);
 
 export default router;
