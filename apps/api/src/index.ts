@@ -22,6 +22,11 @@ app.use(
   helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
+    // `same-origin` (Helmet default) severs `window.opener` when an OAuth
+    // popup transitions through our API. `same-origin-allow-popups` keeps
+    // the relationship intact so the popup can postMessage back to its
+    // opener after Meta/Google/etc. redirects.
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
   })
 );
 app.use(

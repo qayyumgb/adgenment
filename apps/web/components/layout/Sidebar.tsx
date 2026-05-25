@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import clsx from "clsx";
 import {
   Sparkles,
@@ -19,15 +20,28 @@ import {
   Bell,
   HelpCircle,
   Plus,
+  Plug,
   type LucideIcon,
 } from "lucide-react";
+import ConnectModal from "@/components/connect/ConnectModal";
 
-type NavItem = {
+type NavLink = {
+  kind: "link";
   label: string;
   href: string;
   icon: LucideIcon;
   badge?: { text: string; variant: "count" | "new" };
 };
+
+type NavAction = {
+  kind: "action";
+  label: string;
+  action: "connect";
+  icon: LucideIcon;
+  badge?: { text: string; variant: "count" | "new" };
+};
+
+type NavItem = NavLink | NavAction;
 
 type NavGroup = {
   label: string;
@@ -37,39 +51,74 @@ type NavGroup = {
 const NAV_GROUPS: NavGroup[] = [
   {
     label: "Overview",
-    items: [{ label: "Dashboard", href: "/dashboard", icon: LayoutDashboard }],
+    items: [
+      {
+        kind: "link",
+        label: "Dashboard",
+        href: "/dashboard",
+        icon: LayoutDashboard,
+      },
+    ],
   },
   {
     label: "Advertising",
     items: [
       {
+        kind: "link",
         label: "Campaigns",
         href: "/campaigns",
         icon: Megaphone,
         badge: { text: "12", variant: "count" },
       },
-      { label: "Audiences", href: "/audiences", icon: Target },
-      { label: "Creatives", href: "/creatives", icon: Palette },
+      { kind: "link", label: "Audiences", href: "/audiences", icon: Target },
+      { kind: "link", label: "Creatives", href: "/creatives", icon: Palette },
+      {
+        kind: "action",
+        label: "Connect Apps",
+        action: "connect",
+        icon: Plug,
+      },
     ],
   },
   {
     label: "Intelligence",
     items: [
-      { label: "Analytics", href: "/analytics", icon: BarChart3 },
       {
+        kind: "link",
+        label: "Analytics",
+        href: "/analytics",
+        icon: BarChart3,
+      },
+      {
+        kind: "link",
         label: "AI Planner",
         href: "/ai-planner",
         icon: Bot,
         badge: { text: "NEW", variant: "new" },
       },
-      { label: "Insights", href: "/insights", icon: TrendingUp },
+      {
+        kind: "link",
+        label: "Insights",
+        href: "/insights",
+        icon: TrendingUp,
+      },
     ],
   },
   {
     label: "Account",
     items: [
-      { label: "Billing", href: "/billing", icon: CreditCard },
-      { label: "Settings", href: "/settings", icon: Settings },
+      {
+        kind: "link",
+        label: "Billing",
+        href: "/billing",
+        icon: CreditCard,
+      },
+      {
+        kind: "link",
+        label: "Settings",
+        href: "/settings",
+        icon: Settings,
+      },
     ],
   },
 ];
@@ -88,6 +137,7 @@ interface SidebarProps {
 
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const [connectOpen, setConnectOpen] = useState(false);
 
   const isActive = (href: string) =>
     pathname === href || pathname?.startsWith(href + "/");
@@ -210,44 +260,69 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
               )}
               <ul className="space-y-0.5">
                 {group.items.map((item) => {
-                  const active = isActive(item.href);
                   const Icon = item.icon;
-                  return (
-                    <li key={item.href} className="relative group">
-                      <Link
-                        href={item.href}
+                  const active = item.kind === "link" && isActive(item.href);
+                  const key =
+                    item.kind === "link" ? item.href : `action:${item.action}`;
+
+                  const inner = (
+                    <>
+                      <Icon
                         className={clsx(
-                          "nav-item",
-                          active && "active",
-                          collapsed && "justify-center px-0"
+                          "h-[18px] w-[18px] shrink-0",
+                          active ? "text-white" : "text-slate-400"
                         )}
-                        title={collapsed ? item.label : undefined}
-                      >
-                        <Icon
+                        strokeWidth={active ? 2.25 : 2}
+                      />
+                      {!collapsed && (
+                        <>
+                          <span className="flex-1 truncate">{item.label}</span>
+                          {item.badge &&
+                            (item.badge.variant === "new" ? (
+                              <span className="rounded-md bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary-300">
+                                {item.badge.text}
+                              </span>
+                            ) : (
+                              <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
+                                {item.badge.text}
+                              </span>
+                            ))}
+                        </>
+                      )}
+                    </>
+                  );
+
+                  return (
+                    <li key={key} className="relative group">
+                      {item.kind === "link" ? (
+                        <Link
+                          href={item.href}
                           className={clsx(
-                            "h-[18px] w-[18px] shrink-0",
-                            active ? "text-white" : "text-slate-400"
+                            "nav-item",
+                            active && "active",
+                            collapsed && "justify-center px-0"
                           )}
-                          strokeWidth={active ? 2.25 : 2}
-                        />
-                        {!collapsed && (
-                          <>
-                            <span className="flex-1 truncate">
-                              {item.label}
-                            </span>
-                            {item.badge &&
-                              (item.badge.variant === "new" ? (
-                                <span className="rounded-md bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary-300">
-                                  {item.badge.text}
-                                </span>
-                              ) : (
-                                <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
-                                  {item.badge.text}
-                                </span>
-                              ))}
-                          </>
-                        )}
-                      </Link>
+                          title={collapsed ? item.label : undefined}
+                        >
+                          {inner}
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (item.action === "connect") {
+                              setConnectOpen(true);
+                            }
+                          }}
+                          className={clsx(
+                            "nav-item w-full text-left",
+                            collapsed && "justify-center px-0"
+                          )}
+                          title={collapsed ? item.label : undefined}
+                        >
+                          {inner}
+                        </button>
+                      )}
                       {collapsed && (
                         <div className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity duration-150 group-hover:opacity-100">
                           {item.label}
@@ -286,6 +361,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             <button
               type="button"
               title="Connect platform"
+              onClick={() => setConnectOpen(true)}
               className="flex h-7 w-7 items-center justify-center rounded-md border border-dashed border-white/15 text-slate-500 transition hover:border-primary hover:text-primary"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -332,6 +408,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           </div>
         )}
       </div>
+
+      <ConnectModal
+        open={connectOpen}
+        onClose={() => setConnectOpen(false)}
+      />
     </aside>
   );
 }

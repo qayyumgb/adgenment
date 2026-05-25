@@ -6,6 +6,7 @@ import aiRouter from "./ai";
 import adAccountRouter from "./ad-accounts";
 import creativeRouter from "./creatives";
 import workspaceRouter from "./workspace";
+import metaRouter from "./meta";
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use("/ai", aiRouter);
 router.use("/ad-accounts", adAccountRouter);
 router.use("/creatives", creativeRouter);
 router.use("/workspace", workspaceRouter);
+router.use("/meta", metaRouter);
 
 export default router;

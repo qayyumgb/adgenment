@@ -169,9 +169,6 @@ router.delete(
 
 /**
  * PATCH /workspace
- *
- * Schema currently supports `name` only. `slug`, `industry`, `companySize`
- * are accepted in the request body but ignored — see TODO below.
  */
 router.patch(
   "/",
@@ -185,15 +182,38 @@ router.patch(
           .json({ error: "Only the workspace owner can update settings" });
       }
 
-      const { name } = req.body ?? {};
+      const { name, slug, industry, companySize } = req.body ?? {};
       const data: Prisma.WorkspaceUpdateInput = {};
       if (typeof name === "string" && name.trim()) data.name = name.trim();
+      if (slug !== undefined) {
+        if (slug === null || slug === "") {
+          data.slug = null;
+        } else if (typeof slug === "string") {
+          const cleaned = slug
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9-]/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, "");
+          if (cleaned) data.slug = cleaned;
+        }
+      }
+      if (industry !== undefined) {
+        data.industry =
+          typeof industry === "string" && industry.trim()
+            ? industry.trim()
+            : null;
+      }
+      if (companySize !== undefined) {
+        data.companySize =
+          typeof companySize === "string" && companySize.trim()
+            ? companySize.trim()
+            : null;
+      }
 
       if (Object.keys(data).length === 0) {
         return res.json(workspace);
       }
-
-      // TODO: persist `slug`, `industry`, `companySize` after schema migration.
 
       const updated = await prisma.workspace.update({
         where: { id: workspace.id },

@@ -13,18 +13,40 @@ async function loadUserFromToken(token: string) {
   const clerkId = payload.sub;
 
   let user = await prisma.user.findUnique({ where: { clerkId } });
+  let displayName: string | null = user?.name ?? null;
 
   if (!user) {
     const clerkUser = await clerk.users.getUser(clerkId);
     const email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
-    const name = `${clerkUser.firstName ?? ""} ${clerkUser.lastName ?? ""}`.trim();
+    const fullName =
+      `${clerkUser.firstName ?? ""} ${clerkUser.lastName ?? ""}`.trim();
+    displayName = fullName || clerkUser.username || null;
     user = await prisma.user.create({
       data: {
         clerkId,
         email,
-        name: name || null,
+        name: displayName,
         plan: "FREE",
       },
+    });
+  }
+
+  // Auto-create a default workspace on first authenticated request so every
+  // user can use the app without a separate onboarding step. Owner can rename
+  // it in Settings → General.
+  const existingMembership = await prisma.workspaceMember.findFirst({
+    where: { userId: user.id },
+    select: { id: true },
+  });
+  if (!existingMembership) {
+    const workspaceName = displayName
+      ? `${displayName.split(" ")[0]}'s Workspace`
+      : "My Workspace";
+    const workspace = await prisma.workspace.create({
+      data: { name: workspaceName, ownerId: user.id, plan: "FREE" },
+    });
+    await prisma.workspaceMember.create({
+      data: { workspaceId: workspace.id, userId: user.id, role: "OWNER" },
     });
   }
 

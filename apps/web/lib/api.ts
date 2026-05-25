@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useAuth } from "@clerk/nextjs";
 
 /* ───────────────────────────── */
@@ -253,30 +254,34 @@ function buildQuery(params?: Record<string, string | number | undefined>) {
 export function useApiClient() {
   const { getToken } = useAuth();
 
-  async function apiFetch<T>(
-    path: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const token = await getToken();
-    const res = await fetch(`${API_BASE}/api${path}`, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...options.headers,
-      },
-    });
-    if (!res.ok) {
-      const err = await res
-        .json()
-        .catch(() => ({ error: `Request failed (${res.status})` }));
-      throw new Error(err.error ?? `HTTP ${res.status}`);
+  // Memoize the returned client object so consumers can safely list it in
+  // useEffect / useCallback dependency arrays without causing infinite loops.
+  // `getToken` from Clerk is itself stable across renders.
+  return useMemo(() => {
+    async function apiFetch<T>(
+      path: string,
+      options: RequestInit = {}
+    ): Promise<T> {
+      const token = await getToken();
+      const res = await fetch(`${API_BASE}/api${path}`, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...options.headers,
+        },
+      });
+      if (!res.ok) {
+        const err = await res
+          .json()
+          .catch(() => ({ error: `Request failed (${res.status})` }));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      if (res.status === 204) return undefined as T;
+      return res.json() as Promise<T>;
     }
-    if (res.status === 204) return undefined as T;
-    return res.json() as Promise<T>;
-  }
 
-  return {
+    return {
     /* Campaigns */
     getCampaigns: (params?: Record<string, string | number | undefined>) =>
       apiFetch<CampaignsResponse>(`/campaigns${buildQuery(params)}`),
@@ -385,5 +390,6 @@ export function useApiClient() {
       }),
     deleteCreative: (id: string) =>
       apiFetch<SuccessResponse>(`/creatives/${id}`, { method: "DELETE" }),
-  };
+    };
+  }, [getToken]);
 }

@@ -80,11 +80,14 @@ model User {
 }
 
 model Workspace {
-  id        String   @id @default(cuid())
-  name      String
-  ownerId   String
-  plan      PlanType @default(FREE)
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  name        String
+  slug        String?  @unique
+  industry    String?
+  companySize String?
+  ownerId     String
+  plan        PlanType @default(FREE)
+  createdAt   DateTime @default(now())
 
   owner       User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
   members     WorkspaceMember[]
@@ -138,6 +141,7 @@ model Campaign {
   objective   String
   budget      Decimal        @db.Decimal(12, 2)
   budgetType  BudgetType     @default(DAILY)
+  externalId  String?
   startDate   DateTime?
   endDate     DateTime?
   targeting   Json?
@@ -149,9 +153,13 @@ model Campaign {
   metrics   CampaignMetrics[]
   creatives Creative[]
 
+  @@unique([adAccountId, externalId])
   @@index([workspaceId])
   @@index([adAccountId])
   @@index([status])
+  @@index([workspaceId, status])
+  @@index([workspaceId, platform])
+  @@index([externalId])
 }
 
 model CampaignMetrics {

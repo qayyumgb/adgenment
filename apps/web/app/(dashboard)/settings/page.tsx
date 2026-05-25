@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import clsx from "clsx";
 import toast from "react-hot-toast";
 import {
@@ -22,6 +22,8 @@ import {
   Send,
   type LucideIcon,
 } from "lucide-react";
+import { useApiClient, type AdAccount } from "@/lib/api";
+import MetaConnect from "@/components/settings/MetaConnect";
 
 type Tab =
   | "general"
@@ -582,65 +584,109 @@ function WorkspaceTab() {
 /* Integrations                               */
 /* ───────────────────────────────────────── */
 
-function IntegrationsTab() {
-  const platforms = [
-    {
-      id: "meta",
-      name: "Meta",
-      color: "#1877F2",
-      initial: "M",
-      connected: true,
-      account: "acme-marketing@meta.com",
-      lastSync: "2 hours ago",
-    },
-    {
-      id: "google",
-      name: "Google Ads",
-      color: "#EA4335",
-      initial: "G",
-      connected: true,
-      account: "acme@gmail.com",
-      lastSync: "4 hours ago",
-    },
-    {
-      id: "tiktok",
-      name: "TikTok Ads",
-      color: "#0f172a",
-      initial: "T",
-      connected: false,
-      account: null,
-      lastSync: "Never",
-    },
-    {
-      id: "linkedin",
-      name: "LinkedIn Ads",
-      color: "#0A66C2",
-      initial: "in",
-      connected: false,
-      account: null,
-      lastSync: "Never",
-    },
-    {
-      id: "youtube",
-      name: "YouTube Ads",
-      color: "#FF0000",
-      initial: "Y",
-      connected: false,
-      account: null,
-      lastSync: "Never",
-    },
-    {
-      id: "snapchat",
-      name: "Snapchat Ads",
-      color: "#FFFC00",
-      initial: "S",
-      connected: false,
-      account: null,
-      lastSync: "Never",
-    },
-  ];
+const STATIC_PLATFORMS = [
+  {
+    id: "google",
+    name: "Google Ads",
+    color: "#EA4335",
+    initial: "G",
+    textOnColor: "white" as const,
+  },
+  {
+    id: "tiktok",
+    name: "TikTok Ads",
+    color: "#0f172a",
+    initial: "T",
+    textOnColor: "white" as const,
+  },
+  {
+    id: "linkedin",
+    name: "LinkedIn Ads",
+    color: "#0A66C2",
+    initial: "in",
+    textOnColor: "white" as const,
+  },
+  {
+    id: "youtube",
+    name: "YouTube Ads",
+    color: "#FF0000",
+    initial: "Y",
+    textOnColor: "white" as const,
+  },
+  {
+    id: "snapchat",
+    name: "Snapchat Ads",
+    color: "#FFFC00",
+    initial: "S",
+    textOnColor: "black" as const,
+  },
+] as const;
 
-  const others = ["Zapier", "HubSpot", "Salesforce", "Slack"];
+const OTHER_INTEGRATIONS = ["Zapier", "HubSpot", "Salesforce", "Slack"];
+
+function timeAgo(iso: string | undefined | null): string | undefined {
+  if (!iso) return undefined;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return undefined;
+  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const mins = Math.round(seconds / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+function IntegrationsTab() {
+  const api = useApiClient();
+  const [accounts, setAccounts] = useState<AdAccount[] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  async function refresh() {
+    try {
+      const list = await api.getAdAccounts();
+      setAccounts(list);
+    } catch (err) {
+      console.error("[settings/integrations] load failed", err);
+      setAccounts([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Surface OAuth callback flags from the URL once.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connected");
+    const error = params.get("error");
+    if (connected === "meta") {
+      toast.success("Meta account connected");
+    } else if (error === "meta_failed") {
+      toast.error("Meta connect failed. Please try again.");
+    } else if (error === "meta_cancelled") {
+      toast("Meta connect cancelled");
+    } else if (error === "meta_no_workspace") {
+      toast.error("Finish onboarding before connecting Meta");
+    }
+    if (connected || error) {
+      const cleaned = new URLSearchParams(window.location.search);
+      cleaned.delete("connected");
+      cleaned.delete("error");
+      const search = cleaned.toString();
+      const newUrl =
+        window.location.pathname + (search ? `?${search}` : "");
+      window.history.replaceState({}, "", newUrl);
+    }
+  }, []);
+
+  const meta = (accounts ?? []).find((a) => a.platform === "META");
 
   return (
     <div className="space-y-6">
@@ -649,69 +695,63 @@ function IntegrationsTab() {
         description="Connect your ad accounts to sync campaigns automatically."
       >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {platforms.map((p) => (
-            <div
-              key={p.id}
-              className="rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300"
-            >
-              <div className="flex items-center gap-3">
+          {loading ? (
+            <div className="col-span-full flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-xs font-medium text-slate-500">
+              Loading connections…
+            </div>
+          ) : (
+            <>
+              <MetaConnect
+                connected={!!meta}
+                adAccountId={meta?.id}
+                accountName={meta?.accountName}
+                lastSynced={timeAgo(meta?.createdAt)}
+                onChange={refresh}
+              />
+              {STATIC_PLATFORMS.map((p) => (
                 <div
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white shadow-sm"
-                  style={{
-                    backgroundColor: p.color,
-                    color: p.color === "#FFFC00" ? "#0f172a" : "#fff",
-                  }}
+                  key={p.id}
+                  className="rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300"
                 >
-                  {p.initial}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-slate-900">{p.name}</p>
-                  <p className="flex items-center gap-1 text-[11px]">
-                    {p.connected ? (
-                      <>
-                        <span className="status-dot active" />
-                        <span className="font-semibold text-emerald-700">
-                          Connected
-                        </span>
-                      </>
-                    ) : (
-                      <>
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold shadow-sm"
+                      style={{
+                        backgroundColor: p.color,
+                        color:
+                          p.textOnColor === "black" ? "#0f172a" : "#ffffff",
+                      }}
+                    >
+                      {p.initial}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold text-slate-900">
+                        {p.name}
+                      </p>
+                      <p className="flex items-center gap-1 text-[11px]">
                         <span className="status-dot draft" />
                         <span className="font-semibold text-slate-500">
                           Not Connected
                         </span>
-                      </>
-                    )}
-                  </p>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-medium text-slate-400">
+                      Last synced: Never
+                    </span>
+                    <button
+                      type="button"
+                      disabled
+                      className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400"
+                    >
+                      Coming Soon
+                    </button>
+                  </div>
                 </div>
-              </div>
-              {p.connected && (
-                <p className="mt-2 truncate text-[11px] text-slate-500">
-                  {p.account}
-                </p>
-              )}
-              <div className="mt-3 flex items-center justify-between gap-2">
-                <span className="text-[10px] font-medium text-slate-400">
-                  Last synced: {p.lastSync}
-                </span>
-                {p.connected ? (
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-[11px] font-bold text-rose-600 transition hover:bg-rose-50"
-                  >
-                    Disconnect
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-[11px] font-bold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-                  >
-                    Connect
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
+              ))}
+            </>
+          )}
         </div>
       </Card>
 
@@ -720,7 +760,7 @@ function IntegrationsTab() {
         description="Workflow tools — coming soon."
       >
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {others.map((name) => (
+          {OTHER_INTEGRATIONS.map((name) => (
             <div
               key={name}
               className="flex flex-col items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/40 p-4 text-center"

@@ -1,47 +1,28 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
 
+/**
+ * Truly public routes — accessible without a Clerk session.
+ *
+ * - `/`             marketing landing
+ * - `/sign-in/*`    Clerk sign-in pages
+ * - `/sign-up/*`    Clerk sign-up pages
+ * - `/api/webhooks` external services posting to us (Stripe, Clerk, etc.)
+ *
+ * Everything else (including /onboarding if we ever reintroduce it,
+ * /connect/done, /dashboard, etc.) requires a signed-in user. Workspaces
+ * are auto-created by the API on first authenticated request, so there is
+ * no separate onboarding step today.
+ */
 const isPublicRoute = createRouteMatcher([
   "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
-  "/onboarding(.*)",
   "/api/webhooks(.*)",
 ]);
 
-const isOnboardingRoute = createRouteMatcher(["/onboarding(.*)"]);
-
 export default clerkMiddleware((auth, req) => {
-  const { userId, sessionClaims } = auth();
-
-  // 1. Public routes — let through.
-  if (isPublicRoute(req) && !isOnboardingRoute(req)) {
-    return;
-  }
-
-  // 2. Anything non-public requires sign-in.
-  if (!userId && !isPublicRoute(req)) {
-    return auth().redirectToSignIn({ returnBackUrl: req.url });
-  }
-
-  // 3. Signed-in users without completed onboarding go to /onboarding.
-  // TODO: Wire up real publicMetadata.onboardingComplete via Clerk's
-  //       session JWT template (Dashboard → Sessions → Customize session
-  //       token → add { "metadata": "{{user.public_metadata}}" }), then
-  //       remove the `false &&` short-circuit below.
-  const claims = sessionClaims as
-    | { metadata?: { onboardingComplete?: boolean } }
-    | undefined;
-  const onboardingComplete = claims?.metadata?.onboardingComplete === true;
-
-  if (
-    false && // <-- remove once Clerk metadata is wired
-    userId &&
-    !onboardingComplete &&
-    !isOnboardingRoute(req)
-  ) {
-    return NextResponse.redirect(new URL("/onboarding", req.url));
-  }
+  if (isPublicRoute(req)) return;
+  auth().protect();
 });
 
 export const config = {
