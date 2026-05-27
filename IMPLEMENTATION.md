@@ -416,6 +416,36 @@ All tokens live in [apps/web/app/globals.css](apps/web/app/globals.css) and [app
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-05-26 — Production deploy config (Vercel + Railway + Supabase)
+
+End-to-end production-ready: Dockerfile, CORS hardening, security headers, env templates, CI checks, deploy doc.
+
+**New files:**
+- [apps/api/Dockerfile](apps/api/Dockerfile) — 3-stage Alpine build (deps → builder → runner). Runs `prisma generate` + `tsc` in the builder stage, ships a slim runtime image. Notes that the build context must be the repo root and Railway needs `RAILWAY_DOCKERFILE_PATH=apps/api/Dockerfile`.
+- [.dockerignore](.dockerignore) (repo root) — keeps node_modules / dist / .env / .git out of the build context.
+- [apps/api/.railwayignore](apps/api/.railwayignore) — same idea for non-Docker Railway builds.
+- [apps/web/vercel.json](apps/web/vercel.json) — minimal monorepo config (assumes Vercel "Root Directory" = `apps/web`).
+- [apps/api/.env.production.example](apps/api/.env.production.example) — DATABASE_URL (Supabase pooler), Clerk live keys, ENCRYPTION_KEY, four platform OAuth credential triples, CORS_ORIGIN/FRONTEND_URL/WEB_ORIGIN.
+- [apps/web/.env.production.example](apps/web/.env.production.example) — Clerk live keys, `NEXT_PUBLIC_API_URL`, server-only `ANTHROPIC_API_KEY`.
+- [.github/workflows/deploy.yml](.github/workflows/deploy.yml) — typecheck + lint gates on every PR/push; deploy "trigger" jobs document that Railway + Vercel deploy via their own GitHub apps.
+- [docs/DEPLOY.md](docs/DEPLOY.md) — 9-section walkthrough: prereqs → secrets → Railway → Supabase migrate → Vercel → CORS loop-close → OAuth callbacks → Clerk production → smoke test → custom domain → secret rotation.
+
+**Modified files:**
+- [apps/api/src/index.ts](apps/api/src/index.ts) — CORS now accepts a comma-separated list via `CORS_ORIGIN` (with `WEB_ORIGIN` as legacy alias) and validates origin against the explicit allow-list with a callback. Wrapped startup in `startServer()` that does `prisma.$connect()` first, logs success, then `app.listen()`. Graceful SIGTERM/SIGINT handlers moved inside startServer.
+- [apps/api/src/lib/prisma.ts](apps/api/src/lib/prisma.ts) — explicit `datasources.db.url = process.env.DATABASE_URL` + throws at construction if it's missing. Log levels: `["error"]` in production, full `["query","error","warn"]` in dev.
+- [apps/web/next.config.js](apps/web/next.config.js) — added security headers (X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy, Permissions-Policy, HSTS 2-year preload). Kept `images.remotePatterns` (the Next 14 shape) instead of the deprecated `images.domains`; added `avatars.githubusercontent.com` + `images.unsplash.com`. CSP omitted on purpose — needs end-to-end testing with Clerk + popup OAuth before enabling.
+- [apps/api/package.json](apps/api/package.json) — added `db:generate`, `db:push`, `db:migrate:deploy` script aliases alongside existing `prisma:*` names.
+
+**Deviated from spec (with reasons):**
+- `/` → `/dashboard` redirect **not added** — would break the marketing landing at [apps/web/app/page.tsx](apps/web/app/page.tsx).
+- Dockerfile does NOT call `npm run build --workspace=packages/shared` — `@adgenius/shared` has no build script and isn't imported at runtime by `apps/api/src` (only declared in api's `package.json` deps).
+- `images.domains` (deprecated since Next 13) replaced with `images.remotePatterns`.
+- Railway "Root Directory: apps/api" advice in the spec doesn't work with a monorepo Dockerfile — DEPLOY.md instructs to leave Root blank and use `RAILWAY_DOCKERFILE_PATH` instead.
+
+**Builds:**
+- `apps/api && npm run build` → `tsc -p tsconfig.json` → exit 0. `dist/` contains `index.js`, `lib/`, `middleware/`, `routes/`, `services/`.
+- `apps/web && npm run build` → Next.js 14.2.15 production build → exit 0. 21 routes compiled, no warnings, ƒ Middleware 61.2 kB.
+
 ### 2026-05-26 — Onboarding flow, dashboard polish, creatives delete, AI Planner → modal handoff
 
 New users no longer land on a broken dashboard. AI Planner now actually applies generated plans. Creatives are deletable. Dashboard adapts copy to real numbers.

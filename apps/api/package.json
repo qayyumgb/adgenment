@@ -11,7 +11,10 @@
     "clean": "rm -rf dist .turbo node_modules",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@adgenius/shared": "*",

@@ -1,0 +1,30 @@
+# Keep build context small. The Dockerfile under apps/api uses the repo root
+# as its build context (see docs/DEPLOY.md), so this lives at the repo root.
+
+# Build outputs
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+
+# Local env files — never bake secrets into images
+.env
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.production.example
+
+# Editor / OS junk
+.DS_Store
+.vscode
+.idea
+
+# Git history (not needed in image)
+.git
+.gitignore
+.github
+
+# Logs
+*.log

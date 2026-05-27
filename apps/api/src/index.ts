@@ -13,7 +13,23 @@ import { prisma } from "./lib/prisma";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
-const WEB_ORIGIN = process.env.WEB_ORIGIN || "http://localhost:3000";
+const NODE_ENV = process.env.NODE_ENV ?? "development";
+
+// Allowed browser origins. Production callers MUST be enumerated by exact
+// scheme + host. Wildcards are intentionally not supported.
+// - CORS_ORIGIN (preferred, comma-separated)
+// - WEB_ORIGIN (legacy single value)
+// - Falls back to localhost for `npm run dev`.
+const allowedOrigins: string[] = (() => {
+  const fromEnv = process.env.CORS_ORIGIN ?? process.env.WEB_ORIGIN;
+  if (fromEnv) {
+    return fromEnv
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return ["http://localhost:3000"];
+})();
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -29,12 +45,19 @@ app.use(
     crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
   })
 );
+
 app.use(
   cors({
-    origin: WEB_ORIGIN,
+    origin: (origin, callback) => {
+      // Server-to-server / curl / health checks send no Origin header — allow.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
     credentials: true,
   })
 );
+
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -50,7 +73,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Health check
+// Health check — Railway and most uptime probes will hit /health
 app.get("/health", (_req: Request, res: Response) => {
   res.json({
     status: "ok",
@@ -84,32 +107,49 @@ app.use("/api", router);
 
 app.use(errorHandler);
 
-const server = app.listen(PORT, () => {
-  console.log(`[adgenius-api] listening on http://localhost:${PORT}`);
-});
+async function startServer() {
+  try {
+    await prisma.$connect();
+    console.log("[adgenius-api] database connected");
 
-// Graceful shutdown
-function shutdown(signal: string) {
-  console.log(`[adgenius-api] ${signal} received — shutting down…`);
-  server.close(async () => {
-    try {
-      await prisma.$disconnect();
-      console.log("[adgenius-api] prisma disconnected — bye");
-      process.exit(0);
-    } catch (err) {
-      console.error("[adgenius-api] shutdown error:", err);
-      process.exit(1);
-    }
-  });
+    const server = app.listen(PORT, () => {
+      console.log(
+        `[adgenius-api] listening on http://localhost:${PORT} (${NODE_ENV})`
+      );
+      console.log(
+        `[adgenius-api] CORS allowed origins: ${allowedOrigins.join(", ")}`
+      );
+    });
 
-  // Force-exit after 10s if close hangs
-  setTimeout(() => {
-    console.warn("[adgenius-api] forced shutdown after timeout");
+    // Graceful shutdown — Railway sends SIGTERM during redeploy
+    const shutdown = (signal: string) => {
+      console.log(`[adgenius-api] ${signal} received — shutting down…`);
+      server.close(async () => {
+        try {
+          await prisma.$disconnect();
+          console.log("[adgenius-api] prisma disconnected — bye");
+          process.exit(0);
+        } catch (err) {
+          console.error("[adgenius-api] shutdown error:", err);
+          process.exit(1);
+        }
+      });
+
+      // Force-exit after 10s if close hangs
+      setTimeout(() => {
+        console.warn("[adgenius-api] forced shutdown after timeout");
+        process.exit(1);
+      }, 10_000).unref();
+    };
+
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
+  } catch (err) {
+    console.error("[adgenius-api] failed to start:", err);
     process.exit(1);
-  }, 10_000).unref();
+  }
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+void startServer();
 
 export default app;

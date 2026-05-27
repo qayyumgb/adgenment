@@ -1,0 +1,64 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Only run the latest commit on a branch; cancel any in-flight prior runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Prisma client needs to be generated before tsc can resolve its types
+      - run: npx -w apps/api prisma generate
+      - name: tsc — apps/api
+        run: npx -w apps/api tsc --noEmit
+      - name: tsc — apps/web
+        run: npx -w apps/web tsc --noEmit
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: ESLint — apps/web
+        run: npx -w apps/web next lint
+
+  # Both Railway and Vercel auto-deploy from the `main` branch via their
+  # GitHub integrations. These jobs are just visible-status gates so a red
+  # typecheck/lint surfaces before the deploy starts.
+  deploy-api:
+    name: Deploy API (Railway)
+    needs: [typecheck, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger
+        run: echo "Railway auto-deploys on push to main via its GitHub app."
+
+  deploy-web:
+    name: Deploy Web (Vercel)
+    needs: [typecheck, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger
+        run: echo "Vercel auto-deploys on push to main via its GitHub app."
