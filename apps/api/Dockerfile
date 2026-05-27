@@ -16,8 +16,7 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 COPY packages/shared/package.json packages/shared/
-# Mount the npm cache as a buildkit cache to make repeat builds fast
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN npm ci
 
 # ---- Stage 2: build (prisma generate + tsc) ----
 FROM base AS builder
