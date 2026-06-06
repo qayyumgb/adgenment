@@ -77,9 +77,13 @@ export async function requireAuth(
 
     next();
   } catch (err) {
-    if (process.env.NODE_ENV !== "production") {
-      console.error("[requireAuth] verify failed:", err);
-    }
+    // Always log the underlying reason — production deploys still need this
+    // to debug Clerk instance / key mismatches. The error type from
+    // @clerk/backend already excludes sensitive token contents.
+    console.error(
+      "[requireAuth] verify failed:",
+      err instanceof Error ? err.message : err
+    );
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
