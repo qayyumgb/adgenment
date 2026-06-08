@@ -416,6 +416,32 @@ All tokens live in [apps/web/app/globals.css](apps/web/app/globals.css) and [app
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-08 — Native currency, lifetime totals, accurate Meta status, sidebar refetch
+
+After end-to-end testing the Meta sync on production we found 4 real bugs surfaced by INR-denominated data flowing through a USD-hardcoded UI. All fixed.
+
+**Schema:**
+- [AdAccount](apps/api/prisma/schema.prisma) — new optional `currency` (ISO 4217) and `timezone` (IANA tz) columns. Captured at OAuth time, refreshed during sync. **Requires `npx prisma db push` on Railway after deploy** — same one-time step we did for the initial schema bootstrap.
+
+**Backend:**
+- [routes/meta.ts](apps/api/src/routes/meta.ts), [routes/google.ts](apps/api/src/routes/google.ts), [routes/tiktok.ts](apps/api/src/routes/tiktok.ts), [routes/linkedin.ts](apps/api/src/routes/linkedin.ts) — all 4 OAuth callbacks now persist `currency` + `timezone` on AdAccount upsert. Meta returns `currency`/`timezone_name`; Google returns `currencyCode`/`timeZone`; TikTok returns `currency`/`timezone`; LinkedIn returns `currency`.
+- [services/sync.service.ts](apps/api/src/services/sync.service.ts) — `mapMetaStatus` now takes `status`, `effective_status`, and `stop_time`. A campaign whose `stop_time` is in the past maps to `ENDED` regardless of what `status` says. This fixes the bug where a "Completed" FB campaign showed as ACTIVE in AdGenius. Meta sync also re-syncs `currency`/`timezone` on the AdAccount row each run (FB users can edit account currency in Business Manager).
+- [services/meta.service.ts](apps/api/src/services/meta.service.ts) — `MetaCampaign` interface gained `effective_status`; the Graph API call requests it now.
+- [routes/campaigns.ts](apps/api/src/routes/campaigns.ts) — `GET /campaigns` and `GET /campaigns/:id` now include `adAccount.currency` and a `totals` aggregate (lifetime sum of every `CampaignMetric` row: spend, impressions, clicks, conversions, revenue). One `groupBy` query for the list, one `aggregate` for the detail. Lets cards show cumulative spend instead of yesterday's day-row.
+
+**Frontend:**
+- [lib/money.ts](apps/web/lib/money.ts) — new `fmtMoney(n, currency, options)` wrapper around `Intl.NumberFormat`. Renders ₹, $, € correctly with the locale-appropriate grouping. Falls back to USD when currency is null/unknown.
+- [lib/api.ts](apps/web/lib/api.ts) — `AdAccount` gains `currency?`/`timezone?`; `Campaign` gains `totals?` + `adAccount.currency?`.
+- [campaigns/page.tsx](apps/web/app/(dashboard)/campaigns/page.tsx) — card spend now shows `c.totals.spend` (lifetime) instead of `c.metrics[0].spend` (latest day). Budget context line now reads "Rs400/day" or "of Rs400" depending on `budgetType`. ROAS and CTR derived from totals too. List view fixed the same way. All money values pass `c.adAccount?.currency` to `fmtMoney`.
+- [campaigns/[id]/page.tsx](apps/web/app/(dashboard)/campaigns/[id]/page.tsx) — local `fmtMoney` re-exported as a currency-aware shim. Metric cards for Spend / Revenue use `fmtMoney(totals.spend, currency)` directly instead of `prefix="$"`. Insights and 7-day table also currency-aware.
+- [Sidebar.tsx](apps/web/components/layout/Sidebar.tsx) — `useApi` dependencies for `getCampaigns({ limit: 1 })` and `getAdAccounts()` now include `pathname`. Counts refetch on every nav so the campaigns badge no longer shows stale 0 after a Sync or Create.
+
+**Known gaps (post-fix):**
+- The Dashboard and Analytics pages still render `$` everywhere — they aggregate across multiple ad accounts which may have mixed currencies, so picking one is wrong. Will need a workspace-level reporting currency for those aggregate views. For now, those pages remain USD-prefixed; cross-campaign card totals on Campaigns / Detail are correct.
+- Currency for existing ad accounts is `null` until they re-OAuth or Sync once. Sync re-fetches currency on the Meta path; the others only persist on OAuth (so users would need to disconnect + reconnect Google/TikTok/LinkedIn to backfill).
+
+`tsc --noEmit` clean on both apps.
+
 ### 2026-05-26 — Production deploy config (Vercel + Railway + Supabase)
 
 End-to-end production-ready: Dockerfile, CORS hardening, security headers, env templates, CI checks, deploy doc.
