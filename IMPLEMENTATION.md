@@ -395,6 +395,60 @@ All tokens live in [apps/web/app/globals.css](apps/web/app/globals.css) and [app
 
 ---
 
+## Roadmap
+
+> Strategic ordering. Decided 2026-06-08: no real users until Meta and Google are 100% complete, so production-readiness items intentionally come after platform completeness, not before.
+
+### Phase 1 — Meta 100% complete (NEXT UP)
+
+The read/sync path is shipped and verified end-to-end (PKR campaign syncing with correct currency, status, and totals as of 2026-06-08). What's still missing for "100% complete":
+
+- **Publish-to-Meta path** — full ad-authoring flow, not just campaign-shell publish. Build campaign → ad set (targeting/budget/schedule/placement) → ad creative (image upload + copy + link) → ad object. Multi-step wizard UI. Real `OUTCOME_*` objective mapping. After clicking Publish in AdGenius, a fully-running ad should appear in Facebook within ~30 seconds.
+  - Estimated effort: **2-3 days focused work** for Meta alone.
+  - Pre-existing scaffolding: `metaService.createCampaign()` already exists in [meta.service.ts](apps/api/src/services/meta.service.ts) but is currently dead code (no route calls it).
+- **Webhook-driven status updates** — replace the manual "Sync Now" button with a Meta webhook subscription so campaign status / delivery state in AdGenius mirrors Facebook in near-real-time. Removes the "stale until I click Sync" UX gap.
+- **Meta App Review submission** — Meta has to approve `ads_management`, `ads_read`, `business_management` use cases before any non-Tester user can connect. Review takes 5-14 days. Privacy Policy URL must resolve to a real page (currently a placeholder on the Vercel marketing site).
+
+### Phase 2 — Google Ads 100% complete
+
+Same scope as Meta, applied to Google:
+
+- Read/sync already shipped (similar architecture, uses refresh tokens with auto-rotation per [google.service.ts](apps/api/src/services/google.service.ts)).
+- **Google Developer Token approval** — currently the integration runs in test mode with a sandbox developer token. Production requires applying for and being granted a real Developer Token (separate from OAuth approval). Lead time can be weeks.
+- **Publish-to-Google path** — Google's API is meaningfully different from Meta's (uses GAQL queries, MutateOperations grouped in batches). Estimated effort: **2-3 days focused work** after the Meta authoring code lands and we can share patterns.
+
+### Phase 3 — Production readiness (FLIP THE SWITCHES — only after Phase 1 and 2 are done)
+
+These are the cheap, high-value changes that gate real user signups. Deferred until Meta + Google are complete because there's no point in being "production ready" with a half-functional product.
+
+#### 3.1 — Move Clerk to Production instance (~30 min)
+- Today the entire stack runs on Clerk **dev keys** (`pk_test_…` visible in production HTML).
+- Dev instances enforce strict rate limits, watermark the hosted UI as "Development", and don't send transactional emails reliably.
+- Create production Clerk instance → verify Vercel domain → swap `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` + `CLERK_SECRET_KEY` in both Vercel and Railway → redeploy. See [docs/DEPLOY.md § 6](docs/DEPLOY.md).
+- **Until this is done, no real customer can sign up — full stop.**
+
+#### 3.2 — OAuth state security fix (~45 min)
+- Every platform OAuth route currently passes `state = dbUserId` ([meta.ts:28](apps/api/src/routes/meta.ts#L28), and equivalents in google/tiktok/linkedin).
+- An attacker who knows another user's DB ID can craft a malicious OAuth URL with `state=<victimUserId>` and trick the victim into adding the attacker's ad account to the victim's workspace. Real CSRF-class flaw.
+- Fix:
+  1. New Prisma model `OAuthState { nonce String @id, userId String, platform Platform, expiresAt DateTime, consumed Boolean }`.
+  2. `GET /api/{platform}/oauth-url` generates `crypto.randomBytes(32).toString('hex')`, stores `(nonce, dbUserId, platform, expiresAt=15min from now)`, returns OAuth URL with `state=nonce`.
+  3. `/callback` looks up the nonce, validates `expiresAt > now && !consumed`, marks `consumed = true`, reads `userId` from the stored row.
+  4. Same pattern applied to all 4 platforms.
+- 45 min once the pattern is built for one platform, then mechanical for the other three.
+
+### Phase 4+ — Post-launch / future work
+
+- TikTok + LinkedIn full publish parity (each ~1 day after Meta + Google authoring patterns are established)
+- Workspace-level reporting currency + FX conversion for Dashboard/Analytics aggregate views (see [Currency-native display](apps/web/lib/money.ts) — per-account already shipped, workspace-level deferred)
+- Real Audiences / Billing / Insights backends (currently mocked frontends)
+- Notification preferences / API keys / Security tabs in Settings (currently mock UI only)
+- Redis-backed rate limiting (`rate-limit-redis`) — current in-memory store doesn't survive multi-replica deploys
+- Sentry or equivalent error tracking
+- Custom domain (separate from `*.vercel.app` / `*.up.railway.app`)
+
+---
+
 ## Known TODOs / Pending Work
 
 | Area | Item |
