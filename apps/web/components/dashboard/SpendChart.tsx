@@ -35,6 +35,8 @@ interface SpendChartProps {
   showRangeTabs?: boolean;
   /** Optional title override. */
   title?: string;
+  /** ISO 4217 currency code for axis + tooltip labels. Defaults to USD. */
+  currency?: string | null;
 }
 
 // Deterministic pseudo-random for stable SSR output.
@@ -80,18 +82,20 @@ function generateData(days: number): Point[] {
 const TABS: Range[] = ["7D", "30D", "90D"];
 const TAB_DAYS: Record<Range, number> = { "7D": 7, "30D": 30, "90D": 90 };
 
-function fmtMoney(n: number) {
-  return n.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  });
+import { fmtMoney as fmtMoneyShared, currencySymbol } from "@/lib/money";
+
+function makeFormatters(currency: string | null | undefined) {
+  return {
+    fmt: (n: number) => fmtMoneyShared(n, currency),
+    symbol: currencySymbol(currency),
+  };
 }
 
 export default function SpendChart({
   data: dataProp,
   showRangeTabs,
   title = "Spend & ROAS",
+  currency,
 }: SpendChartProps = {}) {
   const [range, setRange] = useState<Range>("30D");
 
@@ -124,13 +128,15 @@ export default function SpendChart({
   // Show ~6 ticks
   const tickInterval = Math.max(1, Math.floor(data.length / 6));
 
+  const { fmt, symbol } = useMemo(() => makeFormatters(currency), [currency]);
+
   return (
     <section className="flex h-full flex-col rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-base font-bold text-slate-900">{title}</h3>
           <p className="text-xs text-slate-500">
-            {fmtMoney(totals.totalSpend)} spent ·{" "}
+            {fmt(totals.totalSpend)} spent ·{" "}
             <span className="font-semibold text-emerald-600">
               {totals.avgRoas.toFixed(2)}x
             </span>{" "}
@@ -198,7 +204,7 @@ export default function SpendChart({
               tickLine={false}
               axisLine={false}
               tick={{ fill: "#94a3b8", fontSize: 11, fontWeight: 500 }}
-              tickFormatter={(v) => `$${Math.round(v / 100) / 10}k`}
+              tickFormatter={(v) => `${symbol}${Math.round(v / 100) / 10}k`}
               width={40}
             />
             <YAxis
@@ -213,7 +219,7 @@ export default function SpendChart({
             />
             <Tooltip
               cursor={{ stroke: "#cbd5e1", strokeDasharray: "3 4" }}
-              content={<CustomTooltip />}
+              content={<CustomTooltip fmt={fmt} />}
             />
             <Area
               yAxisId="spend"
@@ -247,14 +253,17 @@ function CustomTooltip({
   active,
   payload,
   label,
+  fmt,
 }: {
   active?: boolean;
   payload?: Array<{ payload: Point }>;
   label?: string;
+  fmt?: (n: number) => string;
 }) {
   if (!active || !payload?.length) return null;
   const p = payload[0]?.payload;
   if (!p) return null;
+  const format = fmt ?? ((n: number) => `$${Math.round(n)}`);
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-lg">
       <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -266,7 +275,7 @@ function CustomTooltip({
             <span className="h-2 w-2 rounded-sm bg-primary" /> Spend
           </span>
           <span className="text-sm font-bold text-slate-900">
-            {fmtMoney(p.spend)}
+            {format(p.spend)}
           </span>
         </div>
         <div className="flex items-center justify-between gap-4">

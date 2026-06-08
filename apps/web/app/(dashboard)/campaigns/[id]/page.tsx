@@ -637,7 +637,7 @@ function OverviewTab({
 
   return (
     <div className="space-y-6">
-      <SpendChart data={chartData} showRangeTabs={false} />
+      <SpendChart data={chartData} showRangeTabs={false} currency={currency} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
