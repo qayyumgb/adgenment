@@ -75,7 +75,14 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       prisma.campaign.findMany({
         where,
         include: {
-          adAccount: { select: { platform: true, accountName: true } },
+          adAccount: {
+            select: {
+              platform: true,
+              accountName: true,
+              currency: true,
+              timezone: true,
+            },
+          },
           _count: { select: { metrics: true } },
           ...(includeLatestMetrics
             ? {
@@ -92,8 +99,59 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       }),
     ]);
 
+    // Aggregate lifetime totals (sum of every CampaignMetric row) per
+    // campaign so cards/tables show cumulative spend instead of just the
+    // last day's. One groupBy keeps it cheap regardless of how many
+    // campaigns the page returns.
+    let totalsByCampaignId: Record<
+      string,
+      {
+        spend: number;
+        impressions: number;
+        clicks: number;
+        conversions: number;
+        revenue: number;
+      }
+    > = {};
+    if (campaigns.length > 0) {
+      const agg = await prisma.campaignMetrics.groupBy({
+        by: ["campaignId"],
+        where: { campaignId: { in: campaigns.map((c) => c.id) } },
+        _sum: {
+          spend: true,
+          impressions: true,
+          clicks: true,
+          conversions: true,
+          revenue: true,
+        },
+      });
+      totalsByCampaignId = Object.fromEntries(
+        agg.map((row) => [
+          row.campaignId,
+          {
+            spend: Number(row._sum.spend ?? 0),
+            impressions: row._sum.impressions ?? 0,
+            clicks: row._sum.clicks ?? 0,
+            conversions: row._sum.conversions ?? 0,
+            revenue: Number(row._sum.revenue ?? 0),
+          },
+        ])
+      );
+    }
+
+    const enriched = campaigns.map((c) => ({
+      ...c,
+      totals: totalsByCampaignId[c.id] ?? {
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        conversions: 0,
+        revenue: 0,
+      },
+    }));
+
     res.json({
-      campaigns,
+      campaigns: enriched,
       total,
       page,
       totalPages: Math.max(1, Math.ceil(total / limit)),
@@ -195,7 +253,27 @@ router.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
     if (!campaign) {
       return res.status(404).json({ error: "Campaign not found" });
     }
-    res.json(campaign);
+    // Lifetime totals on detail too — convenient for the metric cards.
+    const agg = await prisma.campaignMetrics.aggregate({
+      where: { campaignId: campaign.id },
+      _sum: {
+        spend: true,
+        impressions: true,
+        clicks: true,
+        conversions: true,
+        revenue: true,
+      },
+    });
+    res.json({
+      ...campaign,
+      totals: {
+        spend: Number(agg._sum.spend ?? 0),
+        impressions: agg._sum.impressions ?? 0,
+        clicks: agg._sum.clicks ?? 0,
+        conversions: agg._sum.conversions ?? 0,
+        revenue: Number(agg._sum.revenue ?? 0),
+      },
+    });
   } catch (err) {
     next(err);
   }

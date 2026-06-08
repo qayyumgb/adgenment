@@ -23,15 +23,45 @@ export type SyncResult = {
   metricsSynced: number;
 };
 
-function mapMetaStatus(status: string): CampaignStatus {
-  switch (status) {
+/**
+ * Map Meta's status fields to our CampaignStatus enum.
+ *
+ * Meta has two status fields:
+ *   - `status` — toggle state (the on/off switch).
+ *   - `effective_status` — actual delivery state.
+ *
+ * `effective_status` is more accurate because it accounts for budget
+ * exhaustion, scheduling, etc. We also treat `stop_time` in the past as
+ * ENDED — Meta returns `status: ACTIVE` even for finished campaigns whose
+ * delivery is "Completed" in Ads Manager.
+ */
+function mapMetaStatus(
+  status: string,
+  effectiveStatus: string | undefined,
+  stopTimeIso: string | undefined
+): CampaignStatus {
+  if (stopTimeIso) {
+    const stop = new Date(stopTimeIso).getTime();
+    if (!Number.isNaN(stop) && stop < Date.now()) return "ENDED";
+  }
+  const s = effectiveStatus || status;
+  switch (s) {
     case "ACTIVE":
       return "ACTIVE";
     case "PAUSED":
+    case "CAMPAIGN_PAUSED":
+    case "ADSET_PAUSED":
       return "PAUSED";
     case "DELETED":
     case "ARCHIVED":
       return "ENDED";
+    case "PENDING_REVIEW":
+    case "DISAPPROVED":
+    case "PREAPPROVED":
+    case "PENDING_BILLING_INFO":
+    case "IN_PROCESS":
+    case "WITH_ISSUES":
+      return "DRAFT";
     default:
       return "DRAFT";
   }
@@ -138,13 +168,36 @@ class SyncService {
     const token = decryptToken(adAccount.accessToken);
     const accountId = adAccount.accountId;
 
+    // 0. Refresh the cached currency/timezone from Meta. The OAuth callback
+    //    persists these on first connect, but ad-account currency can change
+    //    (it's actually editable in FB Business Manager) so we re-fetch on
+    //    every sync to stay accurate.
+    try {
+      const fresh = await metaService.getAdAccounts(token);
+      const match = fresh.find((f) => {
+        const raw = f.id.startsWith("act_") ? f.id.slice("act_".length) : f.id;
+        return raw === accountId;
+      });
+      if (match && (match.currency || match.timezone)) {
+        await prisma.adAccount.update({
+          where: { id: adAccount.id },
+          data: {
+            currency: match.currency || null,
+            timezone: match.timezone || null,
+          },
+        });
+      }
+    } catch {
+      // best-effort; don't fail the whole sync over metadata
+    }
+
     // 1. Pull campaigns and upsert by (adAccountId, externalId).
     const metaCampaigns = await metaService.getCampaigns(token, accountId);
     const idMap: Record<string, string> = {}; // metaId → our DB cuid
     let campaignsSynced = 0;
 
     for (const mc of metaCampaigns) {
-      const status = mapMetaStatus(mc.status);
+      const status = mapMetaStatus(mc.status, mc.effective_status, mc.stop_time);
       const { amount, type: budgetType } = metaBudget(mc);
 
       const campaign = await prisma.campaign.upsert({

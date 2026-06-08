@@ -168,12 +168,19 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     );
   })();
 
-  // Live counts + connected platforms — fed into nav badges + bottom strip
+  // Live counts + connected platforms — fed into nav badges + bottom strip.
+  // We depend on `pathname` so the counts auto-refresh whenever the user
+  // navigates between routes. Cheap (limit=1) so re-firing every nav is fine.
+  // This is also how the sidebar picks up new campaigns after a Sync or
+  // Create from the campaigns page.
   const campaignsQ = useApi(
     (client) => client.getCampaigns({ limit: "1" }),
-    []
+    [pathname]
   );
-  const adAccountsQ = useApi((client) => client.getAdAccounts(), []);
+  const adAccountsQ = useApi(
+    (client) => client.getAdAccounts(),
+    [pathname]
+  );
 
   const campaignBadge = campaignsQ.data?.total ?? 0;
   const connectedPlatforms = useMemo(() => {

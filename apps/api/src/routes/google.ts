@@ -105,12 +105,16 @@ router.get("/callback", async (req: Request, res: Response) => {
           platform: "GOOGLE",
           accountId: c.id,
           accountName: c.name,
+          currency: c.currencyCode || null,
+          timezone: c.timeZone || null,
           accessToken: encryptedAccess,
           refreshToken: encryptedRefresh,
           isActive: c.status === "ENABLED" || c.status === "UNKNOWN",
         },
         update: {
           accountName: c.name,
+          currency: c.currencyCode || null,
+          timezone: c.timeZone || null,
           accessToken: encryptedAccess,
           // Only overwrite refresh token if we got a new one — preserves
           // the previously-stored refresh token if Google didn't re-issue.

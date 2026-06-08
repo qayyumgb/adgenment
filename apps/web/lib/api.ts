@@ -57,6 +57,10 @@ export interface AdAccount {
   platform: Platform;
   accountId: string;
   accountName: string;
+  /** ISO 4217 code captured from the ad platform. Null until first sync. */
+  currency?: string | null;
+  /** IANA tz name. Null until first sync. */
+  timezone?: string | null;
   isActive: boolean;
   createdAt: string;
 }
@@ -77,10 +81,27 @@ export interface Campaign {
   targeting: unknown;
   createdAt: string;
   updatedAt: string;
-  adAccount?: { platform: Platform; accountName: string };
+  adAccount?: {
+    platform: Platform;
+    accountName: string;
+    currency?: string | null;
+    timezone?: string | null;
+  };
   _count?: { metrics: number };
   /** Populated when `includeLatestMetrics=true` was passed to /campaigns. */
   metrics?: CampaignMetric[];
+  /**
+   * Lifetime totals — sum of every `CampaignMetric` row for this campaign.
+   * Always returned by `/campaigns` and `/campaigns/:id` (it's just zeroes
+   * when no metric rows exist).
+   */
+  totals?: {
+    spend: number;
+    impressions: number;
+    clicks: number;
+    conversions: number;
+    revenue: number;
+  };
 }
 
 export interface CampaignMetric {

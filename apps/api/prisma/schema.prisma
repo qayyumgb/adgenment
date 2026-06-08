@@ -119,6 +119,13 @@ model AdAccount {
   platform     Platform
   accountId    String
   accountName  String
+  // ISO 4217 code captured from the ad platform at OAuth / sync time. Used
+  // to render all money values (budget, spend, revenue) in the account's
+  // native currency instead of forcing USD display.
+  currency     String?
+  // IANA tz name (e.g. "Asia/Karachi") for displaying campaign timestamps
+  // in the account's local time. Display-only today.
+  timezone     String?
   accessToken  String
   refreshToken String?
   isActive     Boolean  @default(true)

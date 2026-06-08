@@ -30,6 +30,7 @@ import { SkeletonCampaignCard, SkeletonTableRow } from "@/components/ui/Skeleton
 import EmptyState from "@/components/ui/EmptyState";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
+import { fmtMoney } from "@/lib/money";
 import type {
   Campaign,
   CampaignsResponse,
@@ -102,14 +103,6 @@ const STATUS_META: Record<
   DRAFT: { label: "Draft", cls: "text-slate-600", dot: "draft" },
   ENDED: { label: "Ended", cls: "text-rose-700", dot: "ended" },
 };
-
-function fmtMoney(n: number, full = false): string {
-  return n.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: full ? 2 : 0,
-  });
-}
 
 function fmtCompact(n: number): string {
   if (n >= 1_000_000)
@@ -621,11 +614,25 @@ function CampaignCard({
   const plat = PLATFORM_META[c.platform] ?? PLATFORM_META.META;
   const st = STATUS_META[c.status];
   const latest = c.metrics?.[0];
+  const currency = c.adAccount?.currency ?? null;
   const budget = Number(c.budget) || 0;
-  const spend = latest ? Number(latest.spend) : 0;
-  const roas = latest ? Number(latest.roas) : 0;
-  const ctr = latest ? Number(latest.ctr) * 100 : 0;
-  const pct = budget > 0 ? Math.min(100, Math.round((spend / budget) * 100)) : 0;
+  // Lifetime totals — cumulative across every metric row for this campaign.
+  // Falls back to the latest daily row only when totals weren't returned
+  // (older clients without the schema update).
+  const totalSpend = c.totals?.spend ?? (latest ? Number(latest.spend) : 0);
+  const impressions = c.totals?.impressions ?? 0;
+  const clicks = c.totals?.clicks ?? 0;
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const revenue = c.totals?.revenue ?? 0;
+  const roas = totalSpend > 0 ? revenue / totalSpend : 0;
+  // Budget tracking: daily budget = daily spend ratio; lifetime = total
+  // spend ratio. The card shows the appropriate one.
+  const dailySpend = latest ? Number(latest.spend) : 0;
+  const referenceSpend = c.budgetType === "LIFETIME" ? totalSpend : dailySpend;
+  const pct =
+    budget > 0
+      ? Math.min(100, Math.round((referenceSpend / budget) * 100))
+      : 0;
   const actions = useCampaignActions(c, onMutate);
 
   return (
@@ -661,9 +668,13 @@ function CampaignCard({
             Spend
           </p>
           <p className="mt-0.5 text-sm font-bold text-slate-900">
-            {spend === 0 ? "—" : fmtMoney(spend)}
+            {totalSpend === 0 ? "—" : fmtMoney(totalSpend, currency)}
           </p>
-          <p className="text-[10px] text-slate-400">of {fmtMoney(budget)}</p>
+          <p className="text-[10px] text-slate-400">
+            {c.budgetType === "DAILY"
+              ? `${fmtMoney(budget, currency)}/day`
+              : `of ${fmtMoney(budget, currency)}`}
+          </p>
           <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-slate-100">
             <div
               className={clsx(
@@ -855,10 +866,14 @@ function CampaignListRow({
   const actions = useCampaignActions(c, onMutate);
   const plat = PLATFORM_META[c.platform] ?? PLATFORM_META.META;
   const st = STATUS_META[c.status];
+  const currency = c.adAccount?.currency ?? null;
   const latest = c.metrics?.[0];
-  const spend = latest ? Number(latest.spend) : 0;
-  const roas = latest ? Number(latest.roas) : 0;
-  const ctr = latest ? Number(latest.ctr) * 100 : 0;
+  const totalSpend = c.totals?.spend ?? (latest ? Number(latest.spend) : 0);
+  const impressions = c.totals?.impressions ?? (latest ? latest.impressions : 0);
+  const clicks = c.totals?.clicks ?? (latest ? latest.clicks : 0);
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const revenue = c.totals?.revenue ?? 0;
+  const roas = totalSpend > 0 ? revenue / totalSpend : 0;
 
   return (
     <tr className="group border-t border-slate-50 transition hover:bg-slate-50/70">
@@ -883,10 +898,10 @@ function CampaignListRow({
         <span className="block truncate text-xs text-slate-600">{c.objective}</span>
       </td>
       <td className="py-3.5 text-xs font-semibold text-slate-700">
-        {fmtMoney(Number(c.budget) || 0)}
+        {fmtMoney(Number(c.budget) || 0, currency)}
       </td>
       <td className="py-3.5 text-xs font-semibold text-slate-700">
-        {spend === 0 ? "—" : fmtMoney(spend)}
+        {totalSpend === 0 ? "—" : fmtMoney(totalSpend, currency)}
       </td>
       <td className="py-3.5">
         <span
@@ -917,7 +932,7 @@ function CampaignListRow({
         </span>
       </td>
       <td className="py-3.5 text-xs font-medium text-slate-700">
-        {latest ? fmtCompact(latest.impressions) : "—"}
+        {impressions > 0 ? fmtCompact(impressions) : "—"}
       </td>
       <td className="py-3.5 text-xs text-slate-500">
         {c.startDate ? c.startDate.slice(0, 10) : "—"}

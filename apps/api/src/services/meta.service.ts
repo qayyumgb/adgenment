@@ -26,7 +26,21 @@ export interface MetaAdAccount {
 export interface MetaCampaign {
   id: string;
   name: string;
+  /** Toggle state: ACTIVE | PAUSED | DELETED | ARCHIVED */
   status: string;
+  /**
+   * Delivery state. More accurate than `status` because it accounts for
+   * budget exhaustion, end_time passing, ad set issues, etc.
+   *
+   * Possible values: ACTIVE, PAUSED, DELETED, PENDING_REVIEW, DISAPPROVED,
+   * PREAPPROVED, PENDING_BILLING_INFO, CAMPAIGN_PAUSED, ARCHIVED,
+   * ADSET_PAUSED, IN_PROCESS, WITH_ISSUES.
+   *
+   * Note: Meta doesn't return a literal "COMPLETED" — once delivery ends
+   * via stop_time or budget cap, `status` stays ACTIVE but the campaign
+   * stops serving. Use `stop_time < now` as a secondary signal.
+   */
+  effective_status?: string;
   objective: string;
   daily_budget?: string;
   lifetime_budget?: string;
@@ -175,7 +189,7 @@ class MetaAdsService {
     const accountPath = this.accountPath(adAccountId);
     const params = new URLSearchParams({
       fields:
-        "id,name,status,objective,daily_budget,lifetime_budget,start_time,stop_time,created_time",
+        "id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time,created_time",
       access_token: accessToken,
     });
     const data = await this.graphFetch<{ data: MetaCampaign[] }>(

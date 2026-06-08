@@ -94,12 +94,9 @@ const STATUS_META: Record<
   ENDED: { label: "Ended", cls: "text-rose-700", dot: "ended" },
 };
 
-function fmtMoney(n: number) {
-  return n.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  });
+import { fmtMoney as fmtMoneyShared } from "@/lib/money";
+function fmtMoney(n: number, currency?: string | null) {
+  return fmtMoneyShared(n, currency);
 }
 
 function fmtCompact(n: number): string {
@@ -219,6 +216,7 @@ function CampaignDetail({
 
   const plat = PLATFORM_META[c.platform] ?? PLATFORM_META.META;
   const st = STATUS_META[c.status];
+  const currency = c.adAccount?.currency ?? null;
 
   // Aggregate metric totals for the metric cards
   const totals = useMemo(() => {
@@ -398,25 +396,23 @@ function CampaignDetail({
           <>
             <MetricCard
               title="Spend"
-              value={totals.spend.toFixed(0)}
+              value={fmtMoney(totals.spend, currency)}
               change={0}
               changeLabel={`${metrics.length}d window`}
               icon={DollarSign}
               iconColor="#059669"
               iconBg="rgba(16, 185, 129, 0.12)"
               trend="neutral"
-              prefix="$"
             />
             <MetricCard
               title="Revenue"
-              value={totals.revenue.toFixed(0)}
+              value={fmtMoney(totals.revenue, currency)}
               change={0}
               changeLabel={`${metrics.length}d window`}
               icon={TrendingUp}
               iconColor="#2563eb"
               iconBg="rgba(59, 130, 246, 0.12)"
               trend="neutral"
-              prefix="$"
             />
             <MetricCard
               title="ROAS"
@@ -534,6 +530,7 @@ function OverviewTab({
   };
   avgRoas: number;
 }) {
+  const currency = campaign.adAccount?.currency ?? null;
   const last7 = useMemo(
     () =>
       [...metrics]
@@ -605,8 +602,9 @@ function OverviewTab({
         color: "#ef4444",
         bg: "rgba(239,68,68,0.12)",
         title: "Budget nearly depleted",
-        body: `Spent ${fmtMoney(totals.spend)} of ${fmtMoney(
-          budget
+        body: `Spent ${fmtMoney(totals.spend, campaign.adAccount?.currency)} of ${fmtMoney(
+          budget,
+          campaign.adAccount?.currency
         )} budget — consider increasing to maintain delivery.`,
       });
     }
@@ -672,10 +670,10 @@ function OverviewTab({
                         {d.date.slice(0, 10)}
                       </td>
                       <td className="py-2.5 text-xs font-semibold text-slate-900">
-                        {fmtMoney(spend)}
+                        {fmtMoney(spend, currency)}
                       </td>
                       <td className="py-2.5 text-xs font-semibold text-slate-900">
-                        {fmtMoney(revenue)}
+                        {fmtMoney(revenue, currency)}
                       </td>
                       <td
                         className={clsx(
