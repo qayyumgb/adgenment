@@ -8,6 +8,7 @@ import {
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
+import { metaService, type MetaTargeting } from "../services/meta.service";
 
 const router = Router();
 router.use(requireAuth);
@@ -436,5 +437,353 @@ router.post(
     }
   }
 );
+
+/* ────────────────────────────────────────── */
+/* Phase 1A — Publish to Meta                 */
+/* ────────────────────────────────────────── */
+
+/**
+ * POST /campaigns/:id/publish
+ *
+ * Take a local DRAFT Meta campaign + the wizard's targeting/creative/budget
+ * payload and create the full hierarchy on Meta:
+ *
+ *   1. Resolve image → image_hash (upload from URL or pre-uploaded hash)
+ *   2. Create Campaign on Meta
+ *   3. Create Ad Set
+ *   4. Create Ad Creative
+ *   5. Create Ad
+ *
+ * Each step is wrapped so a failure rolls back any prior step that
+ * created a Meta-side object — otherwise we'd leak orphan campaigns into
+ * the user's ad account.
+ *
+ * On success: returns the published campaign with its external IDs.
+ * On failure: campaign stays DRAFT, `publishError` is populated.
+ */
+router.post(
+  "/:id/publish",
+  async (req: Request, res: Response, next: NextFunction) => {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: req.params.id, workspaceId: workspace.id },
+      include: { adAccount: true },
+    });
+    if (!campaign) {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+    if (campaign.platform !== "META") {
+      return res
+        .status(400)
+        .json({ error: "Only Meta publish is supported in Phase 1A" });
+    }
+    if (campaign.externalId) {
+      return res
+        .status(409)
+        .json({ error: "Campaign already published. Use launch/pause to control status." });
+    }
+
+    const {
+      pageId,
+      targeting,
+      creative,
+    } = (req.body ?? {}) as PublishPayload;
+
+    // ── Validation ──────────────────────────────────────────────────────
+    if (typeof pageId !== "string" || !pageId.trim()) {
+      return res.status(400).json({ error: "pageId is required" });
+    }
+    if (!targeting || typeof targeting !== "object") {
+      return res.status(400).json({ error: "targeting is required" });
+    }
+    if (!creative || typeof creative !== "object") {
+      return res.status(400).json({ error: "creative is required" });
+    }
+    if (typeof creative.message !== "string" || !creative.message.trim()) {
+      return res.status(400).json({ error: "creative.message is required" });
+    }
+    if (typeof creative.linkUrl !== "string" || !creative.linkUrl.trim()) {
+      return res.status(400).json({ error: "creative.linkUrl is required" });
+    }
+    if (
+      !creative.imageUrl &&
+      !creative.imageHash &&
+      !creative.libraryCreativeId
+    ) {
+      return res
+        .status(400)
+        .json({ error: "creative needs imageUrl, imageHash, or libraryCreativeId" });
+    }
+
+    const token = metaService.decryptToken(campaign.adAccount.accessToken);
+    const adAccountId = campaign.adAccount.accountId;
+    const objective = metaService.mapObjectiveToMeta(campaign.objective);
+
+    // ── Rollback bookkeeping ────────────────────────────────────────────
+    // We track what we created on Meta so we can clean up if a later
+    // step fails. Order matters — delete children before parents.
+    const created: {
+      metaCampaignId?: string;
+      adSetId?: string;
+      creativeId?: string;
+      adId?: string;
+    } = {};
+
+    async function rollback() {
+      try {
+        if (created.adId) {
+          await metaService.deleteObject(token, created.adId).catch(() => undefined);
+        }
+        if (created.creativeId) {
+          await metaService.deleteObject(token, created.creativeId).catch(() => undefined);
+        }
+        if (created.adSetId) {
+          await metaService.deleteObject(token, created.adSetId).catch(() => undefined);
+        }
+        if (created.metaCampaignId) {
+          await metaService.deleteObject(token, created.metaCampaignId).catch(() => undefined);
+        }
+      } catch {
+        // best-effort
+      }
+    }
+
+    try {
+      // ── 1. Resolve image → image_hash ───────────────────────────────
+      let imageHash: string | undefined = creative.imageHash;
+      let imageUrlForResolution: string | undefined = creative.imageUrl;
+
+      if (!imageHash && creative.libraryCreativeId) {
+        const libCreative = await prisma.creative.findFirst({
+          where: {
+            id: creative.libraryCreativeId,
+            workspaceId: workspace.id,
+          },
+        });
+        if (!libCreative) {
+          return res
+            .status(404)
+            .json({ error: "Library creative not found in this workspace" });
+        }
+        const content = (libCreative.content ?? {}) as Record<string, unknown>;
+        const resolved =
+          typeof content.imageUrl === "string"
+            ? content.imageUrl
+            : typeof content.url === "string"
+              ? content.url
+              : null;
+        if (!resolved) {
+          return res
+            .status(400)
+            .json({ error: "Library creative has no image URL" });
+        }
+        imageUrlForResolution = resolved;
+      }
+
+      if (!imageHash && imageUrlForResolution) {
+        const uploaded = await metaService.uploadImageFromUrl(
+          token,
+          adAccountId,
+          imageUrlForResolution
+        );
+        imageHash = uploaded.hash;
+      }
+
+      if (!imageHash) {
+        return res
+          .status(400)
+          .json({ error: "Could not resolve image — provide imageUrl, imageHash, or libraryCreativeId" });
+      }
+
+      // ── 2. Create Campaign on Meta ───────────────────────────────────
+      const budgetNumber = Number(campaign.budget) || 0;
+      const dailyBudget =
+        campaign.budgetType === "DAILY" ? budgetNumber : undefined;
+      const lifetimeBudget =
+        campaign.budgetType === "LIFETIME" ? budgetNumber : undefined;
+
+      const metaCampaign = await metaService.createCampaign(
+        token,
+        adAccountId,
+        {
+          name: campaign.name,
+          objective, // OUTCOME_*
+          // Important: ad sets carry the budget for OUTCOME_* objectives
+          // (campaign-level CBO is opt-in); we don't pass budgets at this
+          // level to avoid double-counting.
+          status: "PAUSED",
+        }
+      );
+      created.metaCampaignId = metaCampaign.id;
+
+      // ── 3. Create Ad Set ────────────────────────────────────────────
+      const adSet = await metaService.createAdSet(token, adAccountId, {
+        name: `${campaign.name} — Ad Set`,
+        campaignId: metaCampaign.id,
+        objective,
+        targeting: targeting as MetaTargeting,
+        status: "PAUSED",
+        dailyBudget,
+        lifetimeBudget,
+        startTime: campaign.startDate?.toISOString(),
+        endTime: campaign.endDate?.toISOString(),
+        promotedPageId: pageId,
+      });
+      created.adSetId = adSet.id;
+
+      // ── 4. Create Ad Creative ────────────────────────────────────────
+      const adCreative = await metaService.createAdCreative(
+        token,
+        adAccountId,
+        {
+          name: `${campaign.name} — Creative`,
+          pageId,
+          imageHash,
+          message: creative.message,
+          headline: creative.headline,
+          description: creative.description,
+          linkUrl: creative.linkUrl,
+          callToAction: creative.callToAction,
+        }
+      );
+      created.creativeId = adCreative.id;
+
+      // ── 5. Create Ad ─────────────────────────────────────────────────
+      const ad = await metaService.createAd(token, adAccountId, {
+        name: `${campaign.name} — Ad`,
+        adSetId: adSet.id,
+        creativeId: adCreative.id,
+        status: "PAUSED",
+      });
+      created.adId = ad.id;
+
+      // ── 6. Persist to our DB ─────────────────────────────────────────
+      const updated = await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: {
+          status: "PAUSED",
+          externalId: metaCampaign.id,
+          externalAdSetId: adSet.id,
+          externalCreativeId: adCreative.id,
+          externalAdId: ad.id,
+          externalPageId: pageId,
+          publishedAt: new Date(),
+          publishError: null,
+          targeting: targeting as Prisma.InputJsonValue,
+        },
+      });
+
+      return res.status(201).json({
+        success: true,
+        campaign: updated,
+        meta: {
+          campaignId: metaCampaign.id,
+          adSetId: adSet.id,
+          creativeId: adCreative.id,
+          adId: ad.id,
+        },
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Publish to Meta failed";
+      // Roll back any Meta-side objects we already created
+      await rollback();
+      // Record the failure on the campaign so the UI can surface it
+      try {
+        await prisma.campaign.update({
+          where: { id: campaign.id },
+          data: { publishError: message },
+        });
+      } catch {
+        // ignore — error logging is best-effort
+      }
+      console.error("[campaigns/publish] failed:", message);
+      return res.status(502).json({ error: message });
+    }
+    void next; // satisfies lint when no fall-through next() is used
+  }
+);
+
+/**
+ * POST /campaigns/:id/launch
+ *
+ * Flip a published Meta campaign + its ad set + its ad from PAUSED to
+ * ACTIVE. All three need to be ACTIVE for the ad to actually serve —
+ * pausing just the campaign isn't sufficient.
+ *
+ * To pause: call this with `{ status: "PAUSED" }`.
+ */
+router.post(
+  "/:id/launch",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const workspace = await requireWorkspace(req.dbUserId!);
+      const campaign = await prisma.campaign.findFirst({
+        where: { id: req.params.id, workspaceId: workspace.id },
+        include: { adAccount: true },
+      });
+      if (!campaign) {
+        return res.status(404).json({ error: "Campaign not found" });
+      }
+      if (!campaign.externalId) {
+        return res
+          .status(400)
+          .json({ error: "Campaign is not published to Meta yet" });
+      }
+
+      const target =
+        (req.body?.status as "ACTIVE" | "PAUSED" | undefined) ?? "ACTIVE";
+      if (target !== "ACTIVE" && target !== "PAUSED") {
+        return res.status(400).json({ error: "status must be ACTIVE or PAUSED" });
+      }
+
+      const token = metaService.decryptToken(campaign.adAccount.accessToken);
+
+      // Flip campaign → ad set → ad. All three must match for delivery.
+      await metaService.updateCampaignStatus(
+        token,
+        campaign.externalId,
+        target
+      );
+      if (campaign.externalAdSetId) {
+        await metaService.updateCampaignStatus(
+          token,
+          campaign.externalAdSetId,
+          target
+        );
+      }
+      if (campaign.externalAdId) {
+        await metaService.updateCampaignStatus(
+          token,
+          campaign.externalAdId,
+          target
+        );
+      }
+
+      const updated = await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: { status: target },
+      });
+      res.json({ success: true, campaign: updated });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+interface PublishPayload {
+  pageId?: string;
+  targeting?: MetaTargeting;
+  creative?: {
+    message?: string;
+    headline?: string;
+    description?: string;
+    linkUrl?: string;
+    callToAction?: import("../services/meta.service").MetaCallToActionType;
+    imageHash?: string;
+    imageUrl?: string;
+    libraryCreativeId?: string;
+  };
+}
 
 export default router;

@@ -27,8 +27,11 @@ import {
   AlertTriangle,
   Megaphone,
   Loader2,
+  Rocket,
+  ExternalLink,
   type LucideIcon,
 } from "lucide-react";
+import PublishToMetaModal from "@/components/campaigns/publish/PublishToMetaModal";
 import MetricCard from "@/components/dashboard/MetricCard";
 import SpendChart, {
   type SpendChartPoint,
@@ -246,14 +249,31 @@ function CampaignDetail({
     [metrics]
   );
 
+  const [publishOpen, setPublishOpen] = useState(false);
+  const isPublishedToMeta = c.platform === "META" && Boolean(c.externalId);
+  const canPublish = c.platform === "META" && !c.externalId;
+
   async function toggleStatus() {
     if (busy) return;
     const nextStatus: CampaignStatus = c.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
     setBusy(true);
     try {
-      await api.updateCampaign(c.id, { status: nextStatus });
+      // If campaign is published to Meta, flip the status BOTH locally AND on
+      // Meta in one call (the /launch route does both). Otherwise just update
+      // our local DB row.
+      if (isPublishedToMeta) {
+        await api.launchCampaign(c.id, nextStatus);
+      } else {
+        await api.updateCampaign(c.id, { status: nextStatus });
+      }
       toast.success(
-        nextStatus === "ACTIVE" ? "Campaign resumed" : "Campaign paused"
+        nextStatus === "ACTIVE"
+          ? isPublishedToMeta
+            ? "Launched on Meta"
+            : "Campaign resumed"
+          : isPublishedToMeta
+            ? "Paused on Meta"
+            : "Campaign paused"
       );
       onRefetch();
     } catch (err) {
@@ -314,16 +334,47 @@ function CampaignDetail({
           </div>
 
           <div className="flex items-center gap-2">
+            {canPublish && (
+              <button
+                type="button"
+                onClick={() => setPublishOpen(true)}
+                disabled={busy}
+                className="btn-brand"
+              >
+                <Rocket className="h-4 w-4" strokeWidth={2.5} />
+                Publish to Meta
+              </button>
+            )}
+            {isPublishedToMeta && c.externalId && (
+              <a
+                href={`https://business.facebook.com/adsmanager/manage/campaigns?act=${c.adAccountId}&selected_campaign_ids=${c.externalId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200"
+                title="Open in Facebook Ads Manager"
+              >
+                <Sparkles className="h-3 w-3" />
+                Live on Meta
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
             <button
               type="button"
               onClick={toggleStatus}
-              disabled={busy}
+              disabled={busy || c.status === "DRAFT"}
               className={clsx(
-                "inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-sm font-semibold transition disabled:opacity-60",
+                "inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
                 c.status === "ACTIVE"
                   ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
                   : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
               )}
+              title={
+                c.status === "DRAFT"
+                  ? canPublish
+                    ? "Publish to Meta first to enable launch"
+                    : "DRAFT campaigns can't be launched directly"
+                  : undefined
+              }
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -332,7 +383,11 @@ function CampaignDetail({
               ) : (
                 <PlayCircle className="h-4 w-4" />
               )}
-              {c.status === "ACTIVE" ? "Pause" : "Resume"}
+              {isPublishedToMeta && c.status !== "ACTIVE"
+                ? "Launch on Meta"
+                : c.status === "ACTIVE"
+                  ? "Pause"
+                  : "Resume"}
             </button>
             <button
               type="button"
@@ -473,6 +528,27 @@ function CampaignDetail({
         </div>
       </div>
 
+      {/* Surface last publish error so user sees what Meta said */}
+      {c.publishError && c.platform === "META" && (
+        <div className="animate-in stagger-2 rounded-xl border border-rose-200 bg-rose-50 p-4">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+            <div className="flex-1">
+              <div className="text-sm font-bold text-rose-900">
+                Last publish attempt failed
+              </div>
+              <div className="mt-0.5 text-xs text-rose-700">
+                {c.publishError}
+              </div>
+              <div className="mt-2 text-[11px] text-rose-600">
+                Click <strong>Publish to Meta</strong> above to retry. Any
+                partial Meta-side objects were rolled back automatically.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tab Panels */}
       <div className="animate-in stagger-4">
         {tab === "overview" && (
@@ -491,6 +567,16 @@ function CampaignDetail({
           <SettingsTab campaign={c} onSaved={onRefetch} />
         )}
       </div>
+
+      <PublishToMetaModal
+        open={publishOpen}
+        campaign={c}
+        onClose={() => setPublishOpen(false)}
+        onPublished={() => {
+          setPublishOpen(false);
+          onRefetch();
+        }}
+      />
     </div>
   );
 }

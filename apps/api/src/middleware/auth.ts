@@ -9,6 +9,13 @@ const clerk = createClerkClient({
 async function loadUserFromToken(token: string) {
   const payload = await verifyToken(token, {
     secretKey: process.env.CLERK_SECRET_KEY,
+    // 60-second tolerance for clock skew between Clerk's signing servers
+    // and our API host. Without this, a laptop whose clock has drifted
+    // even 6-10 seconds rejects every Clerk-issued token as "iat in the
+    // future". Real-world clock skew across machines is normal; the
+    // security cost of 60s is negligible since tokens already expire on
+    // their own short lifetime.
+    clockSkewInMs: 60_000,
   });
   const clerkId = payload.sub;
 

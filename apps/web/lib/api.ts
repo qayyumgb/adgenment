@@ -76,6 +76,12 @@ export interface Campaign {
   budget: string | number;
   budgetType: BudgetType;
   externalId?: string | null;
+  externalAdSetId?: string | null;
+  externalAdId?: string | null;
+  externalCreativeId?: string | null;
+  externalPageId?: string | null;
+  publishedAt?: string | null;
+  publishError?: string | null;
   startDate: string | null;
   endDate: string | null;
   targeting: unknown;
@@ -420,6 +426,177 @@ export function useApiClient() {
       }),
     deleteCreative: (id: string) =>
       apiFetch<SuccessResponse>(`/creatives/${id}`, { method: "DELETE" }),
+
+    /* ───────────────────────────────── */
+    /* Phase 1A — Meta publish wizard    */
+    /* ───────────────────────────────── */
+    getMetaPages: () => apiFetch<MetaPage[]>("/meta/pages"),
+    getMetaCustomAudiences: () =>
+      apiFetch<MetaCustomAudience[]>("/meta/custom-audiences"),
+    getMetaSavedAudiences: () =>
+      apiFetch<MetaSavedAudience[]>("/meta/saved-audiences"),
+    searchMetaInterests: (q: string) =>
+      apiFetch<MetaTargetingSuggestion[]>(
+        `/meta/interests${buildQuery({ q })}`
+      ),
+    searchMetaLocations: (
+      q: string,
+      types?: ReadonlyArray<"country" | "region" | "city" | "zip">
+    ) =>
+      apiFetch<MetaGeoLocation[]>(
+        `/meta/locations${buildQuery({
+          q,
+          types: types && types.length > 0 ? types.join(",") : undefined,
+        })}`
+      ),
+    createMetaLookalike: (data: {
+      name: string;
+      seedAudienceId: string;
+      countryCode: string;
+      ratio?: number;
+    }) =>
+      apiFetch<{ id: string }>("/meta/lookalike", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    publishCampaignToMeta: (id: string, payload: PublishCampaignPayload) =>
+      apiFetch<PublishCampaignResult>(`/campaigns/${id}/publish`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    /**
+     * Upload an image file to Meta (forwarded to /adimages by our API).
+     * Bypasses apiFetch because that's JSON-only — multipart needs FormData.
+     */
+    uploadMetaImage: async (file: File): Promise<{ hash: string; url: string }> => {
+      const token = await getToken();
+      const form = new FormData();
+      form.append("image", file);
+      const res = await fetch(`${API_BASE}/api/meta/upload-image`, {
+        method: "POST",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          // NB: don't set Content-Type — browser sets multipart boundary
+        },
+        body: form,
+      });
+      if (!res.ok) {
+        const err = await res
+          .json()
+          .catch(() => ({ error: `Upload failed (${res.status})` }));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      return res.json();
+    },
+    launchCampaign: (id: string, status: "ACTIVE" | "PAUSED" = "ACTIVE") =>
+      apiFetch<{ success: boolean; campaign: Campaign }>(
+        `/campaigns/${id}/launch`,
+        { method: "POST", body: JSON.stringify({ status }) }
+      ),
     };
   }, [getToken]);
+}
+
+/* ───────────────────────────────── */
+/* Phase 1A — Meta publish types     */
+/* ───────────────────────────────── */
+
+export interface MetaPage {
+  id: string;
+  name: string;
+  category?: string;
+  pictureUrl?: string;
+}
+
+export interface MetaCustomAudience {
+  id: string;
+  name: string;
+  subtype: string;
+  isLookalike: boolean;
+  approxSize: number | null;
+  description?: string;
+  ready: boolean;
+}
+
+export interface MetaSavedAudience {
+  id: string;
+  name: string;
+  description?: string;
+  approxSize: number | null;
+}
+
+export interface MetaTargetingSuggestion {
+  id: string;
+  name: string;
+  audienceSize: number | null;
+  path?: string[];
+}
+
+export interface MetaGeoLocation {
+  key: string;
+  name: string;
+  type: "country" | "region" | "city" | "zip";
+  countryCode?: string;
+  countryName?: string;
+  region?: string;
+}
+
+export type MetaCallToAction =
+  | "LEARN_MORE"
+  | "SIGN_UP"
+  | "SHOP_NOW"
+  | "DOWNLOAD"
+  | "GET_QUOTE"
+  | "SUBSCRIBE"
+  | "CONTACT_US"
+  | "APPLY_NOW"
+  | "BOOK_TRAVEL"
+  | "WATCH_MORE"
+  | "ORDER_NOW";
+
+export interface MetaTargetingSpec {
+  age_min?: number;
+  age_max?: number;
+  genders?: number[];
+  geo_locations?: {
+    countries?: string[];
+    regions?: Array<{ key: string }>;
+    cities?: Array<{ key: string; radius?: number; distance_unit?: "mile" | "kilometer" }>;
+    zips?: Array<{ key: string }>;
+  };
+  excluded_geo_locations?: MetaTargetingSpec["geo_locations"];
+  interests?: Array<{ id: string; name?: string }>;
+  custom_audiences?: Array<{ id: string }>;
+  excluded_custom_audiences?: Array<{ id: string }>;
+  saved_audiences?: Array<{ id: string }>;
+  publisher_platforms?: Array<"facebook" | "instagram" | "messenger" | "audience_network">;
+}
+
+export interface PublishCampaignPayload {
+  pageId: string;
+  targeting: MetaTargetingSpec;
+  creative: {
+    message: string;
+    headline?: string;
+    description?: string;
+    linkUrl: string;
+    callToAction?: MetaCallToAction;
+    /** Choose ONE: imageUrl (public URL Meta will download) OR
+     *  imageHash (pre-uploaded to Meta) OR libraryCreativeId (one of
+     *  our existing Creative rows — backend resolves to its imageUrl). */
+    imageUrl?: string;
+    imageHash?: string;
+    libraryCreativeId?: string;
+  };
+}
+
+export interface PublishCampaignResult {
+  success: boolean;
+  campaign: Campaign;
+  meta: {
+    campaignId: string;
+    adSetId: string;
+    creativeId: string;
+    adId: string;
+  };
 }

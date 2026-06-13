@@ -1,0 +1,1746 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import clsx from "clsx";
+import toast from "react-hot-toast";
+import {
+  X,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  AlertCircle,
+  Rocket,
+  Users,
+  MapPin,
+  Image as ImageIcon,
+  Target,
+  CalendarRange,
+  Eye,
+  Upload,
+  Search,
+  Library,
+  Link as LinkIcon,
+  Sparkles,
+  Plus,
+  Minus,
+} from "lucide-react";
+import { useApi } from "@/hooks/useApi";
+import { useApiClient } from "@/lib/api";
+import { fmtMoney } from "@/lib/money";
+import type {
+  Campaign,
+  MetaPage,
+  MetaCustomAudience,
+  MetaSavedAudience,
+  MetaTargetingSuggestion,
+  MetaGeoLocation,
+  MetaCallToAction,
+  MetaTargetingSpec,
+  PublishCampaignPayload,
+  PublishCampaignResult,
+  Creative,
+  CreativesResponse,
+} from "@/lib/api";
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Types                                                                */
+/* ──────────────────────────────────────────────────────────────────── */
+
+interface PublishToMetaModalProps {
+  open: boolean;
+  campaign: Campaign;
+  onClose: () => void;
+  onPublished: (result: PublishCampaignResult) => void;
+}
+
+type SelectedCity = { key: string; name: string };
+type SelectedInterest = { id: string; name: string };
+type SelectedAudience = { id: string; name: string; isLookalike?: boolean };
+
+interface WizardState {
+  // Step 1
+  pageId: string;
+  pageName: string;
+  // Step 2 (objective is taken from the campaign — confirmed here)
+  // Step 3 — Audience (Full)
+  countries: string[]; // ISO 2-letter codes
+  cities: SelectedCity[];
+  excludedCities: SelectedCity[];
+  ageMin: number;
+  ageMax: number;
+  genders: number[]; // [] = all, [1] = male, [2] = female
+  interests: SelectedInterest[];
+  customAudiences: SelectedAudience[];
+  excludedCustomAudiences: SelectedAudience[];
+  savedAudiences: SelectedAudience[];
+  // Step 4 (schedule is taken from the campaign — confirmed here)
+  // Step 5
+  creativeSource: "upload" | "library" | "url";
+  imageHash: string | null;
+  imageUrl: string | null; // populated either from URL paste OR from upload preview
+  libraryCreativeId: string | null;
+  libraryCreativeName: string | null;
+  headline: string;
+  message: string;
+  description: string;
+  linkUrl: string;
+  callToAction: MetaCallToAction;
+  uploading: boolean;
+  uploadFile: File | null;
+}
+
+const STEP_LABELS = [
+  { key: "page", label: "Page", icon: Sparkles },
+  { key: "objective", label: "Objective", icon: Target },
+  { key: "audience", label: "Audience", icon: Users },
+  { key: "schedule", label: "Schedule", icon: CalendarRange },
+  { key: "creative", label: "Creative", icon: ImageIcon },
+  { key: "review", label: "Review", icon: Eye },
+] as const;
+
+const CTA_OPTIONS: { value: MetaCallToAction; label: string }[] = [
+  { value: "LEARN_MORE", label: "Learn More" },
+  { value: "SIGN_UP", label: "Sign Up" },
+  { value: "SHOP_NOW", label: "Shop Now" },
+  { value: "DOWNLOAD", label: "Download" },
+  { value: "GET_QUOTE", label: "Get Quote" },
+  { value: "SUBSCRIBE", label: "Subscribe" },
+  { value: "CONTACT_US", label: "Contact Us" },
+  { value: "APPLY_NOW", label: "Apply Now" },
+  { value: "BOOK_TRAVEL", label: "Book Travel" },
+  { value: "WATCH_MORE", label: "Watch More" },
+  { value: "ORDER_NOW", label: "Order Now" },
+];
+
+const OBJECTIVE_META: Record<string, { meta: string; description: string }> = {
+  conversions: {
+    meta: "OUTCOME_SALES",
+    description:
+      "Drives purchases / sign-ups. Meta optimizes for offsite conversions tracked via your Meta Pixel.",
+  },
+  sales: {
+    meta: "OUTCOME_SALES",
+    description: "Drives purchases. Same as Conversions in our model.",
+  },
+  awareness: {
+    meta: "OUTCOME_AWARENESS",
+    description:
+      "Optimizes for reach — getting your ad in front of as many unique people as possible. Cheapest objective.",
+  },
+  traffic: {
+    meta: "OUTCOME_TRAFFIC",
+    description:
+      "Optimizes for clicks to your destination URL. Good for blog posts, product pages, sign-up flows.",
+  },
+  leads: {
+    meta: "OUTCOME_LEADS",
+    description:
+      "Optimizes for lead form completions. Best when paired with Meta Lead Forms.",
+  },
+  engagement: {
+    meta: "OUTCOME_ENGAGEMENT",
+    description:
+      "Optimizes for likes, comments, shares, video views. Good for social proof.",
+  },
+  "video views": {
+    meta: "OUTCOME_ENGAGEMENT",
+    description: "Optimizes for video plays. Awareness alternative.",
+  },
+  "catalog sales": {
+    meta: "OUTCOME_SALES",
+    description: "Dynamic product ads from your catalog.",
+  },
+  "lead generation": {
+    meta: "OUTCOME_LEADS",
+    description: "Lead form completions.",
+  },
+};
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Master modal component                                                */
+/* ──────────────────────────────────────────────────────────────────── */
+
+export default function PublishToMetaModal({
+  open,
+  campaign,
+  onClose,
+  onPublished,
+}: PublishToMetaModalProps) {
+  const api = useApiClient();
+  const [step, setStep] = useState(0);
+  const [state, setState] = useState<WizardState>(() => initialState(campaign));
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Reset when the modal closes or campaign changes
+  useEffect(() => {
+    if (!open) {
+      const t = setTimeout(() => {
+        setStep(0);
+        setState(initialState(campaign));
+        setSubmitting(false);
+        setSubmitError(null);
+      }, 250);
+      return () => clearTimeout(t);
+    }
+  }, [open, campaign]);
+
+  // ESC to close (only when not submitting)
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !submitting) onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, submitting, onClose]);
+
+  // Per-step validation gates the Next button
+  const canAdvance = useMemo(() => {
+    switch (step) {
+      case 0:
+        return state.pageId !== "";
+      case 1:
+        return true; // objective is locked from the campaign
+      case 2:
+        return state.ageMin < state.ageMax && state.ageMin >= 13;
+      case 3:
+        return true; // schedule is locked from the campaign
+      case 4: {
+        if (!state.message.trim() || !state.linkUrl.trim()) return false;
+        // Need at least one of: imageHash, imageUrl, libraryCreativeId
+        return Boolean(
+          state.imageHash || state.imageUrl || state.libraryCreativeId
+        );
+      }
+      case 5:
+        return true;
+      default:
+        return false;
+    }
+  }, [step, state]);
+
+  if (!open) return null;
+
+  function patch(updates: Partial<WizardState>) {
+    setState((prev) => ({ ...prev, ...updates }));
+  }
+
+  async function handleSubmit() {
+    setSubmitError(null);
+    setSubmitting(true);
+
+    const targeting: MetaTargetingSpec = {
+      age_min: state.ageMin,
+      age_max: state.ageMax,
+      ...(state.genders.length > 0 ? { genders: state.genders } : {}),
+      ...(state.countries.length > 0 ||
+      state.cities.length > 0 ||
+      state.excludedCities.length > 0
+        ? {
+            geo_locations: {
+              ...(state.countries.length > 0
+                ? { countries: state.countries }
+                : {}),
+              ...(state.cities.length > 0
+                ? {
+                    cities: state.cities.map((c) => ({
+                      key: c.key,
+                      radius: 25,
+                      distance_unit: "mile" as const,
+                    })),
+                  }
+                : {}),
+            },
+          }
+        : {}),
+      ...(state.excludedCities.length > 0
+        ? {
+            excluded_geo_locations: {
+              cities: state.excludedCities.map((c) => ({
+                key: c.key,
+                radius: 25,
+                distance_unit: "mile" as const,
+              })),
+            },
+          }
+        : {}),
+      ...(state.interests.length > 0
+        ? { interests: state.interests.map((i) => ({ id: i.id, name: i.name })) }
+        : {}),
+      ...(state.customAudiences.length > 0
+        ? {
+            custom_audiences: state.customAudiences.map((a) => ({ id: a.id })),
+          }
+        : {}),
+      ...(state.excludedCustomAudiences.length > 0
+        ? {
+            excluded_custom_audiences: state.excludedCustomAudiences.map(
+              (a) => ({ id: a.id })
+            ),
+          }
+        : {}),
+      ...(state.savedAudiences.length > 0
+        ? {
+            saved_audiences: state.savedAudiences.map((a) => ({ id: a.id })),
+          }
+        : {}),
+    };
+
+    const creative: PublishCampaignPayload["creative"] = {
+      message: state.message,
+      headline: state.headline || undefined,
+      description: state.description || undefined,
+      linkUrl: state.linkUrl,
+      callToAction: state.callToAction,
+      ...(state.imageHash
+        ? { imageHash: state.imageHash }
+        : state.libraryCreativeId
+          ? { libraryCreativeId: state.libraryCreativeId }
+          : state.imageUrl
+            ? { imageUrl: state.imageUrl }
+            : {}),
+    };
+
+    try {
+      const result = await api.publishCampaignToMeta(campaign.id, {
+        pageId: state.pageId,
+        targeting,
+        creative,
+      });
+      toast.success("Campaign published to Meta — Paused until you launch");
+      onPublished(result);
+      onClose();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Publish failed";
+      setSubmitError(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !submitting) onClose();
+      }}
+    >
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+      <div className="relative z-10 flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 px-7 py-4">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary">
+              Publish to Meta — Step {step + 1} of {STEP_LABELS.length}
+            </div>
+            <h2 className="text-base font-bold text-slate-900">
+              {STEP_LABELS[step].label}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            aria-label="Close"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Step indicator */}
+        <div className="px-7 pt-4">
+          <div className="flex items-center gap-1.5">
+            {STEP_LABELS.map((s, i) => {
+              const done = i < step;
+              const current = i === step;
+              const Icon = s.icon;
+              return (
+                <div key={s.key} className="flex flex-1 items-center gap-1.5">
+                  <div
+                    className={clsx(
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition",
+                      done
+                        ? "bg-primary text-white"
+                        : current
+                          ? "bg-primary/15 text-primary ring-2 ring-primary"
+                          : "bg-slate-100 text-slate-400"
+                    )}
+                  >
+                    {done ? <Check className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
+                  </div>
+                  {i < STEP_LABELS.length - 1 && (
+                    <div
+                      className={clsx(
+                        "h-px flex-1 transition",
+                        done ? "bg-primary" : "bg-slate-200"
+                      )}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-7 py-5">
+          {step === 0 && <Step1Page state={state} patch={patch} />}
+          {step === 1 && <Step2Objective campaign={campaign} />}
+          {step === 2 && <Step3Audience state={state} patch={patch} />}
+          {step === 3 && <Step4Schedule campaign={campaign} />}
+          {step === 4 && (
+            <Step5Creative state={state} patch={patch} />
+          )}
+          {step === 5 && (
+            <Step6Review campaign={campaign} state={state} />
+          )}
+        </div>
+
+        {/* Error banner */}
+        {submitError && (
+          <div className="mx-7 mb-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="flex-1">
+              <div className="font-bold">Publish failed</div>
+              <div className="text-xs">{submitError}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/50 px-7 py-4">
+          <button
+            type="button"
+            disabled={submitting || step === 0}
+            onClick={() => setStep((s) => Math.max(0, s - 1))}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Back
+          </button>
+
+          {step < STEP_LABELS.length - 1 ? (
+            <button
+              type="button"
+              disabled={!canAdvance}
+              onClick={() => setStep((s) => s + 1)}
+              className={clsx(
+                "btn-brand",
+                !canAdvance && "pointer-events-none opacity-50"
+              )}
+            >
+              Continue
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={handleSubmit}
+              className="btn-brand disabled:pointer-events-none disabled:opacity-60"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Publishing to Meta…
+                </>
+              ) : (
+                <>
+                  <Rocket className="h-4 w-4" strokeWidth={2.5} />
+                  Publish to Meta
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function initialState(c: Campaign): WizardState {
+  return {
+    pageId: "",
+    pageName: "",
+    countries: [],
+    cities: [],
+    excludedCities: [],
+    ageMin: 18,
+    ageMax: 65,
+    genders: [],
+    interests: [],
+    customAudiences: [],
+    excludedCustomAudiences: [],
+    savedAudiences: [],
+    creativeSource: "library",
+    imageHash: null,
+    imageUrl: null,
+    libraryCreativeId: null,
+    libraryCreativeName: null,
+    headline: c.name,
+    message: "",
+    description: "",
+    linkUrl: "https://",
+    callToAction: "LEARN_MORE",
+    uploading: false,
+    uploadFile: null,
+  };
+}
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Step 1 — Page picker                                                  */
+/* ──────────────────────────────────────────────────────────────────── */
+
+function Step1Page({
+  state,
+  patch,
+}: {
+  state: WizardState;
+  patch: (u: Partial<WizardState>) => void;
+}) {
+  const pagesQ = useApi<MetaPage[]>((c) => c.getMetaPages(), []);
+
+  return (
+    <div>
+      <h3 className="mb-1 text-xl font-bold text-slate-900">
+        Which Facebook Page should the ad be from?
+      </h3>
+      <p className="mb-5 text-sm text-slate-500">
+        Every Meta ad has to &ldquo;originate&rdquo; from a Page. This is the
+        sender identity people see in their feed.
+      </p>
+
+      {pagesQ.loading && (
+        <div className="flex items-center justify-center py-12 text-sm text-slate-500">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Loading your Pages…
+        </div>
+      )}
+
+      {pagesQ.error && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          Couldn&apos;t load Pages — {pagesQ.error}
+        </div>
+      )}
+
+      {pagesQ.data && pagesQ.data.length === 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-bold">No Pages with Advertise permission</p>
+          <p className="mt-1 text-xs">
+            Open Business Manager → Pages → assign yourself with the Advertiser
+            role on at least one Page, then come back.
+          </p>
+        </div>
+      )}
+
+      {pagesQ.data && pagesQ.data.length > 0 && (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {pagesQ.data.map((p) => {
+            const selected = state.pageId === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => patch({ pageId: p.id, pageName: p.name })}
+                className={clsx(
+                  "flex items-center gap-3 rounded-xl border-2 p-3 text-left transition",
+                  selected
+                    ? "border-primary bg-primary/5 shadow-glow"
+                    : "border-slate-200 bg-white hover:border-slate-300"
+                )}
+              >
+                {p.pictureUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={p.pictureUrl}
+                    alt={p.name}
+                    className="h-10 w-10 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-500">
+                    {p.name.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-bold text-slate-900">
+                    {p.name}
+                  </div>
+                  {p.category && (
+                    <div className="truncate text-[11px] text-slate-500">
+                      {p.category}
+                    </div>
+                  )}
+                </div>
+                {selected && (
+                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white">
+                    <Check className="h-3 w-3" strokeWidth={3} />
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Step 2 — Objective confirmation                                       */
+/* ──────────────────────────────────────────────────────────────────── */
+
+function Step2Objective({ campaign }: { campaign: Campaign }) {
+  const key = (campaign.objective || "").toLowerCase();
+  const meta =
+    OBJECTIVE_META[key] ??
+    OBJECTIVE_META[key.replace(/[^a-z\s]/g, "")] ?? {
+      meta: "OUTCOME_TRAFFIC",
+      description:
+        "Defaulted to Traffic. To change, edit the campaign's objective before publishing.",
+    };
+
+  return (
+    <div>
+      <h3 className="mb-1 text-xl font-bold text-slate-900">
+        Objective
+      </h3>
+      <p className="mb-5 text-sm text-slate-500">
+        This is locked to what you set on the campaign. To change it, go back to
+        the campaign settings tab.
+      </p>
+
+      <div className="rounded-2xl border-2 border-primary/30 bg-primary/[0.04] p-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md">
+            <Target className="h-5 w-5" strokeWidth={2.25} />
+          </div>
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wider text-primary">
+              Your Objective
+            </div>
+            <div className="text-lg font-bold text-slate-900">
+              {campaign.objective}
+            </div>
+            <div className="text-[11px] font-mono text-slate-500">
+              Meta: {meta.meta}
+            </div>
+          </div>
+        </div>
+        <p className="mt-3 text-sm text-slate-600">{meta.description}</p>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Step 3 — Audience (Full)                                              */
+/* ──────────────────────────────────────────────────────────────────── */
+
+function Step3Audience({
+  state,
+  patch,
+}: {
+  state: WizardState;
+  patch: (u: Partial<WizardState>) => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="mb-1 text-xl font-bold text-slate-900">
+          Who should see this ad?
+        </h3>
+        <p className="text-sm text-slate-500">
+          Targeting is granular. Skip what you don&apos;t need — empty fields
+          mean &ldquo;Meta defaults&rdquo; (broad).
+        </p>
+      </div>
+
+      <Section label="Location" icon={MapPin}>
+        <CountryPicker
+          values={state.countries}
+          onChange={(v) => patch({ countries: v })}
+        />
+        <CityPicker
+          label="Cities to include"
+          values={state.cities}
+          onChange={(v) => patch({ cities: v })}
+        />
+        <CityPicker
+          label="Cities to exclude"
+          values={state.excludedCities}
+          onChange={(v) => patch({ excludedCities: v })}
+        />
+      </Section>
+
+      <Section label="Demographics" icon={Users}>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+              Age range
+            </label>
+            <div className="flex items-center gap-2">
+              <NumberInput
+                value={state.ageMin}
+                min={13}
+                max={state.ageMax - 1}
+                onChange={(v) => patch({ ageMin: v })}
+              />
+              <span className="text-slate-400">to</span>
+              <NumberInput
+                value={state.ageMax}
+                min={state.ageMin + 1}
+                max={65}
+                onChange={(v) => patch({ ageMax: v })}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+              Gender
+            </label>
+            <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
+              {(
+                [
+                  { label: "All", value: [] as number[] },
+                  { label: "Men", value: [1] },
+                  { label: "Women", value: [2] },
+                ] as const
+              ).map((g) => {
+                const selected =
+                  JSON.stringify(g.value) === JSON.stringify(state.genders);
+                return (
+                  <button
+                    key={g.label}
+                    type="button"
+                    onClick={() => patch({ genders: [...g.value] })}
+                    className={clsx(
+                      "rounded-lg px-3 py-1.5 text-xs font-bold transition",
+                      selected
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    {g.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      <Section label="Interests" icon={Sparkles}>
+        <InterestPicker
+          values={state.interests}
+          onChange={(v) => patch({ interests: v })}
+        />
+      </Section>
+
+      <Section label="Custom audiences" icon={Library}>
+        <CustomAudiencePicker
+          label="Include"
+          values={state.customAudiences}
+          onChange={(v) => patch({ customAudiences: v })}
+        />
+        <CustomAudiencePicker
+          label="Exclude"
+          values={state.excludedCustomAudiences}
+          onChange={(v) => patch({ excludedCustomAudiences: v })}
+        />
+      </Section>
+
+      <Section label="Saved audiences" icon={Library}>
+        <SavedAudiencePicker
+          values={state.savedAudiences}
+          onChange={(v) => patch({ savedAudiences: v })}
+        />
+      </Section>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Step 4 — Schedule confirmation                                        */
+/* ──────────────────────────────────────────────────────────────────── */
+
+function Step4Schedule({ campaign }: { campaign: Campaign }) {
+  const currency = campaign.adAccount?.currency ?? null;
+  const budget = Number(campaign.budget) || 0;
+  return (
+    <div>
+      <h3 className="mb-1 text-xl font-bold text-slate-900">
+        Schedule &amp; budget
+      </h3>
+      <p className="mb-5 text-sm text-slate-500">
+        Locked from the campaign. To change, edit the campaign before
+        publishing.
+      </p>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <InfoCard
+          label="Budget"
+          value={`${fmtMoney(budget, currency)} ${
+            campaign.budgetType === "DAILY" ? "/ day" : "lifetime"
+          }`}
+        />
+        <InfoCard
+          label="Start date"
+          value={
+            campaign.startDate
+              ? new Date(campaign.startDate).toLocaleDateString()
+              : "On publish"
+          }
+        />
+        <InfoCard
+          label="End date"
+          value={
+            campaign.endDate
+              ? new Date(campaign.endDate).toLocaleDateString()
+              : "Ongoing"
+          }
+        />
+        <InfoCard
+          label="Budget type"
+          value={campaign.budgetType === "DAILY" ? "Daily" : "Lifetime"}
+        />
+      </div>
+
+      <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        ⚠ Once published, your campaign starts <strong>PAUSED</strong> on Meta.
+        Click &quot;Launch on Meta&quot; on the campaign detail page to begin
+        delivery and start spending.
+      </p>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Step 5 — Creative                                                     */
+/* ──────────────────────────────────────────────────────────────────── */
+
+function Step5Creative({
+  state,
+  patch,
+}: {
+  state: WizardState;
+  patch: (u: Partial<WizardState>) => void;
+}) {
+  const api = useApiClient();
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const creativesQ = useApi<CreativesResponse>(
+    (c) => c.getCreatives({ type: "IMAGE", limit: "20" }),
+    []
+  );
+
+  async function handleUpload(file: File) {
+    patch({ uploading: true, uploadFile: file });
+    try {
+      const result = await api.uploadMetaImage(file);
+      patch({
+        imageHash: result.hash,
+        imageUrl: result.url,
+        libraryCreativeId: null,
+        libraryCreativeName: null,
+      });
+      toast.success("Image uploaded to Meta");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      patch({ uploading: false });
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="mb-1 text-xl font-bold text-slate-900">
+          Ad creative
+        </h3>
+        <p className="text-sm text-slate-500">
+          The image, headline, body, and link that make up the actual post
+          people see in their feed.
+        </p>
+      </div>
+
+      {/* Image source toggle */}
+      <div>
+        <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">
+          Image source
+        </label>
+        <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
+          {(
+            [
+              { value: "library", label: "Pick from library", icon: Library },
+              { value: "upload", label: "Upload new", icon: Upload },
+              { value: "url", label: "Paste URL", icon: LinkIcon },
+            ] as const
+          ).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() =>
+                patch({
+                  creativeSource: opt.value,
+                  imageHash: null,
+                  imageUrl: null,
+                  libraryCreativeId: null,
+                  libraryCreativeName: null,
+                })
+              }
+              className={clsx(
+                "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition",
+                state.creativeSource === opt.value
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              <opt.icon className="h-3.5 w-3.5" />
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Library picker */}
+      {state.creativeSource === "library" && (
+        <div>
+          {creativesQ.loading && (
+            <div className="flex items-center gap-2 py-4 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading creatives…
+            </div>
+          )}
+          {creativesQ.data && creativesQ.data.creatives.length === 0 && (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-center text-sm text-slate-500">
+              No image creatives in your library yet. Generate one in the
+              Creatives tab, or use Upload/URL instead.
+            </div>
+          )}
+          {creativesQ.data && creativesQ.data.creatives.length > 0 && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {creativesQ.data.creatives.map((c) => {
+                const selected = state.libraryCreativeId === c.id;
+                const img = extractImageUrl(c);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() =>
+                      patch({
+                        libraryCreativeId: c.id,
+                        libraryCreativeName: c.name,
+                        imageUrl: img,
+                        imageHash: null,
+                      })
+                    }
+                    className={clsx(
+                      "group overflow-hidden rounded-xl border-2 text-left transition",
+                      selected
+                        ? "border-primary shadow-glow"
+                        : "border-slate-200 hover:border-slate-300"
+                    )}
+                  >
+                    {img ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={img}
+                        alt={c.name}
+                        className="aspect-square w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex aspect-square w-full items-center justify-center bg-slate-100 text-xs text-slate-400">
+                        No preview
+                      </div>
+                    )}
+                    <div className="truncate p-2 text-[11px] font-semibold text-slate-700">
+                      {c.name}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Upload */}
+      {state.creativeSource === "upload" && (
+        <div>
+          <input
+            type="file"
+            ref={fileRef}
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleUpload(f);
+            }}
+          />
+          {state.imageUrl ? (
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={state.imageUrl}
+                alt="Uploaded"
+                className="mx-auto max-h-60 rounded-lg object-contain"
+              />
+              <p className="mt-2 text-center text-xs text-slate-500">
+                Uploaded to Meta — image hash <code>{state.imageHash?.slice(0, 12)}…</code>
+              </p>
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="mt-2 w-full text-xs font-semibold text-primary hover:underline"
+              >
+                Replace image
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={state.uploading}
+              className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 transition hover:border-primary/30 hover:bg-primary/[0.04] disabled:cursor-not-allowed"
+            >
+              {state.uploading ? (
+                <>
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  <span className="text-sm font-semibold text-slate-700">
+                    Uploading to Meta…
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Upload className="h-6 w-6 text-slate-400" />
+                  <span className="text-sm font-semibold text-slate-700">
+                    Click to upload image
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    JPG, PNG up to 10MB. Recommended 1200×630.
+                  </span>
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* URL paste */}
+      {state.creativeSource === "url" && (
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+            Public image URL
+          </label>
+          <input
+            type="url"
+            value={state.imageUrl ?? ""}
+            onChange={(e) => patch({ imageUrl: e.target.value, imageHash: null, libraryCreativeId: null })}
+            placeholder="https://example.com/image.jpg"
+            className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
+          />
+          <p className="mt-1 text-[11px] text-slate-500">
+            Meta will download the image from this URL on publish.
+          </p>
+          {state.imageUrl && state.imageUrl.startsWith("http") && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={state.imageUrl}
+              alt="Preview"
+              className="mt-3 max-h-60 rounded-lg border border-slate-200 object-contain"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = "none";
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Copy fields */}
+      <div className="space-y-3 border-t border-slate-100 pt-4">
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+            Body copy (required)
+          </label>
+          <textarea
+            value={state.message}
+            onChange={(e) => patch({ message: e.target.value })}
+            rows={3}
+            maxLength={2200}
+            placeholder="The main text people see above the image. Speak to your audience's pain or aspiration."
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm transition focus:border-primary focus:outline-none"
+          />
+          <div className="mt-1 text-right text-[11px] text-slate-400">
+            {state.message.length}/2200
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+            Headline
+          </label>
+          <input
+            type="text"
+            value={state.headline}
+            onChange={(e) => patch({ headline: e.target.value })}
+            maxLength={40}
+            placeholder="Short bold headline (shows below image)"
+            className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
+          />
+          <div className="mt-1 text-right text-[11px] text-slate-400">
+            {state.headline.length}/40
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+            Link description (optional)
+          </label>
+          <input
+            type="text"
+            value={state.description}
+            onChange={(e) => patch({ description: e.target.value })}
+            maxLength={120}
+            placeholder="Subtitle below headline"
+            className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+              Destination URL (required)
+            </label>
+            <input
+              type="url"
+              value={state.linkUrl}
+              onChange={(e) => patch({ linkUrl: e.target.value })}
+              placeholder="https://your-site.com/landing"
+              className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+              Call to action
+            </label>
+            <select
+              value={state.callToAction}
+              onChange={(e) =>
+                patch({ callToAction: e.target.value as MetaCallToAction })
+              }
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm transition focus:border-primary focus:outline-none"
+            >
+              {CTA_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Step 6 — Review                                                       */
+/* ──────────────────────────────────────────────────────────────────── */
+
+function Step6Review({
+  campaign,
+  state,
+}: {
+  campaign: Campaign;
+  state: WizardState;
+}) {
+  const currency = campaign.adAccount?.currency ?? null;
+  const budget = Number(campaign.budget) || 0;
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="mb-1 text-xl font-bold text-slate-900">
+          Review &amp; publish
+        </h3>
+        <p className="text-sm text-slate-500">
+          One last look. The campaign goes live on Meta as <strong>PAUSED</strong>{" "}
+          — you control when it starts spending.
+        </p>
+      </div>
+
+      <div className="rounded-2xl p-[1px] bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
+        <div className="space-y-3 rounded-[15px] bg-white p-5">
+          <ReviewRow label="Campaign name" value={campaign.name} />
+          <ReviewRow label="Page" value={state.pageName} />
+          <ReviewRow label="Objective" value={campaign.objective} />
+          <ReviewRow
+            label="Budget"
+            value={`${fmtMoney(budget, currency)} ${
+              campaign.budgetType === "DAILY" ? "/ day" : "lifetime"
+            }`}
+          />
+          <ReviewRow
+            label="Age"
+            value={`${state.ageMin}–${state.ageMax}`}
+          />
+          <ReviewRow
+            label="Gender"
+            value={
+              state.genders.length === 0
+                ? "All"
+                : state.genders.includes(1) && state.genders.includes(2)
+                  ? "All"
+                  : state.genders.includes(1)
+                    ? "Men"
+                    : "Women"
+            }
+          />
+          <ReviewRow
+            label="Countries"
+            value={
+              state.countries.length > 0 ? state.countries.join(", ") : "Any"
+            }
+          />
+          <ReviewRow
+            label="Cities (include)"
+            value={
+              state.cities.length > 0
+                ? state.cities.map((c) => c.name).join(", ")
+                : "—"
+            }
+          />
+          {state.excludedCities.length > 0 && (
+            <ReviewRow
+              label="Cities (exclude)"
+              value={state.excludedCities.map((c) => c.name).join(", ")}
+            />
+          )}
+          <ReviewRow
+            label="Interests"
+            value={
+              state.interests.length > 0
+                ? state.interests.map((i) => i.name).join(", ")
+                : "—"
+            }
+          />
+          {state.customAudiences.length > 0 && (
+            <ReviewRow
+              label="Custom audiences"
+              value={state.customAudiences.map((a) => a.name).join(", ")}
+            />
+          )}
+          {state.excludedCustomAudiences.length > 0 && (
+            <ReviewRow
+              label="Excluded audiences"
+              value={state.excludedCustomAudiences
+                .map((a) => a.name)
+                .join(", ")}
+            />
+          )}
+          {state.savedAudiences.length > 0 && (
+            <ReviewRow
+              label="Saved audiences"
+              value={state.savedAudiences.map((a) => a.name).join(", ")}
+            />
+          )}
+          <ReviewRow label="Headline" value={state.headline || "—"} />
+          <ReviewRow
+            label="Body"
+            value={
+              state.message.length > 100
+                ? state.message.slice(0, 100) + "…"
+                : state.message
+            }
+          />
+          <ReviewRow label="Link" value={state.linkUrl} />
+          <ReviewRow
+            label="CTA"
+            value={
+              CTA_OPTIONS.find((c) => c.value === state.callToAction)?.label ??
+              state.callToAction
+            }
+          />
+        </div>
+      </div>
+
+      {state.imageUrl && (
+        <div>
+          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+            Image preview
+          </label>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={state.imageUrl}
+            alt="Creative preview"
+            className="max-h-60 rounded-xl border border-slate-200 object-contain"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Shared sub-components                                                 */
+/* ──────────────────────────────────────────────────────────────────── */
+
+function Section({
+  label,
+  icon: Icon,
+  children,
+}: {
+  label: string;
+  icon: typeof MapPin;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Icon className="h-4 w-4 text-primary" strokeWidth={2.25} />
+        <h4 className="text-sm font-bold text-slate-900">{label}</h4>
+      </div>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function NumberInput({
+  value,
+  onChange,
+  min,
+  max,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min: number;
+  max: number;
+}) {
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      value={value}
+      onChange={(e) => {
+        const n = parseInt(e.target.value, 10);
+        if (!Number.isNaN(n)) onChange(Math.min(max, Math.max(min, n)));
+      }}
+      className="h-9 w-20 rounded-lg border border-slate-200 px-2 text-center text-sm font-bold transition focus:border-primary focus:outline-none"
+    />
+  );
+}
+
+function InfoCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+        {label}
+      </div>
+      <div className="mt-0.5 text-sm font-bold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function ReviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+        {label}
+      </span>
+      <span className="break-words text-right text-sm font-medium text-slate-900">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ChipList<T extends { id?: string; key?: string; name?: string }>({
+  items,
+  onRemove,
+}: {
+  items: T[];
+  onRemove: (item: T) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {items.map((item) => (
+        <span
+          key={item.id ?? item.key}
+          className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-[11px] font-semibold text-primary"
+        >
+          {item.name}
+          <button
+            type="button"
+            onClick={() => onRemove(item)}
+            className="rounded-full hover:bg-primary/20"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────── Country / city / interest / audience pickers ─────────── */
+
+const COMMON_COUNTRIES = [
+  { code: "US", name: "United States" },
+  { code: "GB", name: "United Kingdom" },
+  { code: "CA", name: "Canada" },
+  { code: "AU", name: "Australia" },
+  { code: "DE", name: "Germany" },
+  { code: "FR", name: "France" },
+  { code: "PK", name: "Pakistan" },
+  { code: "IN", name: "India" },
+  { code: "BR", name: "Brazil" },
+  { code: "MX", name: "Mexico" },
+  { code: "JP", name: "Japan" },
+  { code: "AE", name: "UAE" },
+];
+
+function CountryPicker({
+  values,
+  onChange,
+}: {
+  values: string[];
+  onChange: (v: string[]) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+        Countries
+      </label>
+      <div className="flex flex-wrap gap-1.5">
+        {COMMON_COUNTRIES.map((c) => {
+          const selected = values.includes(c.code);
+          return (
+            <button
+              key={c.code}
+              type="button"
+              onClick={() =>
+                onChange(
+                  selected
+                    ? values.filter((v) => v !== c.code)
+                    : [...values, c.code]
+                )
+              }
+              className={clsx(
+                "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
+                selected
+                  ? "border-primary bg-primary text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+              )}
+            >
+              {c.code} — {c.name}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1 text-[10px] text-slate-400">
+        Click to add/remove. Leave empty for worldwide.
+      </p>
+    </div>
+  );
+}
+
+function CityPicker({
+  label,
+  values,
+  onChange,
+}: {
+  label: string;
+  values: SelectedCity[];
+  onChange: (v: SelectedCity[]) => void;
+}) {
+  const api = useApiClient();
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<MetaGeoLocation[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    if (!q.trim()) {
+      setResults([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await api.searchMetaLocations(q, ["city"]);
+        setResults(res);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, api]);
+
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+        {label}
+      </label>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Type a city name…"
+          className="h-9 w-full rounded-lg border border-slate-200 pl-8 pr-3 text-sm transition focus:border-primary focus:outline-none"
+        />
+        {searching && (
+          <Loader2 className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-slate-400" />
+        )}
+        {results.length > 0 && (
+          <div className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+            {results.map((r) => (
+              <button
+                key={r.key}
+                type="button"
+                onClick={() => {
+                  if (!values.find((v) => v.key === r.key)) {
+                    onChange([...values, { key: r.key, name: r.name }]);
+                  }
+                  setQ("");
+                  setResults([]);
+                }}
+                className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+              >
+                <div className="font-medium text-slate-900">{r.name}</div>
+                <div className="text-[10px] text-slate-500">
+                  {r.region ? `${r.region}, ` : ""}{r.countryName}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <ChipList
+        items={values}
+        onRemove={(item) =>
+          onChange(values.filter((v) => v.key !== item.key))
+        }
+      />
+    </div>
+  );
+}
+
+function InterestPicker({
+  values,
+  onChange,
+}: {
+  values: SelectedInterest[];
+  onChange: (v: SelectedInterest[]) => void;
+}) {
+  const api = useApiClient();
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<MetaTargetingSuggestion[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    if (!q.trim()) {
+      setResults([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await api.searchMetaInterests(q);
+        setResults(res);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, api]);
+
+  return (
+    <div>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search interests (e.g. fitness, cooking, photography)…"
+          className="h-9 w-full rounded-lg border border-slate-200 pl-8 pr-3 text-sm transition focus:border-primary focus:outline-none"
+        />
+        {searching && (
+          <Loader2 className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-slate-400" />
+        )}
+        {results.length > 0 && (
+          <div className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+            {results.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => {
+                  if (!values.find((v) => v.id === r.id)) {
+                    onChange([...values, { id: r.id, name: r.name }]);
+                  }
+                  setQ("");
+                  setResults([]);
+                }}
+                className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+              >
+                <div className="font-medium text-slate-900">{r.name}</div>
+                {r.audienceSize && (
+                  <div className="text-[10px] text-slate-500">
+                    ~{formatBig(r.audienceSize)} people
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <ChipList
+        items={values}
+        onRemove={(item) =>
+          onChange(values.filter((v) => v.id !== item.id))
+        }
+      />
+    </div>
+  );
+}
+
+function CustomAudiencePicker({
+  label,
+  values,
+  onChange,
+}: {
+  label: string;
+  values: SelectedAudience[];
+  onChange: (v: SelectedAudience[]) => void;
+}) {
+  const audiencesQ = useApi<MetaCustomAudience[]>(
+    (c) => c.getMetaCustomAudiences(),
+    []
+  );
+
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+        {label}
+      </label>
+      {audiencesQ.loading && (
+        <div className="text-xs text-slate-500">Loading audiences…</div>
+      )}
+      {audiencesQ.data && audiencesQ.data.length === 0 && (
+        <div className="text-xs text-slate-500">
+          No custom audiences in this ad account.
+        </div>
+      )}
+      {audiencesQ.data && audiencesQ.data.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {audiencesQ.data.map((a) => {
+            const selected = values.find((v) => v.id === a.id);
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() =>
+                  onChange(
+                    selected
+                      ? values.filter((v) => v.id !== a.id)
+                      : [
+                          ...values,
+                          { id: a.id, name: a.name, isLookalike: a.isLookalike },
+                        ]
+                  )
+                }
+                className={clsx(
+                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
+                  selected
+                    ? "border-primary bg-primary text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                )}
+              >
+                {a.isLookalike && <Sparkles className="h-2.5 w-2.5" />}
+                {a.name}
+                {a.approxSize && (
+                  <span className="opacity-70">
+                    ({formatBig(a.approxSize)})
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SavedAudiencePicker({
+  values,
+  onChange,
+}: {
+  values: SelectedAudience[];
+  onChange: (v: SelectedAudience[]) => void;
+}) {
+  const audiencesQ = useApi<MetaSavedAudience[]>(
+    (c) => c.getMetaSavedAudiences(),
+    []
+  );
+  if (audiencesQ.loading)
+    return <div className="text-xs text-slate-500">Loading…</div>;
+  if (!audiencesQ.data || audiencesQ.data.length === 0)
+    return (
+      <div className="text-xs text-slate-500">
+        No saved audiences in this ad account.
+      </div>
+    );
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {audiencesQ.data.map((a) => {
+        const selected = values.find((v) => v.id === a.id);
+        return (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() =>
+              onChange(
+                selected
+                  ? values.filter((v) => v.id !== a.id)
+                  : [...values, { id: a.id, name: a.name }]
+              )
+            }
+            className={clsx(
+              "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition",
+              selected
+                ? "border-primary bg-primary text-white"
+                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+            )}
+          >
+            {a.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─────────── helpers ─────────── */
+
+function extractImageUrl(c: Creative): string | null {
+  if (!c.content || typeof c.content !== "object") return null;
+  const obj = c.content as Record<string, unknown>;
+  if (typeof obj.imageUrl === "string") return obj.imageUrl;
+  if (typeof obj.url === "string") return obj.url;
+  if (typeof obj.image === "string") return obj.image;
+  return null;
+}
+
+function formatBig(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}

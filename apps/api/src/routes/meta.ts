@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
+import multer from "multer";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { getUserWorkspace, requireWorkspace } from "../lib/workspace";
@@ -6,6 +7,14 @@ import { metaService } from "../services/meta.service";
 import { syncService } from "../services/sync.service";
 
 const router = Router();
+
+// In-memory file upload for the publish wizard's image step. We forward the
+// bytes straight to Meta's /adimages endpoint — never persist on our side.
+// 10MB cap matches Meta's own upload limit; 1 file per request.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+});
 
 const FRONTEND_URL =
   process.env.FRONTEND_URL ??
@@ -206,6 +215,221 @@ router.get(
       );
 
       res.json(enriched);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* ────────────────────────────────────────── */
+/* Phase 1A — Publish-wizard discovery        */
+/* ────────────────────────────────────────── */
+
+/**
+ * Find the workspace's connected Meta ad account + decrypt its token.
+ * Most publish-wizard helpers share this lookup.
+ */
+async function resolveMetaContext(
+  req: Request
+): Promise<{ token: string; accountId: string; workspaceId: string } | { error: string; status: number }> {
+  const workspace = await requireWorkspace(req.dbUserId!);
+  const account = await prisma.adAccount.findFirst({
+    where: { workspaceId: workspace.id, platform: "META", isActive: true },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!account) {
+    return { error: "No active Meta ad account connected", status: 404 };
+  }
+  return {
+    token: metaService.decryptToken(account.accessToken),
+    accountId: account.accountId,
+    workspaceId: workspace.id,
+  };
+}
+
+/**
+ * GET /meta/pages — Facebook Pages the user manages with ADVERTISE permission.
+ * Required for the publish wizard's "sender" step.
+ */
+router.get(
+  "/pages",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const pages = await metaService.getPages(ctx.token);
+      res.json(pages);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /meta/custom-audiences — both regular custom audiences AND lookalikes.
+ * Lookalikes have `isLookalike: true` flagged for the UI.
+ */
+router.get(
+  "/custom-audiences",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const audiences = await metaService.getCustomAudiences(
+        ctx.token,
+        ctx.accountId
+      );
+      res.json(audiences);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /meta/saved-audiences — older audience-template feature.
+ */
+router.get(
+  "/saved-audiences",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const audiences = await metaService.getSavedAudiences(
+        ctx.token,
+        ctx.accountId
+      );
+      res.json(audiences);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /meta/interests?q=<query> — type-ahead for the audience step.
+ */
+router.get(
+  "/interests",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const q = String(req.query.q ?? "").trim();
+      const results = await metaService.searchInterests(ctx.token, q);
+      res.json(results);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /meta/locations?q=<query>&types=city,region,country — type-ahead
+ * for the location picker. Default types: city, region, country.
+ */
+router.get(
+  "/locations",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const q = String(req.query.q ?? "").trim();
+      const allowed = ["country", "region", "city", "zip"] as const;
+      const requested = String(req.query.types ?? "city,region,country")
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .filter((t): t is (typeof allowed)[number] =>
+          (allowed as readonly string[]).includes(t)
+        );
+      const results = await metaService.searchLocations(
+        ctx.token,
+        q,
+        requested.length > 0 ? requested : ["city", "region", "country"]
+      );
+      res.json(results);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /meta/lookalike — create a new lookalike audience from an existing
+ * seed (custom audience). Meta runs the population async — the new audience
+ * will be `ready: false` for several minutes/hours after creation.
+ */
+router.post(
+  "/lookalike",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const { name, seedAudienceId, countryCode, ratio } = req.body ?? {};
+      if (typeof name !== "string" || !name.trim()) {
+        return res.status(400).json({ error: "name is required" });
+      }
+      if (typeof seedAudienceId !== "string" || !seedAudienceId.trim()) {
+        return res.status(400).json({ error: "seedAudienceId is required" });
+      }
+      if (typeof countryCode !== "string" || countryCode.length !== 2) {
+        return res
+          .status(400)
+          .json({ error: "countryCode must be a 2-letter ISO code (e.g. US)" });
+      }
+      const ratioNum =
+        typeof ratio === "number" && ratio >= 1 && ratio <= 10 ? ratio : 1;
+      const created = await metaService.createLookalikeAudience(
+        ctx.token,
+        ctx.accountId,
+        { name: name.trim(), seedAudienceId, countryCode, ratio: ratioNum }
+      );
+      res.status(201).json(created);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /meta/upload-image — multipart upload from the publish wizard.
+ *
+ * Body: multipart/form-data with field `image` containing the file.
+ * Returns: `{ hash, url }` — the Meta `image_hash` to use in the publish
+ * payload + the Meta-hosted URL (useful for previews).
+ *
+ * Note: the workspace's first active Meta ad account is the upload target.
+ * Meta keys images per ad account, so the hash is only valid for that account.
+ */
+router.post(
+  "/upload-image",
+  requireAuth,
+  upload.single("image"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ error: "No image file uploaded (field name must be 'image')" });
+      }
+      if (!file.mimetype.startsWith("image/")) {
+        return res.status(400).json({ error: "Uploaded file must be an image" });
+      }
+      const result = await metaService.uploadImageFromBytes(
+        ctx.token,
+        ctx.accountId,
+        file.buffer,
+        file.originalname || "upload.jpg",
+        file.mimetype
+      );
+      res.json(result);
     } catch (err) {
       next(err);
     }

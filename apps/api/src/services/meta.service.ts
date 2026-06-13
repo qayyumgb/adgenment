@@ -10,10 +10,20 @@ import { encryptToken, decryptToken } from "../lib/crypto";
 const GRAPH_BASE = "https://graph.facebook.com/v19.0";
 const FB_DIALOG = "https://www.facebook.com/v19.0/dialog/oauth";
 
-// Meta deprecated `instagram_basic` and gated `pages_read_engagement` behind
-// specific use-case review. The three scopes below cover both Facebook and
-// Instagram ad campaign management via the Marketing API.
-const SCOPES = ["ads_read", "ads_management", "business_management"];
+// `pages_show_list` lets us list the user's Pages via /me/accounts (the
+//   getPages endpoint). Without it, /me/accounts returns empty even for
+//   users who do admin Pages.
+// `ads_management` is already enough to actually USE the Page as the
+//   sender when publishing (Meta's ad creation accepts any page_id the
+//   user has permission on, gated by ads_management — NOT by a separate
+//   Page-scoped permission).
+// `business_management` covers Pages owned by a Business Manager.
+const SCOPES = [
+  "ads_read",
+  "ads_management",
+  "business_management",
+  "pages_show_list",
+];
 
 export interface MetaAdAccount {
   id: string;
@@ -69,6 +79,102 @@ interface MetaErrorResponse {
     error_subcode?: number;
     fbtrace_id?: string;
   };
+}
+
+/* ──────────────────────────────────────── */
+/* Phase 1A — Publish-flow types             */
+/* ──────────────────────────────────────── */
+
+export type MetaObjective =
+  | "OUTCOME_SALES"
+  | "OUTCOME_AWARENESS"
+  | "OUTCOME_TRAFFIC"
+  | "OUTCOME_LEADS"
+  | "OUTCOME_ENGAGEMENT"
+  | "OUTCOME_APP_PROMOTION";
+
+export type MetaCallToActionType =
+  | "LEARN_MORE"
+  | "SIGN_UP"
+  | "SHOP_NOW"
+  | "DOWNLOAD"
+  | "GET_QUOTE"
+  | "SUBSCRIBE"
+  | "CONTACT_US"
+  | "APPLY_NOW"
+  | "BOOK_TRAVEL"
+  | "WATCH_MORE"
+  | "ORDER_NOW";
+
+export interface MetaPage {
+  id: string;
+  name: string;
+  category?: string;
+  pictureUrl?: string;
+  /** Page-scoped access token. Some Marketing API calls require this
+   *  rather than the user's token. */
+  accessToken?: string;
+}
+
+export interface MetaCustomAudience {
+  id: string;
+  name: string;
+  /** CUSTOM | LOOKALIKE | WEBSITE | APP | ENGAGEMENT | etc. */
+  subtype: string;
+  isLookalike: boolean;
+  approxSize: number | null;
+  description?: string;
+  ready: boolean;
+}
+
+export interface MetaSavedAudience {
+  id: string;
+  name: string;
+  description?: string;
+  approxSize: number | null;
+}
+
+export interface MetaTargetingSuggestion {
+  id: string;
+  name: string;
+  audienceSize: number | null;
+  path?: string[];
+}
+
+export interface MetaGeoLocation {
+  key: string;
+  name: string;
+  type: "country" | "region" | "city" | "zip";
+  countryCode?: string;
+  countryName?: string;
+  region?: string;
+}
+
+/**
+ * Meta's targeting spec JSON. We only model the fields we set — Meta
+ * supports many more (behaviors, demographics, family statuses, etc.)
+ * that we'll expose iteratively.
+ */
+export interface MetaTargeting {
+  age_min?: number;
+  age_max?: number;
+  /** Meta uses [1] for male, [2] for female, omit for "all". */
+  genders?: number[];
+  geo_locations?: {
+    countries?: string[];
+    regions?: Array<{ key: string }>;
+    cities?: Array<{ key: string; radius?: number; distance_unit?: "mile" | "kilometer" }>;
+    zips?: Array<{ key: string }>;
+  };
+  excluded_geo_locations?: MetaTargeting["geo_locations"];
+  interests?: Array<{ id: string; name?: string }>;
+  custom_audiences?: Array<{ id: string }>;
+  excluded_custom_audiences?: Array<{ id: string }>;
+  saved_audiences?: Array<{ id: string }>;
+  /** Placement controls; omit for automatic placements (Meta's default
+   *  recommendation). Set to e.g. `["facebook"]` for FB only. */
+  publisher_platforms?: Array<"facebook" | "instagram" | "messenger" | "audience_network">;
+  flexible_spec?: Array<{ interests?: Array<{ id: string }>; behaviors?: Array<{ id: string }> }>;
 }
 
 class MetaAdsService {
@@ -273,6 +379,526 @@ class MetaAdsService {
       { method: "POST", body }
     );
     return { success: true };
+  }
+
+  /**
+   * Generic delete — used by the publish-rollback path when ad set / creative
+   * / ad creation fails partway through. Best-effort: errors are swallowed
+   * by the caller so the rollback continues.
+   */
+  async deleteObject(
+    accessToken: string,
+    metaObjectId: string
+  ): Promise<{ success: boolean }> {
+    const params = new URLSearchParams({ access_token: accessToken });
+    await this.graphFetch<{ success?: boolean }>(
+      `${GRAPH_BASE}/${metaObjectId}?${params.toString()}`,
+      { method: "DELETE" }
+    );
+    return { success: true };
+  }
+
+  /* ───────────────────────────────── */
+  /* Phase 1A — Publish discovery      */
+  /* ───────────────────────────────── */
+
+  /**
+   * Facebook Pages the user manages. Required for ad creatives — every ad
+   * has to "originate" from a Page. Returns `access_token` per page so
+   * caller can switch contexts for Page-scoped Marketing API calls.
+   */
+  async getPages(accessToken: string): Promise<MetaPage[]> {
+    const params = new URLSearchParams({
+      fields: "id,name,category,picture{url},access_token,tasks",
+      access_token: accessToken,
+      limit: "100",
+    });
+    const data = await this.graphFetch<{
+      data: Array<{
+        id: string;
+        name: string;
+        category?: string;
+        picture?: { data?: { url?: string } };
+        access_token?: string;
+        tasks?: string[];
+      }>;
+    }>(`${GRAPH_BASE}/me/accounts?${params.toString()}`);
+    return data.data
+      // Pages without ADVERTISE permission can't be used as ad senders
+      .filter((p) => !p.tasks || p.tasks.includes("ADVERTISE"))
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        pictureUrl: p.picture?.data?.url,
+        accessToken: p.access_token,
+      }));
+  }
+
+  /**
+   * Custom audiences (including lookalikes). Filter `subtype === "LOOKALIKE"`
+   * client-side to surface lookalikes separately in the wizard UI.
+   */
+  async getCustomAudiences(
+    accessToken: string,
+    adAccountId: string
+  ): Promise<MetaCustomAudience[]> {
+    const accountPath = this.accountPath(adAccountId);
+    const params = new URLSearchParams({
+      fields:
+        "id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,description,operation_status,delivery_status",
+      access_token: accessToken,
+      limit: "200",
+    });
+    const data = await this.graphFetch<{
+      data: Array<{
+        id: string;
+        name: string;
+        subtype?: string;
+        approximate_count_lower_bound?: number;
+        approximate_count_upper_bound?: number;
+        description?: string;
+        operation_status?: { code?: number; description?: string };
+        delivery_status?: { code?: number; description?: string };
+      }>;
+    }>(
+      `${GRAPH_BASE}/${accountPath}/customaudiences?${params.toString()}`
+    );
+    return data.data.map((a) => ({
+      id: a.id,
+      name: a.name,
+      subtype: a.subtype ?? "CUSTOM",
+      isLookalike: a.subtype === "LOOKALIKE",
+      approxSize:
+        a.approximate_count_upper_bound ??
+        a.approximate_count_lower_bound ??
+        null,
+      description: a.description,
+      ready: (a.operation_status?.code ?? 200) === 200,
+    }));
+  }
+
+  /**
+   * Saved audiences — Meta's older audience-template feature. Different
+   * endpoint and shape from customaudiences.
+   */
+  async getSavedAudiences(
+    accessToken: string,
+    adAccountId: string
+  ): Promise<MetaSavedAudience[]> {
+    const accountPath = this.accountPath(adAccountId);
+    const params = new URLSearchParams({
+      fields: "id,name,description,approximate_count",
+      access_token: accessToken,
+      limit: "100",
+    });
+    const data = await this.graphFetch<{
+      data: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        approximate_count?: number;
+      }>;
+    }>(`${GRAPH_BASE}/${accountPath}/saved_audiences?${params.toString()}`);
+    return data.data.map((a) => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      approxSize: a.approximate_count ?? null,
+    }));
+  }
+
+  /**
+   * Interest keyword search — type-ahead for the audience step.
+   */
+  async searchInterests(
+    accessToken: string,
+    query: string
+  ): Promise<MetaTargetingSuggestion[]> {
+    if (!query.trim()) return [];
+    const params = new URLSearchParams({
+      type: "adinterest",
+      q: query.trim(),
+      limit: "20",
+      access_token: accessToken,
+    });
+    const data = await this.graphFetch<{
+      data: Array<{
+        id: string;
+        name: string;
+        audience_size_lower_bound?: number;
+        audience_size_upper_bound?: number;
+        path?: string[];
+      }>;
+    }>(`${GRAPH_BASE}/search?${params.toString()}`);
+    return data.data.map((d) => ({
+      id: d.id,
+      name: d.name,
+      path: d.path,
+      audienceSize:
+        d.audience_size_upper_bound ?? d.audience_size_lower_bound ?? null,
+    }));
+  }
+
+  /**
+   * Location search — type-ahead. `types` controls which kinds of places.
+   */
+  async searchLocations(
+    accessToken: string,
+    query: string,
+    types: ReadonlyArray<"country" | "region" | "city" | "zip"> = [
+      "city",
+      "region",
+      "country",
+    ]
+  ): Promise<MetaGeoLocation[]> {
+    if (!query.trim()) return [];
+    const params = new URLSearchParams({
+      type: "adgeolocation",
+      q: query.trim(),
+      location_types: JSON.stringify(types),
+      limit: "20",
+      access_token: accessToken,
+    });
+    const data = await this.graphFetch<{
+      data: Array<{
+        key: string;
+        name: string;
+        type: string;
+        country_code?: string;
+        country_name?: string;
+        region?: string;
+        region_id?: number;
+      }>;
+    }>(`${GRAPH_BASE}/search?${params.toString()}`);
+    return data.data.map((d) => ({
+      key: d.key,
+      name: d.name,
+      type: d.type as MetaGeoLocation["type"],
+      countryCode: d.country_code,
+      countryName: d.country_name,
+      region: d.region,
+    }));
+  }
+
+  /* ───────────────────────────────── */
+  /* Phase 1A — Asset management        */
+  /* ───────────────────────────────── */
+
+  /**
+   * Upload by URL. Meta downloads from the URL and stores it. Best for
+   * "pick from Creatives library" — our Creative rows already have a hosted
+   * image URL we can hand over.
+   *
+   * Returns `image_hash` keyed by the (only) image. The Graph API responds
+   * with `{ images: { <filename>: { hash, url } } }` — we flatten.
+   */
+  async uploadImageFromUrl(
+    accessToken: string,
+    adAccountId: string,
+    imageUrl: string
+  ): Promise<{ hash: string; url: string }> {
+    const accountPath = this.accountPath(adAccountId);
+    const body = new URLSearchParams({
+      url: imageUrl,
+      access_token: accessToken,
+    });
+    const data = await this.graphFetch<{
+      images?: Record<string, { hash: string; url: string }>;
+    }>(`${GRAPH_BASE}/${accountPath}/adimages`, {
+      method: "POST",
+      body,
+    });
+    const entry = Object.values(data.images ?? {})[0];
+    if (!entry) {
+      throw new Error("Meta API: adimages response had no image entry");
+    }
+    return { hash: entry.hash, url: entry.url };
+  }
+
+  /**
+   * Upload by raw bytes. Used when the user uploads a fresh image from
+   * their machine in the wizard. Multipart form-data POST.
+   */
+  async uploadImageFromBytes(
+    accessToken: string,
+    adAccountId: string,
+    fileBuffer: Buffer,
+    filename: string,
+    mimeType: string
+  ): Promise<{ hash: string; url: string }> {
+    const accountPath = this.accountPath(adAccountId);
+    const form = new FormData();
+    const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
+    form.append("source", blob, filename);
+    form.append("access_token", accessToken);
+    const data = await this.graphFetch<{
+      images?: Record<string, { hash: string; url: string }>;
+    }>(`${GRAPH_BASE}/${accountPath}/adimages`, {
+      method: "POST",
+      body: form,
+    });
+    const entry = Object.values(data.images ?? {})[0];
+    if (!entry) {
+      throw new Error("Meta API: adimages response had no image entry");
+    }
+    return { hash: entry.hash, url: entry.url };
+  }
+
+  /**
+   * Create a Lookalike Custom Audience from an existing seed audience.
+   * Meta runs this asynchronously — `delivery_status` will show "pending"
+   * for several minutes/hours after creation.
+   */
+  async createLookalikeAudience(
+    accessToken: string,
+    adAccountId: string,
+    params: {
+      name: string;
+      seedAudienceId: string;
+      countryCode: string;
+      ratio?: number; // 1-10, percent of country's population
+    }
+  ): Promise<{ id: string }> {
+    const accountPath = this.accountPath(adAccountId);
+    const body = new URLSearchParams({
+      name: params.name,
+      subtype: "LOOKALIKE",
+      origin_audience_id: params.seedAudienceId,
+      lookalike_spec: JSON.stringify({
+        ratio: (params.ratio ?? 1) / 100,
+        country: params.countryCode,
+      }),
+      access_token: accessToken,
+    });
+    const created = await this.graphFetch<{ id: string }>(
+      `${GRAPH_BASE}/${accountPath}/customaudiences`,
+      { method: "POST", body }
+    );
+    return { id: created.id };
+  }
+
+  /* ───────────────────────────────── */
+  /* Phase 1A — Publishing             */
+  /* ───────────────────────────────── */
+
+  /**
+   * Create an ad set under an existing campaign. `targeting` is Meta's
+   * targeting JSON spec — built by `composeTargeting` from our wizard
+   * data.
+   */
+  async createAdSet(
+    accessToken: string,
+    adAccountId: string,
+    params: {
+      name: string;
+      campaignId: string;
+      objective: MetaObjective;
+      targeting: MetaTargeting;
+      status?: "ACTIVE" | "PAUSED";
+      dailyBudget?: number; // in account currency, e.g. 25.00
+      lifetimeBudget?: number;
+      startTime?: string;
+      endTime?: string;
+      promotedPageId?: string;
+    }
+  ): Promise<{ id: string }> {
+    const accountPath = this.accountPath(adAccountId);
+    // Each campaign objective constrains the valid optimization_goal +
+    // billing_event combos. We pick sensible defaults.
+    const opt = this.optimizationDefaults(params.objective);
+
+    const body = new URLSearchParams({
+      name: params.name,
+      campaign_id: params.campaignId,
+      status: params.status ?? "PAUSED",
+      billing_event: opt.billingEvent,
+      optimization_goal: opt.optimizationGoal,
+      bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+      targeting: JSON.stringify(params.targeting),
+      access_token: accessToken,
+    });
+    if (params.dailyBudget !== undefined) {
+      body.set("daily_budget", String(Math.round(params.dailyBudget * 100)));
+    }
+    if (params.lifetimeBudget !== undefined) {
+      body.set(
+        "lifetime_budget",
+        String(Math.round(params.lifetimeBudget * 100))
+      );
+    }
+    if (params.startTime) body.set("start_time", params.startTime);
+    if (params.endTime) body.set("end_time", params.endTime);
+    // promoted_object is needed for OUTCOME_TRAFFIC + OUTCOME_ENGAGEMENT
+    // when targeting a Page; supplying it for awareness too doesn't hurt.
+    if (params.promotedPageId) {
+      body.set(
+        "promoted_object",
+        JSON.stringify({ page_id: params.promotedPageId })
+      );
+    }
+
+    const created = await this.graphFetch<{ id: string }>(
+      `${GRAPH_BASE}/${accountPath}/adsets`,
+      { method: "POST", body }
+    );
+    return { id: created.id };
+  }
+
+  /**
+   * Create an ad creative (image + copy + link, owned by a Page).
+   *
+   * This is the "post" that runs in feeds. The combination of page_id +
+   * image_hash + message + headline + link defines the creative.
+   */
+  async createAdCreative(
+    accessToken: string,
+    adAccountId: string,
+    params: {
+      name: string;
+      pageId: string;
+      imageHash: string;
+      message: string; // body copy
+      headline?: string;
+      description?: string;
+      linkUrl: string;
+      callToAction?: MetaCallToActionType;
+    }
+  ): Promise<{ id: string }> {
+    const accountPath = this.accountPath(adAccountId);
+    const linkData: Record<string, unknown> = {
+      message: params.message,
+      link: params.linkUrl,
+      image_hash: params.imageHash,
+    };
+    if (params.headline) linkData.name = params.headline;
+    if (params.description) linkData.description = params.description;
+    if (params.callToAction) {
+      linkData.call_to_action = {
+        type: params.callToAction,
+        value: { link: params.linkUrl },
+      };
+    }
+    const body = new URLSearchParams({
+      name: params.name,
+      object_story_spec: JSON.stringify({
+        page_id: params.pageId,
+        link_data: linkData,
+      }),
+      access_token: accessToken,
+    });
+    const created = await this.graphFetch<{ id: string }>(
+      `${GRAPH_BASE}/${accountPath}/adcreatives`,
+      { method: "POST", body }
+    );
+    return { id: created.id };
+  }
+
+  /**
+   * Create the ad itself — binds an ad set to an ad creative.
+   * Defaults to PAUSED so the user reviews before flipping ACTIVE.
+   */
+  async createAd(
+    accessToken: string,
+    adAccountId: string,
+    params: {
+      name: string;
+      adSetId: string;
+      creativeId: string;
+      status?: "ACTIVE" | "PAUSED";
+    }
+  ): Promise<{ id: string }> {
+    const accountPath = this.accountPath(adAccountId);
+    const body = new URLSearchParams({
+      name: params.name,
+      adset_id: params.adSetId,
+      creative: JSON.stringify({ creative_id: params.creativeId }),
+      status: params.status ?? "PAUSED",
+      access_token: accessToken,
+    });
+    const created = await this.graphFetch<{ id: string }>(
+      `${GRAPH_BASE}/${accountPath}/ads`,
+      { method: "POST", body }
+    );
+    return { id: created.id };
+  }
+
+  /* ───────────────────────────────── */
+  /* Objective + optimization mapping  */
+  /* ───────────────────────────────── */
+
+  /**
+   * Map our internal objective string to Meta's new `OUTCOME_*` enum.
+   * Meta deprecated their old objective values (CONVERSIONS, BRAND_AWARENESS,
+   * etc.) in mid-2023; OUTCOME_* is the only accepted set on Marketing API
+   * v18+ for new campaigns.
+   */
+  mapObjectiveToMeta(objective: string): MetaObjective {
+    const k = objective.toLowerCase().replace(/[^a-z]/g, "");
+    switch (k) {
+      case "conversions":
+      case "sales":
+      case "catalogsales":
+        return "OUTCOME_SALES";
+      case "awareness":
+      case "brandawareness":
+      case "reach":
+        return "OUTCOME_AWARENESS";
+      case "traffic":
+        return "OUTCOME_TRAFFIC";
+      case "leads":
+      case "leadgeneration":
+        return "OUTCOME_LEADS";
+      case "engagement":
+      case "videoviews":
+      case "messages":
+        return "OUTCOME_ENGAGEMENT";
+      case "apppromotion":
+      case "appinstalls":
+        return "OUTCOME_APP_PROMOTION";
+      default:
+        return "OUTCOME_TRAFFIC";
+    }
+  }
+
+  /**
+   * Pick sane optimization_goal + billing_event defaults per objective.
+   * Each combination is from Meta's published valid-pairs matrix. If the
+   * user wants to override later we'd expose this in an advanced sub-step.
+   */
+  private optimizationDefaults(objective: MetaObjective): {
+    optimizationGoal: string;
+    billingEvent: string;
+  } {
+    switch (objective) {
+      case "OUTCOME_SALES":
+        return {
+          optimizationGoal: "OFFSITE_CONVERSIONS",
+          billingEvent: "IMPRESSIONS",
+        };
+      case "OUTCOME_AWARENESS":
+        return { optimizationGoal: "REACH", billingEvent: "IMPRESSIONS" };
+      case "OUTCOME_TRAFFIC":
+        return {
+          optimizationGoal: "LINK_CLICKS",
+          billingEvent: "IMPRESSIONS",
+        };
+      case "OUTCOME_LEADS":
+        return {
+          optimizationGoal: "LEAD_GENERATION",
+          billingEvent: "IMPRESSIONS",
+        };
+      case "OUTCOME_ENGAGEMENT":
+        return {
+          optimizationGoal: "POST_ENGAGEMENT",
+          billingEvent: "IMPRESSIONS",
+        };
+      case "OUTCOME_APP_PROMOTION":
+        return {
+          optimizationGoal: "APP_INSTALLS",
+          billingEvent: "IMPRESSIONS",
+        };
+    }
   }
 
   /* ───────────────────────────────── */

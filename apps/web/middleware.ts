@@ -21,10 +21,21 @@ const isPublicRoute = createRouteMatcher([
   "/api/webhooks(.*)",
 ]);
 
-export default clerkMiddleware((auth, req) => {
-  if (isPublicRoute(req)) return;
-  auth().protect();
-});
+export default clerkMiddleware(
+  (auth, req) => {
+    if (isPublicRoute(req)) return;
+    auth().protect();
+  },
+  {
+    // 60-second tolerance for clock skew. Without this, even small drift
+    // (laptop sleeps, NTP fails for a minute, container starts before
+    // chrony stabilizes) causes Clerk to reject the session cookie and
+    // boomerang the user into a sign-in redirect loop with "token-iat-
+    // in-the-future". The security cost of 60s is negligible since Clerk
+    // session tokens have a short lifetime anyway.
+    clockSkewInMs: 60_000,
+  }
+);
 
 export const config = {
   matcher: [

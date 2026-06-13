@@ -148,12 +148,29 @@ model Campaign {
   objective   String
   budget      Decimal        @db.Decimal(12, 2)
   budgetType  BudgetType     @default(DAILY)
+  /// Platform's campaign ID. For Meta: numeric string. Null until published.
   externalId  String?
   startDate   DateTime?
   endDate     DateTime?
   targeting   Json?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
+
+  /// Meta publish references — populated when we publish to the platform.
+  /// On Meta, every ad needs Campaign + AdSet + AdCreative + Ad. We store
+  /// each so we can edit / delete / report on them later. Null until
+  /// publish, equivalent for Google/TikTok/LinkedIn once those land.
+  externalAdSetId   String?
+  externalAdId      String?
+  externalCreativeId String?
+  /// FB Page that owns the ad's creative (the "sender" identity).
+  externalPageId    String?
+  /// Timestamp of last successful publish. Lets the UI surface "Published
+  /// 2 days ago" without crawling the audit log.
+  publishedAt       DateTime?
+  /// Last publish error message if the most recent attempt failed. Cleared
+  /// on next successful publish.
+  publishError      String?
 
   workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   adAccount AdAccount          @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
