@@ -22,8 +22,17 @@ export default function HomePage() {
           Sign up
         </Link>
       </div>
-      <footer className="mt-12 text-xs text-slate-500">
-        © 2026 Advertix. All rights reserved.
+      <footer className="mt-12 flex flex-col items-center gap-2 text-xs text-slate-500">
+        <div className="flex items-center gap-4">
+          <Link href="/privacy" className="hover:text-slate-100">
+            Privacy
+          </Link>
+          <span aria-hidden>·</span>
+          <Link href="/terms" className="hover:text-slate-100">
+            Terms
+          </Link>
+        </div>
+        <p>© 2026 Advertix. All rights reserved.</p>
       </footer>
     </main>
   );
