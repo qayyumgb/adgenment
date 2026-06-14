@@ -83,19 +83,25 @@ app.get("/health", (_req: Request, res: Response) => {
   });
 });
 
-// Global rate limit — 100 req / 15 min per IP
+// Global rate limit — generous because authenticated dashboard apps fire
+// many parallel reads per page (auth/me, campaigns, counts, sidebar, etc).
+// A typical /campaigns visit costs ~9 requests; clicking around for a minute
+// can easily hit 50+. 2000 / 15min (~2 req/sec sustained) leaves plenty of
+// headroom while still rate-limiting abusive clients.
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 2000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests. Please slow down." },
 });
 
-// Stricter limit for AI endpoints — 20 req / 15 min per IP
+// Stricter limit for AI endpoints — actual Claude calls are expensive in
+// both latency and $$. 60 / 15min ≈ 4 per minute per IP is plenty for a
+// human-driven flow; a runaway frontend loop is caught quickly.
 const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "AI rate limit exceeded. Try again later." },
