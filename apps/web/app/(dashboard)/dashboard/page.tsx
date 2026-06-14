@@ -289,7 +289,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="text-white">
                   <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider backdrop-blur">
-                    AI Insight
+                    Advertix AI Insight
                   </div>
                   <p className="mt-1.5 max-w-2xl text-sm font-medium leading-snug text-white/95 sm:text-[15px]">
                     {aiInsight}{" "}
@@ -389,7 +389,7 @@ export default function DashboardPage() {
         <section className="animate-in stagger-4">
           <EmptyState
             icon={Rocket}
-            title={`Welcome to AdGenius${user?.firstName ? `, ${user.firstName}` : ""}! 👋`}
+            title={`Welcome to Advertix${user?.firstName ? `, ${user.firstName}` : ""}! 👋`}
             description="Connect your first ad account to start syncing campaigns and seeing real performance metrics here."
             action={{
               label: "Connect Ad Account",

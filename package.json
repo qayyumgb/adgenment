@@ -1,6 +1,7 @@
 {
-  "name": "adgenius-ai",
+  "name": "advertix",
   "version": "0.1.0",
+  "description": "AI-Powered Ad Management Platform",
   "private": true,
   "workspaces": [
     "apps/*",

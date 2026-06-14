@@ -226,7 +226,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           {!collapsed && (
             <div className="leading-tight">
               <div className="text-sm font-bold tracking-tight text-white">
-                AdGenius
+                Advertix
               </div>
               <div className="text-[9px] font-bold uppercase tracking-[0.15em] text-primary-400">
                 AI Platform

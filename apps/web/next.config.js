@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  transpilePackages: ["@adgenius/shared"],
+  transpilePackages: ["@advertix/shared"],
 
   // Security headers — applied to every route. CSP intentionally omitted here
   // because Clerk + Next streaming + popup OAuth all interact with it; add

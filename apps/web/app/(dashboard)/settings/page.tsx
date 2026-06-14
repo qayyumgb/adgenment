@@ -399,7 +399,7 @@ function GeneralTab() {
 
         <Field
           label="Workspace slug"
-          hint={`Your workspace URL: adgenius.ai/${slug}`}
+          hint={`Your workspace URL: advertix.io/${slug}`}
         >
           <Input
             value={slug}
@@ -1141,7 +1141,7 @@ function APIKeysTab() {
     <div className="space-y-6">
       <Card
         title="API Keys"
-        description="Use these keys to integrate AdGenius with your own tools."
+        description="Use these keys to integrate Advertix with your own tools."
       >
         <div className="-mt-2 flex items-center justify-end">
           <button

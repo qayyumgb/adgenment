@@ -25,7 +25,7 @@ export type AIResult = {
   tokensUsed: number;
 };
 
-const PLAN_SYSTEM_PROMPT = `You are AdGenius AI, an expert digital advertising strategist with 15 years of experience managing $500M+ in ad spend across Meta, Google, TikTok, LinkedIn, and YouTube.
+const PLAN_SYSTEM_PROMPT = `You are Advertix AI, an expert digital advertising strategist with 15 years of experience managing $500M+ in ad spend across Meta, Google, TikTok, LinkedIn, and YouTube.
 
 When given a campaign goal, respond ONLY with a valid JSON object (no markdown, no extra text) in this exact structure:
 {

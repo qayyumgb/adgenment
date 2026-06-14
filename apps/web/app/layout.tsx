@@ -3,8 +3,35 @@ import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AdGenius AI",
-  description: "Multi-platform AI-powered ad management",
+  metadataBase: new URL("https://advertix.io"),
+  title: {
+    default: "Advertix — AI-Powered Ad Management",
+    template: "%s | Advertix",
+  },
+  description:
+    "Advertix is an AI-powered ad management platform. Manage campaigns across Facebook, Google, TikTok, LinkedIn and more from one intelligent workspace.",
+  keywords: [
+    "Advertix",
+    "AI ad management",
+    "Facebook ads",
+    "Google ads",
+    "TikTok ads",
+    "campaign management",
+    "ad automation",
+  ],
+  openGraph: {
+    title: "Advertix",
+    description: "AI-Powered Ads. Amplified.",
+    siteName: "Advertix",
+    url: "https://advertix.io",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Advertix — AI-Powered Ad Management",
+    description: "AI-Powered Ads. Amplified.",
+    site: "@advertix",
+  },
 };
 
 export default function RootLayout({

@@ -156,7 +156,7 @@ export default function MetaConnect({
               <div className="flex-1 text-xs text-rose-800">
                 <p className="font-bold">Disconnect Meta?</p>
                 <p className="mt-0.5 text-rose-700">
-                  This will remove all synced Meta campaign data from AdGenius.
+                  This will remove all synced Meta campaign data from Advertix.
                   You can reconnect anytime.
                 </p>
               </div>

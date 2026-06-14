@@ -127,7 +127,7 @@ export default function OnboardingPage() {
           <Sparkles className="h-4 w-4" strokeWidth={2.5} />
         </div>
         <span className="text-base font-bold tracking-tight text-slate-900">
-          AdGenius AI
+          Advertix
         </span>
       </div>
 
@@ -183,8 +183,8 @@ export default function OnboardingPage() {
         {step === 1 && (
           <StepCard
             icon={Building2}
-            title="What should we call your workspace?"
-            sub="This is where all of your campaigns, creatives and team will live. You can change it later in Settings."
+            title="Welcome to Advertix 🚀"
+            sub="Let's set up your workspace in 3 minutes. This is where all of your campaigns, creatives and team will live. You can change it later in Settings."
           >
             <input
               type="text"
@@ -266,8 +266,8 @@ export default function OnboardingPage() {
         {step === 4 && (
           <StepCard
             icon={Rocket}
-            title="You're all set!"
-            sub="Review your details — you can change any of this later in Settings."
+            title="You're all set! 🎉"
+            sub="Your Advertix workspace is ready. Review your details — you can change any of this later in Settings."
           >
             <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
               <ReviewRow label="Workspace" value={workspaceName} />

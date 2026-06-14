@@ -3,12 +3,10 @@ import Link from "next/link";
 export default function HomePage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-dark-bg p-8 text-slate-100">
-      <h1 className="text-5xl font-bold">
-        AdGenius <span className="text-primary">AI</span>
-      </h1>
+      <h1 className="text-5xl font-bold">Advertix</h1>
       <p className="max-w-xl text-center text-slate-300">
-        Multi-platform AI-powered ad management. Plan, generate, launch, and
-        optimize campaigns across every major ad network.
+        AI-Powered Ads. Amplified. Manage every ad platform from one
+        intelligent workspace.
       </p>
       <div className="flex gap-4">
         <Link
@@ -24,6 +22,9 @@ export default function HomePage() {
           Sign up
         </Link>
       </div>
+      <footer className="mt-12 text-xs text-slate-500">
+        © 2026 Advertix. All rights reserved.
+      </footer>
     </main>
   );
 }

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import clsx from "clsx";
@@ -43,9 +43,9 @@ export default function LinkedInConnect({
         toast.success("LinkedIn Ads account connected");
         onChange?.();
       } else if (result.error === "popup_blocked") {
-        toast.error("Popup blocked — please allow popups and try again");
+        toast.error("Popup blocked â€” please allow popups and try again");
       } else if (result.error === "linkedin_cancelled") {
-        toast("Cancelled — connect again when you're ready");
+        toast("Cancelled â€” connect again when you're ready");
       } else if (result.error === "popup_closed") {
         // silent
       } else if (result.error) {
@@ -61,7 +61,7 @@ export default function LinkedInConnect({
   async function syncNow() {
     if (!adAccountId) return;
     setSyncing(true);
-    const t = toast.loading("Syncing LinkedIn campaigns…");
+    const t = toast.loading("Syncing LinkedIn campaignsâ€¦");
     try {
       const res = await fetch(`${apiBase()}/api/linkedin/sync/${adAccountId}`, {
         method: "POST",
@@ -70,7 +70,7 @@ export default function LinkedInConnect({
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
       toast.success(
-        `Synced ${data.campaignsSynced} campaigns · ${data.metricsSynced} metric rows`,
+        `Synced ${data.campaignsSynced} campaigns Â· ${data.metricsSynced} metric rows`,
         { id: t }
       );
       onChange?.();
@@ -112,7 +112,7 @@ export default function LinkedInConnect({
               </span>
             </div>
             <p className="truncate text-[11px] text-slate-500">
-              {accountName ?? "—"}
+              {accountName ?? "â€”"}
             </p>
           </div>
         </div>
@@ -133,7 +133,7 @@ export default function LinkedInConnect({
               ) : (
                 <RefreshCw className="h-3 w-3" />
               )}
-              {syncing ? "Syncing…" : "Sync Now"}
+              {syncing ? "Syncingâ€¦" : "Sync Now"}
             </button>
             <button
               type="button"
@@ -153,7 +153,7 @@ export default function LinkedInConnect({
                 <p className="font-bold">Disconnect LinkedIn Ads?</p>
                 <p className="mt-0.5 text-rose-700">
                   This will remove all synced LinkedIn Ads campaign data from
-                  AdGenius. You can reconnect anytime.
+                  Advertix. You can reconnect anytime.
                 </p>
               </div>
             </div>
@@ -215,7 +215,7 @@ export default function LinkedInConnect({
         {connecting ? (
           <>
             <Loader2 className="h-4 w-4 animate-spin" />
-            Opening LinkedIn…
+            Opening LinkedInâ€¦
           </>
         ) : (
           <>

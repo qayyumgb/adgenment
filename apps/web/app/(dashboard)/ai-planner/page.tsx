@@ -77,7 +77,7 @@ const WELCOME: Message = {
   id: "welcome",
   role: "ai",
   content:
-    "Hi! I'm your AI Campaign Planner. Tell me about your advertising goal and I'll create a complete campaign strategy for you. What would you like to achieve?",
+    "Hi! I'm your Advertix AI assistant. Tell me about your advertising goal and I'll create a complete campaign strategy for you. What would you like to achieve?",
 };
 
 const ALLOCATION_COLORS = [
@@ -194,7 +194,7 @@ Check the plan details on the right →`;
             </h2>
             <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
               <Sparkles className="h-2.5 w-2.5 text-primary" />
-              Powered by Claude AI
+              Powered by Advertix AI
             </span>
           </div>
         </div>
@@ -257,8 +257,8 @@ Check the plan details on the right →`;
           </div>
           <p className="mt-2 flex items-center gap-1 text-[10px] font-medium text-slate-400">
             <Sparkles className="h-2.5 w-2.5 text-primary" />
-            Powered by Claude Sonnet · responses are generated drafts you should
-            review
+            ⚡ Powered by Advertix AI · responses are generated drafts you
+            should review
           </p>
         </div>
       </section>

@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1.7
+﻿# syntax=docker/dockerfile:1.7
 #
-# AdGenius API — production image
+# Advertix API â€” production image
 # ---------------------------------------------------------------------------
 # This is a MONOREPO Dockerfile. Build context MUST be the repo root, NOT
 # apps/api. On Railway, leave "Root directory" blank (or set to "/") and set
@@ -39,6 +39,6 @@ COPY --from=builder /app/apps/api/package.json ./package.json
 COPY --from=builder /app/apps/api/prisma ./prisma
 COPY --from=builder /app/node_modules ./node_modules
 EXPOSE 4000
-# Use 0.0.0.0 by default — node 20 + helmet honor whatever Express binds to,
+# Use 0.0.0.0 by default â€” node 20 + helmet honor whatever Express binds to,
 # which is all interfaces on platforms like Railway.
 CMD ["node", "dist/index.js"]

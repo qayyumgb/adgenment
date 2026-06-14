@@ -77,9 +77,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 app.get("/health", (_req: Request, res: Response) => {
   res.json({
     status: "ok",
+    app: "Advertix API",
+    version: "1.0.0",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    version: "0.1.0",
   });
 });
 
@@ -116,34 +117,34 @@ app.use(errorHandler);
 async function startServer() {
   try {
     await prisma.$connect();
-    console.log("[adgenius-api] database connected");
+    console.log("[advertix-api] database connected");
 
     const server = app.listen(PORT, () => {
       console.log(
-        `[adgenius-api] listening on http://localhost:${PORT} (${NODE_ENV})`
+        `[advertix-api] listening on http://localhost:${PORT} (${NODE_ENV})`
       );
       console.log(
-        `[adgenius-api] CORS allowed origins: ${allowedOrigins.join(", ")}`
+        `[advertix-api] CORS allowed origins: ${allowedOrigins.join(", ")}`
       );
     });
 
     // Graceful shutdown — Railway sends SIGTERM during redeploy
     const shutdown = (signal: string) => {
-      console.log(`[adgenius-api] ${signal} received — shutting down…`);
+      console.log(`[advertix-api] ${signal} received — shutting down…`);
       server.close(async () => {
         try {
           await prisma.$disconnect();
-          console.log("[adgenius-api] prisma disconnected — bye");
+          console.log("[advertix-api] prisma disconnected — bye");
           process.exit(0);
         } catch (err) {
-          console.error("[adgenius-api] shutdown error:", err);
+          console.error("[advertix-api] shutdown error:", err);
           process.exit(1);
         }
       });
 
       // Force-exit after 10s if close hangs
       setTimeout(() => {
-        console.warn("[adgenius-api] forced shutdown after timeout");
+        console.warn("[advertix-api] forced shutdown after timeout");
         process.exit(1);
       }, 10_000).unref();
     };
@@ -151,7 +152,7 @@ async function startServer() {
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.on("SIGINT", () => shutdown("SIGINT"));
   } catch (err) {
-    console.error("[adgenius-api] failed to start:", err);
+    console.error("[advertix-api] failed to start:", err);
     process.exit(1);
   }
 }

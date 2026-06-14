@@ -177,7 +177,7 @@ export function openOAuthPopup({
  */
 export function openMetaOAuthPopup(): Promise<OAuthPopupResult> {
   return openOAuthPopup({
-    windowName: "adgenius_meta_connect",
+    windowName: "advertix_meta_connect",
     expectedPlatform: "meta",
     async getUrl() {
       const res = await fetch("/api/meta/connect");
@@ -195,7 +195,7 @@ export function openMetaOAuthPopup(): Promise<OAuthPopupResult> {
  */
 export function openGoogleOAuthPopup(): Promise<OAuthPopupResult> {
   return openOAuthPopup({
-    windowName: "adgenius_google_connect",
+    windowName: "advertix_google_connect",
     expectedPlatform: "google",
     async getUrl() {
       const res = await fetch("/api/google/connect");
@@ -213,7 +213,7 @@ export function openGoogleOAuthPopup(): Promise<OAuthPopupResult> {
  */
 export function openTikTokOAuthPopup(): Promise<OAuthPopupResult> {
   return openOAuthPopup({
-    windowName: "adgenius_tiktok_connect",
+    windowName: "advertix_tiktok_connect",
     expectedPlatform: "tiktok",
     async getUrl() {
       const res = await fetch("/api/tiktok/connect");
@@ -231,7 +231,7 @@ export function openTikTokOAuthPopup(): Promise<OAuthPopupResult> {
  */
 export function openLinkedInOAuthPopup(): Promise<OAuthPopupResult> {
   return openOAuthPopup({
-    windowName: "adgenius_linkedin_connect",
+    windowName: "advertix_linkedin_connect",
     expectedPlatform: "linkedin",
     async getUrl() {
       const res = await fetch("/api/linkedin/connect");

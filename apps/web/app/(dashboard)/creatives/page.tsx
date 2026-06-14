@@ -710,8 +710,8 @@ const FALLBACK_COPY: CopyResult = {
     "Ad ROI, doubled.",
   ],
   primary_texts: [
-    "AdGenius AI runs your campaigns 24/7 so you can focus on what actually grows the business. No more guessing.",
-    "Teams using AdGenius cut their CPA by 38% in the first 30 days. See why 12,000+ marketers made the switch.",
+    "Advertix runs your campaigns 24/7 so you can focus on what actually grows the business. No more guessing.",
+    "Teams using Advertix cut their CPA by 38% in the first 30 days. See why 12,000+ marketers made the switch.",
     "Tired of duct-taped dashboards? One workspace, all your platforms, optimized continuously by AI.",
   ],
   descriptions: [
@@ -822,10 +822,10 @@ function AIGenerateModal({
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                Generate Ad Creative with AI
+                Generate Ad Creative with Advertix AI
               </h2>
               <p className="text-[11px] font-medium text-slate-500">
-                Powered by Claude Sonnet
+                Powered by Advertix AI
               </p>
             </div>
           </div>

@@ -15,8 +15,8 @@
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
-      "@adgenius/shared": ["../../packages/shared/src"],
-      "@adgenius/shared/*": ["../../packages/shared/src/*"]
+      "@advertix/shared": ["../../packages/shared/src"],
+      "@advertix/shared/*": ["../../packages/shared/src/*"]
     }
   },
   "include": ["src/**/*"],

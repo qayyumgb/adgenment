@@ -423,7 +423,7 @@ export default function CampaignsPage() {
           description={
             filtersActive
               ? "Try adjusting your filters or clearing them to see all campaigns."
-              : "Connect an ad account in Settings, then click Sync to pull your existing campaigns into AdGenius."
+              : "Connect an ad account in Settings, then click Sync to pull your existing campaigns into Advertix."
           }
           action={
             filtersActive

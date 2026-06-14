@@ -1,67 +1,63 @@
-# AdGenius AI
+# Advertix — AI-Powered Ad Management Platform
 
-Multi-platform AI-powered ad management SaaS.
+Manage campaigns across Facebook, Instagram, Google, TikTok, LinkedIn and more from one intelligent workspace.
 
 ## Stack
 
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, shadcn/ui
-- **Backend:** Node.js + Express + TypeScript
-- **Database:** PostgreSQL (Supabase) via Prisma ORM
+- **Frontend:** Next.js 14 → advertix.io (Vercel)
+- **Backend:** Node.js / Express → api.advertix.io (Railway)
+- **Database:** PostgreSQL (Supabase / Railway Postgres) via Prisma ORM
+- **AI:** Claude Sonnet (Anthropic)
 - **Auth:** Clerk
 - **Monorepo:** npm workspaces + Turborepo
 
 ## Project Structure
 
 ```
-adgenius-ai/
+advertix/
 ├── apps/
 │   ├── web/    # Next.js 14 frontend
 │   └── api/    # Express + TypeScript backend
 └── packages/
-    └── shared/ # Shared TypeScript types & constants
+    └── shared/ # Shared types + constants
 ```
 
-## Setup
+## Quick Start
 
-### 1. Install dependencies
-
-```bash
+```powershell
+# Install workspace deps
 npm install
-```
 
-### 2. Configure environment variables
+# Generate Prisma client
+npx prisma generate -w apps/api
 
-```bash
-cp apps/web/.env.local.example apps/web/.env.local
-cp apps/api/.env.example apps/api/.env
-```
+# Push schema to your local Postgres
+npx prisma db push -w apps/api
 
-Fill in the values:
-
-- **Clerk:** Get keys from https://dashboard.clerk.com
-- **Supabase / Postgres:** Set `DATABASE_URL` in `apps/api/.env`
-- **Anthropic:** Set `ANTHROPIC_API_KEY` in `apps/api/.env`
-
-### 3. Generate Prisma client & push schema
-
-```bash
-cd apps/api
-npx prisma generate
-npx prisma db push
-cd ../..
-```
-
-### 4. Run both apps
-
-```bash
+# Start both apps in parallel
 npm run dev
 ```
 
-- Web: http://localhost:3000
-- API: http://localhost:4000
+Then visit:
+- **Web** → http://localhost:3000
+- **API** → http://localhost:4000
 
-## Scripts
+Required env files (gitignored):
+- `apps/api/.env` — copy from `apps/api/.env.example` and fill in values
+- `apps/web/.env.local` — copy from `apps/web/.env.local.example`
 
-- `npm run dev` — start both apps via Turbo
-- `npm run build` — build all packages
-- `npm run lint` — lint all packages
+## Live
+
+- **App:** https://advertix.io
+- **API:** https://api.advertix.io
+
+## Docs
+
+- [docs/DEPLOY.md](docs/DEPLOY.md) — full deployment guide (Vercel + Railway + Supabase)
+- [docs/PRODUCTION_LAUNCH.md](docs/PRODUCTION_LAUNCH.md) — go-live runbook (domain, Business Verification, Meta App Review)
+- [docs/META_TEST_GUIDE.md](docs/META_TEST_GUIDE.md) — local Meta connect + sync test
+- [docs/META_PUBLISH_TEST_GUIDE.md](docs/META_PUBLISH_TEST_GUIDE.md) — post-approval publish test
+- [docs/integrations.md](docs/integrations.md) — per-platform integration notes
+- [IMPLEMENTATION.md](IMPLEMENTATION.md) — change log + architecture
+
+© 2026 Advertix. All rights reserved.
