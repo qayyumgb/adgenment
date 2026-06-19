@@ -78,7 +78,7 @@ function MissionVision() {
               Give every advertiser a senior media buyer in their pocket.
             </h2>
             <p className="mt-4 text-base leading-relaxed text-slate-600">
-              The best media buyers don't guess — they pattern-match against
+              The best media buyers don&apos;t guess — they pattern-match against
               thousands of campaigns. AI can do that too. Advertix bottles that
               intuition into a workspace anyone can use.
             </p>
@@ -92,10 +92,10 @@ function MissionVision() {
               Our vision
             </div>
             <h2 className="mt-2 text-2xl font-bold sm:text-3xl">
-              A world where great campaigns aren't gated by team size.
+              A world where great campaigns aren&apos;t gated by team size.
             </h2>
             <p className="mt-4 text-base leading-relaxed text-slate-300">
-              You shouldn't need a 12-person growth team to spend $50k a month
+              You shouldn&apos;t need a 12-person growth team to spend $50k a month
               well. Advertix exists so a one-person founder can compete with
               the people who do.
             </p>
@@ -148,17 +148,17 @@ function FounderCard() {
                 Founder
               </div>
               <h2 className="mt-4 text-3xl font-bold tracking-tight text-[#0B1319] sm:text-4xl">
-                Hi, I'm AB Qayyum.
+                Hi, I&apos;m AB Qayyum.
               </h2>
               <p className="mt-4 text-base leading-relaxed text-slate-600">
-                I've spent years building B2B SaaS and watching teams burn
+                I&apos;ve spent years building B2B SaaS and watching teams burn
                 hours on the same ad-ops chores: switching between platforms,
                 copy-pasting audiences, trying to remember which campaign was
                 supposed to do what.
               </p>
               <p className="mt-3 text-base leading-relaxed text-slate-600">
-                Advertix is my answer. It's the tool I wanted: real APIs, real
-                AI, no marketing fluff. I'm building it in public, shipping
+                Advertix is my answer. It&apos;s the tool I wanted: real APIs, real
+                AI, no marketing fluff. I&apos;m building it in public, shipping
                 weekly, and answering every support email myself.
               </p>
 

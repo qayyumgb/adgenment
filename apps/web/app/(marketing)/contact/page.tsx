@@ -59,7 +59,7 @@ function ContactHero() {
       <div className="relative mx-auto max-w-4xl px-6 text-center lg:px-8">
         <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-3.5 py-1.5 text-xs font-semibold text-white/90 backdrop-blur-sm">
           <Sparkles className="h-3 w-3 text-indigo-300" strokeWidth={2.5} />
-          We're listening
+          We&apos;re listening
         </div>
         <h1 className="mt-6 text-4xl font-extrabold leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-[64px]">
           Get in touch with
@@ -69,7 +69,7 @@ function ContactHero() {
           </span>
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-slate-300 sm:text-lg">
-          Got a question, a feature idea, a partnership, or something that's
+          Got a question, a feature idea, a partnership, or something that&apos;s
           broken? Drop a line — every message reaches a real human, usually
           within hours.
         </p>
@@ -91,7 +91,7 @@ function ContactBody() {
               Send a message
             </div>
             <h2 className="mt-4 text-2xl font-bold text-[#0B1319] sm:text-3xl">
-              Tell us what's on your mind
+              Tell us what&apos;s on your mind
             </h2>
             <p className="mt-2 text-sm text-slate-600">
               We read every message. Most replies go out within 24 hours.

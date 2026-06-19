@@ -225,7 +225,7 @@ function EcosystemSection() {
                 <span className="text-indigo-600">AI returns a complete strategy.</span>
               </h2>
               <p className="mt-5 max-w-lg text-base leading-relaxed text-slate-600">
-                Tell Advertix what you're trying to achieve. Our Claude-powered
+                Tell Advertix what you&apos;re trying to achieve. Our Claude-powered
                 planner returns a full campaign — budget allocation, audience
                 targeting, creative direction, and projected ROAS — in seconds.
               </p>
@@ -295,7 +295,7 @@ function AIPromptVisual() {
 
           <div className="mt-3 space-y-2 text-[12px] leading-relaxed text-slate-700">
             <p>
-              Here's a multi-platform allocation projected at <strong>3.2× ROAS</strong>:
+              Here&apos;s a multi-platform allocation projected at <strong>3.2× ROAS</strong>:
             </p>
 
             <div className="space-y-1.5 rounded-lg bg-slate-50 p-2.5">
