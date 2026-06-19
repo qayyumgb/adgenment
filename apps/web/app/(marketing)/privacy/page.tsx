@@ -11,15 +11,9 @@ const CONTACT_EMAIL = "support@advertix.io";
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-white text-slate-900">
-      <LegalHeader />
+    <main className="bg-white text-slate-900">
+      <LegalHero title="Privacy Policy" effectiveDate={EFFECTIVE_DATE} />
       <article className="mx-auto max-w-3xl px-6 py-12 lg:px-8">
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
-          Privacy Policy
-        </h1>
-        <p className="mt-2 text-sm text-slate-500">
-          Effective date: {EFFECTIVE_DATE}
-        </p>
 
         <Section title="1. Who we are">
           <p>
@@ -308,8 +302,6 @@ export default function PrivacyPage() {
           <p className="mt-2">Operator: Advertix (operated by AB Qayyum)</p>
           <p>Jurisdiction: Pakistan</p>
         </Section>
-
-        <LegalFooter />
       </article>
     </main>
   );
@@ -334,45 +326,34 @@ function Section({
   );
 }
 
-function LegalHeader() {
+function LegalHero({
+  title,
+  effectiveDate,
+}: {
+  title: string;
+  effectiveDate: string;
+}) {
   return (
-    <header className="border-b border-slate-200 bg-white">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4 lg:px-8">
-        <Link href="/" className="text-lg font-bold tracking-tight text-slate-900">
-          Advertix
-        </Link>
-        <nav className="flex items-center gap-4 text-sm font-semibold text-slate-600">
-          <Link href="/privacy" className="hover:text-primary">
-            Privacy
-          </Link>
-          <Link href="/terms" className="hover:text-primary">
-            Terms
-          </Link>
-          <Link
-            href="/sign-in"
-            className="rounded-md bg-primary px-3 py-1.5 text-white hover:bg-primary-600"
-          >
-            Sign in
-          </Link>
-        </nav>
+    <section className="relative overflow-hidden bg-gradient-to-br from-[#0B1319] via-indigo-950 to-[#0B1319] pb-16 pt-32 sm:pt-36">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -left-32 top-0 h-72 w-72 rounded-full bg-indigo-600/25 blur-3xl"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-32 bottom-0 h-72 w-72 rounded-full bg-violet-600/25 blur-3xl"
+      />
+      <div className="relative mx-auto max-w-3xl px-6 text-center lg:px-8">
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-xs font-semibold text-white/85 backdrop-blur">
+          Legal
+        </div>
+        <h1 className="mt-4 text-4xl font-bold tracking-tight text-white sm:text-5xl">
+          {title}
+        </h1>
+        <p className="mt-3 text-sm font-medium text-slate-400">
+          Effective date: {effectiveDate}
+        </p>
       </div>
-    </header>
-  );
-}
-
-function LegalFooter() {
-  return (
-    <footer className="mt-12 border-t border-slate-100 pt-6 text-xs text-slate-500">
-      <p>© 2026 Advertix. All rights reserved.</p>
-      <p className="mt-1">
-        <Link href="/" className="hover:text-primary">
-          Back to home
-        </Link>{" "}
-        ·{" "}
-        <Link href="/terms" className="hover:text-primary">
-          Terms of Service
-        </Link>
-      </p>
-    </footer>
+    </section>
   );
 }

@@ -470,6 +470,67 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-19 â€” Multi-page marketing site rebuild (Stellar-inspired)
+
+User feedback on the v1 landing was "looks like an intern built it." Rebuilt as a full multi-page marketing site under a `(marketing)` route group, design language lifted from the Stellar Security site reference (`C:\Users\Shahr\OneDrive\Desktop\review_test\Steller.Website.UI`) — dark hero with gradient mesh, light sections with 44px rounded white card containers, pill CTAs, icon badges — re-brushed with our `#6366f1` palette and SaaS-specific content (we sell ad-ops, not phones).
+
+**Route group structure:**
+- `app/(marketing)/layout.tsx` — wraps every marketing page with shared `MarketingNav` (sticky pill, transparent over dark hero → solid white when scrolled) and `MarketingFooter` (dark `#0B1319` with link columns + brand SVG socials + status pill).
+- `app/(marketing)/page.tsx` — Home. Sections: gradient-mesh hero with floating dashboard mockup + AI suggestion chip + ROAS chip → platform ribbon (Meta/Google/TikTok/LinkedIn) → ecosystem (AI prompt → strategy response visual with budget-split bars) → bento feature grid (6 cards, mixed sizes, custom mini-visuals per card) → dark how-it-works (Connect / Plan / Launch with gradient number rings) → metric bar (4 stats) → gradient final CTA.
+- `app/(marketing)/features/page.tsx` — 6 pillar deep-dive sections, alternating left/right, custom visual per pillar (AI strategy card, platforms checklist, creative variants, publish wizard, analytics tiles, security card), plus differentiator band + closing CTA.
+- `app/(marketing)/about/page.tsx` — Mission + Vision split card, founder profile card with bio + badges, 6 principles grid, alternating timeline, gradient CTA.
+- `app/(marketing)/contact/page.tsx` — Hero, two-column layout: form (client component) + dark sidebar of channels + footer info card, plus collapsible FAQ.
+- `app/(marketing)/contact/ContactForm.tsx` — Client component. Topic chips (5 options), name/email/message fields, on submit opens `mailto:support@advertix.io` with a prepared subject + body. **No backend endpoint yet** — swap to `fetch("/api/contact", …)` when the API ships.
+- `app/(marketing)/privacy/page.tsx` and `app/(marketing)/terms/page.tsx` — moved from `app/privacy` and `app/terms` so they inherit the marketing layout. Old standalone `LegalHeader`/`LegalFooter` stripped; replaced with a dark gradient `LegalHero` (`title` + `Effective date`) so they visually match the rest of the marketing site.
+
+**Shared marketing components ([apps/web/components/marketing/](apps/web/components/marketing/)):**
+- `MarketingNav.tsx` — Sticky pill nav. Transparent over dark hero, solid white once `window.scrollY > 8`. Mobile dropdown with full link list + CTA buttons. Active route highlighted.
+- `MarketingFooter.tsx` — Dark footer with 3 link columns + brand column. Inline SVG brand icons for X / LinkedIn / GitHub (Lucide 1.16 doesn't export brand icons anymore, so these are raw paths) + `Mail` from Lucide.
+- `GradientMesh.tsx` — Hero background. Radial gradient + 3 animated blob layers (indigo → violet → fuchsia) + faint grid overlay + SVG noise. Used on Home / Features / About / Contact heroes for visual consistency.
+- `DashboardMockup.tsx` — Stylized fake-dashboard card for the home hero. Browser chrome, sidebar with active "Dashboard" item + AI Planner badge, 3 metric tiles (Spend / Revenue / ROAS), gradient area chart, 3 campaign rows. Plus two floating cards: an "AI Suggestion" recommendation chip with Apply/Dismiss buttons, and a "Best Campaign ROAS 4.6×" chip. Pure CSS/SVG, no real data, no client state.
+
+**Old `app/page.tsx`** — deleted (route group now owns `/`).
+
+**Brand color:** `#6366f1` (existing `primary` token in [tailwind.config.ts](apps/web/tailwind.config.ts)). Dark surface `#0B1319` lifted from Stellar reference. Light section bg `#F6F6FD` likewise. No Tailwind config changes needed.
+
+**TypeScript:** `tsc --noEmit` clean. Lucide v1.16 no longer exports `Github`/`Twitter`/`Linkedin` — swapped to inline brand SVGs in footer and `AtSign` in contact channels.
+
+**Public routes:** All marketing routes already covered by `isPublicRoute` matcher (`/`, `/privacy`, `/terms`) or default-public top-level paths. No middleware changes.
+
+**Known follow-ups:**
+- Contact form uses `mailto:` fallback. Build `POST /api/contact` (rate-limited, captcha-protected, forwards to `support@advertix.io`) when we leave beta.
+- "Built different" stats are static. Wire to real workspace count / campaign count once dashboards stabilize.
+- Privacy / Terms hero is dark; main content stays light. Visually it works but a future refactor could promote `LegalHero` into the shared marketing layout as a slot.
+
+---
+
+### 2026-06-19 â€” Marketing landing page for advertix.io (Meta App Review prep)
+
+Built a full marketing landing at [apps/web/app/page.tsx](apps/web/app/page.tsx) to serve as the public face of advertix.io for the Meta App Review submission. Replaces the prior minimal splash.
+
+**Layout (single server component):**
+- Sticky blurred header — brand mark + Sign in / Get started.
+- **Hero** — "AI-Powered Ads. **Amplified.**" gradient headline + CTAs + inline SVG dashboard mockup (fake Spend / Revenue / ROAS metrics + fake ROAS chart, brand `#6366f1`). The mockup gives the page visual weight without needing real product screenshots — important since App Review reviewers click the website link.
+- **Platform strip** — Meta / Google / TikTok / LinkedIn / YouTube text-initial badges. No real platform logos (trademark safety).
+- **6 features** — AI Campaign Planning, Multi-Platform Sync, AI Creative Generation, Cross-Platform Analytics, Publish in One Click, Secure by Default.
+- **How it works** — Connect → Plan → Launch.
+- **Final CTA** — gradient card "Ready to amplify your ads?".
+- **Footer** — Privacy / Terms / Sign in / Get started + © 2026.
+
+**Styling:** Light theme, brand color `#6366f1` via existing `primary` token, `lucide-react` icons. Uses `shadow-glow`, `primary-300`, `primary-600` — all already defined in [tailwind.config.ts](apps/web/tailwind.config.ts).
+
+**Metadata:** Page-level `metadata` (title + description). Inherits OG/twitter from `metadataBase` set in [apps/web/app/layout.tsx](apps/web/app/layout.tsx).
+
+**Public route:** `/` already in `isPublicRoute` matcher at [apps/web/middleware.ts](apps/web/middleware.ts) — no auth changes needed.
+
+**Next steps (user-side, not code):**
+- GoDaddy: add A record `@` → `76.76.21.21` (Vercel).
+- Vercel: Settings → Domains → add `advertix.io`.
+- Wait ~5 min DNS, verify `https://advertix.io` loads.
+- Use `https://advertix.io` as Website URL in Meta App Settings, then submit App Review.
+
+---
+
 ### 2026-06-08 â€” Native currency, lifetime totals, accurate Meta status, sidebar refetch
 
 After end-to-end testing the Meta sync on production we found 4 real bugs surfaced by INR-denominated data flowing through a USD-hardcoded UI. All fixed.
