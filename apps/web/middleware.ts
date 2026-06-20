@@ -27,6 +27,7 @@ const isPublicRoute = createRouteMatcher([
   "/features",
   "/about",
   "/contact",
+  "/data-deletion",
 ]);
 
 // Paths that exist only on the marketing site. Hitting these on `app.` should
@@ -37,6 +38,7 @@ const MARKETING_ONLY_PATHS = [
   "/contact",
   "/privacy",
   "/terms",
+  "/data-deletion",
 ];
 
 export default clerkMiddleware(
