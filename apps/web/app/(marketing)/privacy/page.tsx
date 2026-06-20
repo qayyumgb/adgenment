@@ -19,7 +19,7 @@ export default function PrivacyPage() {
           <p>
             Advertix (&ldquo;Advertix&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;,
             or &ldquo;our&rdquo;) is an AI-powered ad management platform
-            operated by AB Qayyum. We help businesses plan, generate, launch,
+            operated by Abdul Qayyum. We help businesses plan, generate, launch,
             and optimize advertising campaigns across multiple platforms
             including Meta (Facebook, Instagram), Google, TikTok, and LinkedIn.
           </p>
@@ -299,7 +299,7 @@ export default function PrivacyPage() {
               {CONTACT_EMAIL}
             </a>
           </p>
-          <p className="mt-2">Operator: Advertix (operated by AB Qayyum)</p>
+          <p className="mt-2">Operator: Advertix (operated by Abdul Qayyum)</p>
           <p>Jurisdiction: Pakistan</p>
         </Section>
       </article>

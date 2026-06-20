@@ -16,7 +16,7 @@ export default function TermsPage() {
       <article className="mx-auto max-w-3xl px-6 py-12 lg:px-8">
         <p className="text-sm leading-relaxed text-slate-700">
           These Terms of Service (&ldquo;Terms&rdquo;) form a binding agreement
-          between you and Advertix (operated by AB Qayyum,
+          between you and Advertix (operated by Abdul Qayyum,
           &ldquo;Advertix&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;) governing
           your use of advertix.io and the Advertix AI ad management platform
           (the &ldquo;Service&rdquo;). By creating an account or using the
@@ -275,7 +275,7 @@ export default function TermsPage() {
               {CONTACT_EMAIL}
             </a>
           </p>
-          <p className="mt-2">Operator: Advertix (operated by AB Qayyum)</p>
+          <p className="mt-2">Operator: Advertix (operated by Abdul Qayyum)</p>
         </Section>
       </article>
     </main>

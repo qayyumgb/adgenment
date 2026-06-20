@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { Sparkles, Mail } from "lucide-react";
+import Image from "next/image";
+import { Mail } from "lucide-react";
 
 const FOOTER_COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
   {
@@ -49,14 +50,14 @@ export function MarketingFooter() {
         <div className="grid gap-12 lg:grid-cols-[1.4fr,1fr,1fr,1fr]">
           {/* Brand column */}
           <div>
-            <Link href="/" className="inline-flex items-center gap-2">
-              <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-600 shadow-lg shadow-indigo-600/40">
-                <Sparkles className="h-4 w-4 text-white" strokeWidth={2.5} />
-                <div className="absolute inset-0 rounded-xl ring-1 ring-inset ring-white/20" />
-              </div>
-              <span className="text-lg font-bold tracking-tight text-white">
-                Advertix
-              </span>
+            <Link href="/" className="inline-flex items-center" aria-label="Advertix home">
+              <Image
+                src="/brand/advertix-logo-white.png"
+                alt="Advertix"
+                width={160}
+                height={36}
+                className="h-8 w-auto"
+              />
             </Link>
             <p className="mt-5 max-w-sm text-sm leading-relaxed text-slate-400">
               AI-powered ad management for the multi-platform era. Plan, generate,
@@ -118,7 +119,7 @@ export function MarketingFooter() {
 
         <div className="mt-14 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-6 sm:flex-row">
           <p className="text-xs text-slate-500">
-            © 2026 Advertix. All rights reserved. Operated by AB Qayyum.
+            © 2026 Advertix. All rights reserved. Operated by Abdul Qayyum.
           </p>
           <p className="text-xs text-slate-500">
             Not affiliated with Meta, Google, TikTok, or LinkedIn.

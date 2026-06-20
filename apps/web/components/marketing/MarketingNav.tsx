@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Sparkles, Menu, X, ArrowRight } from "lucide-react";
+import { Menu, X, ArrowRight } from "lucide-react";
 
 const NAV_LINKS = [
   { href: "/features", label: "Features" },
@@ -41,17 +42,32 @@ export function MarketingNav() {
         >
           <Link
             href="/"
-            className="flex shrink-0 items-center gap-2"
+            className="flex shrink-0 items-center"
             aria-label="Advertix home"
           >
-            <BrandMark />
-            <span
-              className={`text-base font-bold tracking-tight ${
-                scrolled ? "text-slate-900" : "text-white"
+            {/* Logo swaps based on header state — white over the dark hero,
+                black once the nav goes solid. Both files contain the wordmark
+                so we don't need a separate text span. */}
+            <Image
+              src="/brand/advertix-logo-white.png"
+              alt="Advertix"
+              width={140}
+              height={32}
+              priority
+              className={`h-7 w-auto transition-opacity ${
+                scrolled ? "opacity-0 pointer-events-none absolute" : "opacity-100"
               }`}
-            >
-              Advertix
-            </span>
+            />
+            <Image
+              src="/brand/advertix-logo-black.png"
+              alt="Advertix"
+              width={140}
+              height={32}
+              priority
+              className={`h-7 w-auto transition-opacity ${
+                scrolled ? "opacity-100" : "opacity-0 pointer-events-none absolute"
+              }`}
+            />
           </Link>
 
           <nav className="hidden items-center gap-1 md:flex">
@@ -151,11 +167,3 @@ export function MarketingNav() {
   );
 }
 
-function BrandMark() {
-  return (
-    <div className="relative flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-600 shadow-lg shadow-indigo-600/40">
-      <Sparkles className="h-4 w-4 text-white" strokeWidth={2.5} />
-      <div className="absolute inset-0 rounded-xl ring-1 ring-inset ring-white/20" />
-    </div>
-  );
-}

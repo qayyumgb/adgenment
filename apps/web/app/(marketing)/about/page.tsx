@@ -129,7 +129,7 @@ function FounderCard() {
                     <div>
                       <div className="text-3xl font-bold text-white">AQ</div>
                       <div className="text-sm font-medium text-white/80">
-                        AB Qayyum
+                        Abdul Qayyum
                       </div>
                       <div className="mt-3 flex items-center gap-1.5 text-[11px] font-medium text-white/80">
                         <MapPin className="h-3 w-3" strokeWidth={2.5} />
@@ -148,7 +148,7 @@ function FounderCard() {
                 Founder
               </div>
               <h2 className="mt-4 text-3xl font-bold tracking-tight text-[#0B1319] sm:text-4xl">
-                Hi, I&apos;m AB Qayyum.
+                Hi, I&apos;m Abdul Qayyum.
               </h2>
               <p className="mt-4 text-base leading-relaxed text-slate-600">
                 I&apos;ve spent years building B2B SaaS and watching teams burn

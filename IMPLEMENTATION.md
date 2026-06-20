@@ -470,6 +470,24 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-19 â€” Host-based routing: `app.advertix.io` vs `advertix.io`
+
+Both `advertix.io` (apex) and `app.advertix.io` point at the same Vercel deployment, so both originally served the marketing landing at `/`. Added host-aware routing in [middleware.ts](apps/web/middleware.ts) before the Clerk auth gate so the two domains behave differently:
+
+- **`app.advertix.io`** is the product. Hitting `/` 307-redirects to `/dashboard`. Hitting `/features`, `/about`, `/contact`, `/privacy`, or `/terms` 307-redirects to the same path on `https://advertix.io`. Auth gate still runs after, so unauthenticated users on `/dashboard` get bounced to sign-in by Clerk as before.
+- **`advertix.io`** / **`www.advertix.io`** are marketing. All routes behave normally — `/` is the landing, `/features` / `/about` / `/contact` / `/privacy` / `/terms` work, and `/dashboard`, `/campaigns`, etc. still work (auth-protected) if someone goes there directly.
+
+Detection is `host.startsWith("app.")` against the lowercased `Host` header. Trivial to extend later (e.g. `auth.advertix.io`, `api.advertix.io`).
+
+**Why this approach and not a separate Vercel project:**
+- One codebase, one build, one set of env vars — simpler ops.
+- Both domains share session cookies via `*.advertix.io` (when configured) so the user stays signed in across marketing ↔ app.
+- If we ever split, the host check makes it easy to extract `app.` traffic into its own project.
+
+**Trade-off:** marketing pages are technically reachable on `app.` via direct URL, but the 307 to apex makes them feel like they live elsewhere. SEO crawlers should follow the redirect.
+
+---
+
 ### 2026-06-19 â€” Multi-page marketing site rebuild (Stellar-inspired)
 
 User feedback on the v1 landing was "looks like an intern built it." Rebuilt as a full multi-page marketing site under a `(marketing)` route group, design language lifted from the Stellar Security site reference (`C:\Users\Shahr\OneDrive\Desktop\review_test\Steller.Website.UI`) — dark hero with gradient mesh, light sections with 44px rounded white card containers, pill CTAs, icon badges — re-brushed with our `#6366f1` palette and SaaS-specific content (we sell ad-ops, not phones).

@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import clsx from "clsx";
 import {
-  Sparkles,
   ChevronLeft,
   ChevronDown,
   Bot,
@@ -217,21 +217,28 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         style={{ borderColor: "var(--sidebar-border)" }}
       >
         <Link href="/dashboard" className="flex items-center gap-2.5">
-          <div className="relative">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-indigo-600 to-purple-600 shadow-glow">
-              <Sparkles className="h-5 w-5 text-white" strokeWidth={2.5} />
+          {collapsed ? (
+            // Just the icon when collapsed
+            <div className="relative">
+              <Image
+                src="/brand/advertix-icon.png"
+                alt="Advertix"
+                width={36}
+                height={36}
+                className="h-9 w-9 rounded-xl"
+              />
+              <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#0f172a] bg-emerald-400" />
             </div>
-            <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#0f172a] bg-emerald-400" />
-          </div>
-          {!collapsed && (
-            <div className="leading-tight">
-              <div className="text-sm font-bold tracking-tight text-white">
-                Advertix
-              </div>
-              <div className="text-[9px] font-bold uppercase tracking-[0.15em] text-primary-400">
-                AI Platform
-              </div>
-            </div>
+          ) : (
+            // Full horizontal wordmark when expanded — sidebar bg is dark so use white
+            <Image
+              src="/brand/advertix-logo-white.png"
+              alt="Advertix"
+              width={140}
+              height={32}
+              className="h-7 w-auto"
+              priority
+            />
           )}
         </Link>
         {!collapsed && (

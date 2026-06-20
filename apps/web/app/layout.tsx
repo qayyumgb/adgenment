@@ -25,12 +25,21 @@ export const metadata: Metadata = {
     siteName: "Advertix",
     url: "https://advertix.io",
     type: "website",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "Advertix — AI-Powered Ads. Amplified.",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Advertix — AI-Powered Ad Management",
     description: "AI-Powered Ads. Amplified.",
     site: "@advertix",
+    images: ["/og-image.png"],
   },
 };
 
