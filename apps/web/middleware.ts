@@ -41,6 +41,28 @@ const MARKETING_ONLY_PATHS = [
   "/data-deletion",
 ];
 
+// Paths that ONLY belong on `app.advertix.io`. If a visitor hits one of these
+// on the apex (`advertix.io`) or `www.advertix.io`, redirect to the `app.`
+// subdomain. This matters for the OAuth popup flow: the backend's
+// FRONTEND_URL is `https://app.advertix.io`, so the popup's `/connect/done`
+// page must live on the same origin as its opener — otherwise `postMessage`
+// is blocked cross-origin and the parent never refreshes after OAuth.
+const APP_ONLY_PREFIXES = [
+  "/dashboard",
+  "/campaigns",
+  "/analytics",
+  "/audiences",
+  "/creatives",
+  "/insights",
+  "/ai-planner",
+  "/billing",
+  "/settings",
+  "/onboarding",
+  "/connect", // /connect/done — popup callback page
+  "/sign-in",
+  "/sign-up",
+];
+
 export default clerkMiddleware(
   (auth, req) => {
     // ── Host-based routing ─────────────────────────────────────────────────
@@ -62,6 +84,21 @@ export default clerkMiddleware(
       // Marketing routes on `app.` → bounce to apex.
       if (MARKETING_ONLY_PATHS.some((p) => pathname === p)) {
         const url = new URL(pathname, `https://advertix.io`);
+        return NextResponse.redirect(url);
+      }
+    } else {
+      // On apex (`advertix.io`) or `www.advertix.io`: if the path belongs to
+      // the product, send the visitor to `app.advertix.io`. Keeps the OAuth
+      // popup origin consistent with FRONTEND_URL on the backend, and gives
+      // users / reviewers a single canonical product URL.
+      const isAppOnly = APP_ONLY_PREFIXES.some(
+        (p) => pathname === p || pathname.startsWith(`${p}/`)
+      );
+      if (isAppOnly) {
+        const url = new URL(
+          `${pathname}${req.nextUrl.search}`,
+          "https://app.advertix.io"
+        );
         return NextResponse.redirect(url);
       }
     }
