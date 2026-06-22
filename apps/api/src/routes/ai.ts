@@ -3,7 +3,7 @@ import { aiService } from "../services/ai.service";
 
 const router = Router();
 
-const MODEL = "claude-sonnet-4-20250514";
+const MODEL = "claude-opus-4-8";
 
 router.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", model: MODEL });

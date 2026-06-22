@@ -50,6 +50,8 @@ type Creative = {
   ctr: number;
   impressions: number;
   copy?: string;
+  /** Public asset URL — present for uploaded image/video creatives. */
+  url?: string;
   gradient: string;
   createdAt: string;
 };
@@ -96,6 +98,19 @@ function extractCopy(content: unknown): string | undefined {
   return undefined;
 }
 
+function extractMediaUrl(content: unknown): string | undefined {
+  if (!content || typeof content !== "object") return undefined;
+  const obj = content as Record<string, unknown>;
+  if (typeof obj.url === "string" && obj.url.startsWith("http")) return obj.url;
+  if (typeof obj.image_url === "string" && obj.image_url.startsWith("http")) {
+    return obj.image_url;
+  }
+  if (typeof obj.video_url === "string" && obj.video_url.startsWith("http")) {
+    return obj.video_url;
+  }
+  return undefined;
+}
+
 function mapApiStatus(s: ApiCreativeStatus): Status {
   switch (s) {
     case "APPROVED":
@@ -125,6 +140,7 @@ function mapApiCreative(c: ApiCreative): Creative {
     ctr: 0, // not joined to campaign metrics today
     impressions: 0,
     copy: extractCopy(c.content),
+    url: extractMediaUrl(c.content),
     gradient: gradientFor(c.id),
     createdAt: c.createdAt.slice(0, 10),
   };
@@ -183,6 +199,7 @@ export default function CreativesPage() {
   );
   const [sort, setSort] = useState<"NEWEST" | "CTR" | "USAGE">("NEWEST");
   const [modalOpen, setModalOpen] = useState(false);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
 
   // Debounce the search input
   useEffect(() => {
@@ -293,6 +310,7 @@ export default function CreativesPage() {
           </button>
           <button
             type="button"
+            onClick={() => setUploadModalOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
           >
             <Upload className="h-4 w-4" />
@@ -442,6 +460,479 @@ export default function CreativesPage() {
         onClose={() => setModalOpen(false)}
         onSave={handleSaveAiCreative}
       />
+
+      <UploadCreativeModal
+        open={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        onSaved={() => {
+          creativesQ.refetch();
+          statsQ.refetch();
+        }}
+      />
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────── */
+/* Upload Creative Modal                      */
+/* ───────────────────────────────────────── */
+
+/** Hard limits — fail fast client-side instead of waiting for Meta to 400. */
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // Meta's hard cap on /adimages
+const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/jpg,image/png,image/webp,image/gif";
+
+type UploadTab = "device" | "url";
+
+function UploadCreativeModal({
+  open,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const api = useApiClient();
+  const [tab, setTab] = useState<UploadTab>("device");
+  const [name, setName] = useState("");
+  const [type, setType] = useState<"IMAGE" | "VIDEO">("IMAGE");
+  // URL-paste mode
+  const [url, setUrl] = useState("");
+  const [previewError, setPreviewError] = useState(false);
+  // File-pick mode
+  const [file, setFile] = useState<File | null>(null);
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  // Shared
+  const [submitting, setSubmitting] = useState(false);
+
+  // Reset state every time the modal opens so a previous in-flight submit
+  // doesn't leak through.
+  useEffect(() => {
+    if (open) {
+      setTab("device");
+      setName("");
+      setType("IMAGE");
+      setUrl("");
+      setFile(null);
+      setFilePreviewUrl(null);
+      setSubmitting(false);
+      setPreviewError(false);
+      setIsDragging(false);
+    }
+  }, [open]);
+
+  // Revoke the object URL when the picked file changes or the modal closes —
+  // otherwise we leak browser memory on each pick.
+  useEffect(() => {
+    if (!file) {
+      setFilePreviewUrl(null);
+      return;
+    }
+    const objUrl = URL.createObjectURL(file);
+    setFilePreviewUrl(objUrl);
+    return () => URL.revokeObjectURL(objUrl);
+  }, [file]);
+
+  // Device upload only supports images right now (Meta's /adimages endpoint).
+  // If the user picks "Video" type, force them onto the URL tab — building
+  // video upload requires Meta's /advideos endpoint, which is Phase 1B work.
+  useEffect(() => {
+    if (type === "VIDEO" && tab === "device") setTab("url");
+  }, [type, tab]);
+
+  // Lightweight client-side URL validity check. We only care that the string
+  // looks like an HTTPS URL — actual reachability is the user's problem (and
+  // the platform's, when this creative gets attached to an ad).
+  const looksLikeUrl =
+    url.startsWith("https://") &&
+    url.length > "https://".length &&
+    !url.includes(" ");
+
+  function handlePickFile(picked: File | null) {
+    if (!picked) {
+      setFile(null);
+      return;
+    }
+    if (!picked.type.startsWith("image/")) {
+      toast.error("Pick an image file (JPEG, PNG, WebP, GIF)");
+      return;
+    }
+    if (picked.size > MAX_IMAGE_BYTES) {
+      toast.error(
+        `Image is ${(picked.size / 1024 / 1024).toFixed(1)} MB — Meta caps uploads at 8 MB`
+      );
+      return;
+    }
+    setFile(picked);
+    // Auto-name from filename if the user hasn't typed one yet.
+    if (!name.trim()) {
+      const stem = picked.name.replace(/\.[^.]+$/, "");
+      setName(stem.slice(0, 120));
+    }
+  }
+
+  function onDrop(e: React.DragEvent<HTMLLabelElement>) {
+    e.preventDefault();
+    setIsDragging(false);
+    const dropped = e.dataTransfer.files?.[0] ?? null;
+    handlePickFile(dropped);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (submitting) return;
+    if (!name.trim()) {
+      toast.error("Give your creative a name");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      // Resolve the final asset URL — either by uploading to Meta, or by
+      // taking the user-pasted URL verbatim.
+      let finalUrl: string;
+      if (tab === "device") {
+        if (!file) {
+          toast.error("Pick a file to upload");
+          setSubmitting(false);
+          return;
+        }
+        const result = await api.uploadMetaImage(file);
+        finalUrl = result.url;
+      } else {
+        if (!looksLikeUrl) {
+          toast.error("Paste a public HTTPS URL to the asset");
+          setSubmitting(false);
+          return;
+        }
+        finalUrl = url.trim();
+      }
+
+      await api.createCreative({
+        name: name.trim(),
+        type,
+        content: { url: finalUrl },
+        aiGenerated: false,
+      });
+      toast.success("Creative added to your library");
+      onSaved();
+      onClose();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      // Most common upload failure path: no Meta ad account connected. Give
+      // a useful nudge instead of the raw API error.
+      if (msg.toLowerCase().includes("no meta") || msg.toLowerCase().includes("ad account")) {
+        toast.error(
+          "Connect a Meta ad account first (Settings → Integrations), then try again — or use Paste URL instead"
+        );
+      } else {
+        toast.error(msg);
+      }
+      setSubmitting(false);
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
+      {/* Modal */}
+      <form
+        onSubmit={handleSubmit}
+        className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-slate-900 shadow-sm">
+              <Upload className="h-5 w-5 text-white" strokeWidth={2.25} />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                Upload Creative
+              </h2>
+              <p className="text-[11px] font-medium text-slate-500">
+                Paste a public URL — we&apos;ll fetch the asset on demand
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="space-y-5 overflow-y-auto px-6 py-5">
+          {/* Type */}
+          <div>
+            <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
+              Type
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setType("IMAGE")}
+                className={clsx(
+                  "flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition",
+                  type === "IMAGE"
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                )}
+              >
+                <ImageIcon className="h-4 w-4" />
+                Image
+              </button>
+              <button
+                type="button"
+                onClick={() => setType("VIDEO")}
+                className={clsx(
+                  "flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition",
+                  type === "VIDEO"
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                )}
+              >
+                <Film className="h-4 w-4" />
+                Video
+              </button>
+            </div>
+          </div>
+
+          {/* Source tabs */}
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+                Source
+              </label>
+              {type === "VIDEO" && (
+                <span className="text-[10px] font-semibold text-slate-400">
+                  Device upload coming with Phase 1B
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setTab("device")}
+                disabled={type === "VIDEO"}
+                className={clsx(
+                  "flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition",
+                  tab === "device" && type !== "VIDEO"
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                  type === "VIDEO" && "cursor-not-allowed opacity-50"
+                )}
+              >
+                <Upload className="h-3.5 w-3.5" strokeWidth={2.5} />
+                Upload from device
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("url")}
+                className={clsx(
+                  "flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition",
+                  tab === "url"
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                )}
+              >
+                <Copy className="h-3.5 w-3.5" strokeWidth={2.5} />
+                Paste URL
+              </button>
+            </div>
+          </div>
+
+          {/* Name */}
+          <div>
+            <label
+              htmlFor="creative-name"
+              className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600"
+            >
+              Name
+            </label>
+            <input
+              id="creative-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Summer sale hero — 1200x628"
+              maxLength={120}
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:border-primary focus:outline-none"
+            />
+          </div>
+
+          {/* Source body — device picker OR URL input */}
+          {tab === "device" ? (
+            <div>
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
+                Image file
+              </label>
+              {file && filePreviewUrl ? (
+                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={filePreviewUrl}
+                    alt={file.name}
+                    className="h-16 w-16 shrink-0 rounded-lg object-cover bg-slate-900"
+                  />
+                  <div className="min-w-0 flex-1 text-xs">
+                    <div className="truncate font-semibold text-slate-700">
+                      {file.name}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      {(file.size / 1024).toFixed(0)} KB · {file.type}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFile(null)}
+                    className="shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                  >
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <label
+                  htmlFor="creative-file"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={onDrop}
+                  className={clsx(
+                    "flex h-28 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed bg-white transition",
+                    isDragging
+                      ? "border-primary bg-primary/5"
+                      : "border-slate-300 hover:border-slate-400 hover:bg-slate-50"
+                  )}
+                >
+                  <Upload className="h-5 w-5 text-slate-400" strokeWidth={1.75} />
+                  <div className="text-sm font-semibold text-slate-700">
+                    Drag &amp; drop or click to pick
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    JPEG / PNG / WebP / GIF · max 8 MB
+                  </div>
+                  <input
+                    id="creative-file"
+                    type="file"
+                    accept={ACCEPTED_IMAGE_TYPES}
+                    onChange={(e) => handlePickFile(e.target.files?.[0] ?? null)}
+                    className="sr-only"
+                  />
+                </label>
+              )}
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Uploaded to Meta&apos;s CDN and stored against your connected ad
+                account. Meta hosts the file — we just keep the reference.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <label
+                htmlFor="creative-url"
+                className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600"
+              >
+                {type === "VIDEO" ? "Video URL" : "Image URL"}
+              </label>
+              <input
+                id="creative-url"
+                type="url"
+                value={url}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  setPreviewError(false);
+                }}
+                placeholder="https://example.com/asset.jpg"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:border-primary focus:outline-none"
+              />
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Must be publicly reachable over HTTPS. Imgur, Cloudinary, your CDN,
+                or a Meta-hosted image URL all work.
+              </p>
+
+              {/* Preview */}
+              {looksLikeUrl && (
+                <div className="mt-4">
+                  <div className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
+                    Preview
+                  </div>
+                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+                    {previewError ? (
+                      <div className="flex aspect-video items-center justify-center text-xs text-slate-400">
+                        Could not load preview — check the URL is public
+                      </div>
+                    ) : type === "VIDEO" ? (
+                      <video
+                        src={url}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        onError={() => setPreviewError(true)}
+                        className="aspect-video w-full bg-slate-900"
+                      />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={url}
+                        alt="preview"
+                        onError={() => setPreviewError(true)}
+                        className="aspect-video w-full object-cover"
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/60 px-6 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-xl px-3.5 py-2 text-sm font-semibold text-slate-600 transition hover:text-slate-900 disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={
+              submitting ||
+              !name.trim() ||
+              (tab === "url" ? !looksLikeUrl : !file)
+            }
+            className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {tab === "device" ? "Uploading…" : "Saving…"}
+              </>
+            ) : (
+              <>
+                <Upload className="h-4 w-4" strokeWidth={2.5} />
+                Add to library
+              </>
+            )}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -616,6 +1107,43 @@ function CreativeCard({
 
 function PreviewArea({ creative }: { creative: Creative }) {
   const Icon = TYPE_ICON[creative.type];
+
+  // Uploaded image/video — render the real asset. Wrapped in a black bg so
+  // letterboxed assets and slow loads look intentional instead of broken.
+  if (creative.url && (creative.type === "IMAGE" || creative.type === "VIDEO")) {
+    return (
+      <div className="relative h-full w-full bg-slate-900">
+        {creative.type === "VIDEO" ? (
+          <>
+            <video
+              src={creative.url}
+              muted
+              playsInline
+              preload="metadata"
+              className="h-full w-full object-cover"
+            />
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/95 shadow-xl">
+                <Play
+                  className="ml-0.5 h-5 w-5 text-slate-900"
+                  fill="currentColor"
+                  strokeWidth={0}
+                />
+              </div>
+            </div>
+          </>
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={creative.url}
+            alt={creative.name}
+            className="h-full w-full object-cover"
+          />
+        )}
+      </div>
+    );
+  }
+
   if (creative.type === "TEXT") {
     return (
       <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-slate-50 to-white p-4">

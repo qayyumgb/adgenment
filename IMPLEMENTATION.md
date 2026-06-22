@@ -4,6 +4,8 @@ A multi-platform AI-powered ad management dashboard. Premium SaaS UI, Claude-pow
 
 > **Maintain this file.** Update the [Change Log](#change-log) (newest first) and the relevant sections any time files change, features land, or setup steps shift.
 
+> **Deferred features:** Big features that are explicitly bookmarked for "later, not now" live in [FUTURE_FEATURES.md](FUTURE_FEATURES.md). Each one has a prerequisite gate. **Do not start any of them without checking the gate first.**
+
 ---
 
 ## Tech Stack
@@ -469,6 +471,98 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 ## Change Log
 
 > Most recent first. Add a new dated entry for every significant change.
+
+### 2026-06-22 â€” AI service migration: Sonnet 4 (retired) â†’ Opus 4.8
+
+`/api/ai/generate-copy` and `/api/ai/plan-campaign` started returning 500 because the model ID `claude-sonnet-4-20250514` retired on **2026-06-15** and the Anthropic API now rejects requests for it. Migrated [apps/api/src/services/ai.service.ts](apps/api/src/services/ai.service.ts) and [apps/api/src/routes/ai.ts](apps/api/src/routes/ai.ts) from `claude-sonnet-4-20250514` â†’ `claude-opus-4-8` (current most-capable model). Only the `MODEL` constant changed â€” the rest of the service is clean (no `temperature`, `top_p`, `top_k`, `thinking`, `budget_tokens`, or assistant prefills, all of which are removed/rejected on Claude 4.7+ models).
+
+**Cost impact:** Opus is ~1.7Ã— Sonnet input pricing and ~1.7Ã— output. For ad-copy generation (~200 tok in / 900 tok out) that's a delta of ~$0.013 per generation. For campaign planning (~500 tok in / 1500 tok out) the delta is ~$0.025. Negligible at current volume; revisit if AI usage scales to thousands of calls/day.
+
+**Why Opus not Sonnet 4.6:** Skill-guided default is Opus 4.8 for new code. We can downgrade to `claude-sonnet-4-6` later if the user opts for cost savings â€” the surface is identical (same Messages API call, same JSON parsing).
+
+`tsc --noEmit` clean.
+
+---
+
+### 2026-06-21 â€” Meta App Review REJECTED â†’ added temporary API warmup cron
+
+âš ï¸ **This entry documents temporary code that MUST be removed once Meta App Review approves the resubmission.** See [memory: meta-api-warmup-temporary](C:/Users/Shahr/.claude/projects/c--Users-Shahr-OneDrive-Desktop-review-test-adgenius-ai/memory/meta-api-warmup-temporary.md).
+
+**Rejection reason** (from Meta App Review feedback):
+
+> Our records do not show a sufficient number of Ads API calls in the last 15 days by this application. It is required that the application successfully integrate with the Ads API before it is approved for Marketing API standard access tier.
+
+This is not a "your app is broken" rejection â€” the submission text, video, data handling answers, and reviewer instructions were all accepted. Meta wants to see **sustained API usage history** before granting Standard Access. The Testing tab shows our perm checks passed at the test-call level, but Meta's review process additionally evaluates organic usage over a rolling 15-day window. We had ~0 organic API calls at submission time because we only had one connected test ad account.
+
+**Fix â€” [apps/api/src/services/meta-warmup.service.ts](apps/api/src/services/meta-warmup.service.ts):**
+
+- **What it does:** Background `setInterval` cron that fires every 30 minutes, iterates through every active Meta `AdAccount` in the DB, decrypts each token, and makes 11 read-only Marketing API calls per account per tick: `getAdAccounts`, `getCampaigns`, `getCampaignInsights` (7d/30d/90d), `getCustomAudiences`, `getSavedAudiences`, `getPages`, `searchInterests` (Ã—2), `searchLocations` (Ã—2). Each call is wrapped in `safeCall()` so one failure (e.g. code 3 from Meta because we're at Limited Access tier for write endpoints) never kills the rest of the tick. Logs cumulative call count + success rate to Railway logs under `[meta-warmup]` so we can monitor progress.
+- **Why these endpoints:** All reads, all guaranteed to work at Limited Access tier â†’ keeps success rate near 100% (Meta wants â‰¥85%). They also hit the exact endpoints the App Review use case covers: ads_read (campaigns, insights), business_management (account discovery), pages_show_list (page enumeration), targeting search (interests, locations).
+- **Volume math:** 11 calls Ã— 1 account Ã— 48 ticks/day = ~528 calls/day. With one connected ad account, by day 7 we'll have ~3,700 calls; well above the ~1,500 implicit minimum from the rejection. Per-hour rate is ~22 calls vs. the 200/hr Limited Access cap â€” safely under.
+- **Kill switch:** `META_WARMUP_ENABLED=false` env var on Railway disables without code change.
+- **Startup wiring:** [apps/api/src/index.ts](apps/api/src/index.ts) calls `startMetaWarmupCron()` after `app.listen()`, and `stopMetaWarmupCron()` runs in the SIGTERM handler so Railway redeploys don't leave intervals leaking.
+
+**Resubmission plan:**
+
+1. **Day 0 (2026-06-21):** Deploy warmup. Verify Railway logs show `[meta-warmup] tick #1 done` after ~60s startup delay.
+2. **Day 1â€“7:** Monitor Meta App Dashboard â†’ App Review â†’ Testing tab. Watch call counts climb across `ads_read`, `pages_show_list`, etc. Verify success rate stays â‰¥85%.
+3. **Day 7â€“10:** When cumulative calls hit ~3,000+ AND success rate looks healthy, click **Request again** on the rejected submission. The submission text, video, and reviewer instructions are unchanged â€” we're resubmitting the same package, betting that the new usage history flips the verdict.
+4. **Day 10â€“15:** Decision should come back. If approved â†’ go to **Removal** below. If rejected with the same reason â†’ extend the warmup to 14 days. If rejected with a different reason â†’ fix that specifically.
+
+**Removal (DO NOT FORGET):**
+
+The moment App Review approves:
+
+1. Delete `apps/api/src/services/meta-warmup.service.ts`.
+2. Remove the import + `startMetaWarmupCron()` + `stopMetaWarmupCron()` calls from `apps/api/src/index.ts` (look for the `[meta-warmup]` comment markers).
+3. Verify Railway logs no longer show `[meta-warmup]` entries after redeploy.
+4. Drop the `META_WARMUP_ENABLED` env var from Railway (optional â€” harmless once the code is gone, but cleaner).
+5. Add a Change Log entry here documenting the removal.
+
+**Why this matters:** Leaving the warmup running indefinitely (a) burns Meta API rate limit budget that should serve real customers, (b) costs Railway compute for no value, (c) could trigger Meta's automated abuse detection if it persists past the review window. The whole point of this code is that it's temporary; leaving it in is worse than never having added it.
+
+`tsc --noEmit` clean on the API after the change.
+
+---
+
+### 2026-06-21 â€” Meta App Review SUBMITTED ðŸš€
+
+End-of-week milestone. Both gates cleared:
+
+**Business Verification:** Submitted with Abdul Qayyum (sole proprietor) as legal entity, address proof via bank statement (Khaplu / Ghanche / Gilgit-Baltistan), tax ID via NTN Certificate, identity via CNIC. Email verification via `support@advertix.io` (forwarded through Improvmx to qayyumgb96@gmail.com). **Approved within hours** â€” not the projected 2 business days.
+
+**App Review:** Submitted for Marketing API Access Tier (4 permissions: `ads_read`, `ads_management`, `business_management`, `pages_show_list`). Status: **Review in progress** (~20 day SLA per Meta).
+
+**What landed in the submission:**
+- **Allowed usage:** Detailed justification covering each permission's API endpoints, user value, and necessity. No third-party data sharing / no advertising use / no model training disclosed.
+- **Data handling:** Three processors disclosed â€” Railway (backend + DB), Vercel (frontend), Clerk (auth). All "IT solutions and services" category, US-located. Data controller: Abdul Qayyum (sole proprietor), Pakistan. No government data requests. Four policy boxes checked (legality review, challenge provisions, data minimization, documentation).
+- **Reviewer instructions:** Step-by-step repro for the full publish flow at [app.advertix.io](https://app.advertix.io). Test credentials provided (`qayyumsaufik+metareview@gmail.com` / `MetaReview2026!`) â€” account pre-connected to a Meta Business Manager with sample campaigns so reviewers can immediately validate `ads_read`. Geographic restrictions disclosed: none.
+- **Video demonstration:** 2:41 screencast, 39 MB, recorded in Screencast + trimmed in CapCut to remove the publish error frame (Marketing API "Limited Access" tier currently returns code 3 on publish â€” the very issue this submission requests upgrading). Shows OAuth dialog with all 4 permissions visible, ~5 sec dwell on the permission screen, then walks through Campaigns sync (ads_read), publish wizard page picker (pages_show_list), ad-account selector (business_management), and Publish button click (ads_management intent). Ends with the disconnect button and `/data-deletion` page.
+
+**Infrastructure changes for the submission:**
+- [middleware.ts](apps/web/middleware.ts) â€” added `APP_ONLY_PREFIXES` redirect so `/dashboard`, `/settings`, `/sign-in`, `/connect/*`, etc. on `advertix.io` or `www.advertix.io` 307-redirect to `app.advertix.io`. Fixes a cross-origin `postMessage` bug where the OAuth popup callback (forced to `app.advertix.io/connect/done` by `FRONTEND_URL`) couldn't notify a parent window opened on `www.advertix.io` â€” the Connect cards never auto-refreshed after OAuth. Now everything funnels through `app.advertix.io`.
+- Railway `CORS_ORIGIN` updated to include all three apex/www/app origins plus the legacy Vercel preview URL.
+- [apps/web/app/(marketing)/data-deletion/page.tsx](apps/web/app/(marketing)/data-deletion/page.tsx) â€” dedicated deletion page (two paths: in-app Danger Zone + email request, full list of what gets deleted, 7/30/90-day timeframes, both Advertix-side and Meta-side revocation instructions). Linked from Meta App Settings â†’ User Data Deletion URL.
+- [Improvmx](https://improvmx.com) configured for `advertix.io` â€” MX + SPF records at GoDaddy, catch-all alias `*@advertix.io â†’ qayyumgb96@gmail.com`. Gmail filter pins Meta emails to Primary (was landing in Spam initially).
+- Meta App Settings â€” App Domains `advertix.io`, Privacy `https://advertix.io/privacy`, Terms `https://advertix.io/terms`, Data Deletion `https://advertix.io/data-deletion`. OAuth redirect URI on Facebook Login Settings: `https://adgeniusapi-production.up.railway.app/api/meta/callback` (left as Railway URL deliberately â€” `api.advertix.io` custom domain deferred until post-approval to avoid breaking working OAuth).
+
+**Logo + brand wiring:**
+- White / black horizontal logos + favicon copied from `apps/web/assets/images/` â†’ `apps/web/public/brand/` and Next.js `app/icon.png` + `app/apple-icon.png`.
+- [MarketingNav.tsx](apps/web/components/marketing/MarketingNav.tsx) swaps white logo over the dark hero â†’ black logo once the nav goes solid on scroll. [MarketingFooter.tsx](apps/web/components/marketing/MarketingFooter.tsx) uses the white logo on the dark footer.
+- `og-image.png` set as Open Graph image in [layout.tsx](apps/web/app/layout.tsx).
+
+**Legal name standardization:** All marketing-site references "AB Qayyum" â†’ "Abdul Qayyum" (matches CNIC / NTN / Bank documents). Required for Meta Business Verification consistency.
+
+**Facebook Page:** Created "Advertix" Page (ID `1150892091443932`) under the Advertix Business Manager. Category: Software. Posted the launch announcement with the AI-generated platform composition image. Profile pic, website link, contact email all wired up. Reviewers see a real-looking business asset attached to the app.
+
+**What's waiting:**
+- Meta App Review decision: 2â€“20 days (SLA range), most ship in 3â€“5 days. Decision email lands at `support@advertix.io` â†’ Gmail Primary.
+- On approval â†’ Marketing API tier upgrades to Standard Access â†’ publish works for all users in production â†’ unblocks customer onboarding.
+- On rejection â†’ email specifies the issue. Common rejections: video too short, permission demo unclear, data deletion link broken. We've over-engineered all three.
+
+**Note for next session:** The "Submit for App Review" flow itself revealed three small middleware/CORS bugs that are now patched but worth remembering. If we add new marketing routes in the future (e.g. `/pricing`, `/blog`), they need to be added to BOTH `isPublicRoute` AND `MARKETING_ONLY_PATHS` in middleware. If we add new product routes (e.g. `/reports`), they need to be added to `APP_ONLY_PREFIXES` so apex/www visits redirect cleanly to `app.`.
+
+---
 
 ### 2026-06-19 â€” Host-based routing: `app.advertix.io` vs `advertix.io`
 

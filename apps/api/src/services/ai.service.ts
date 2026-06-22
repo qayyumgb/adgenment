@@ -5,7 +5,11 @@
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
-const MODEL = "claude-sonnet-4-20250514";
+// Previous model `claude-sonnet-4-20250514` retired 2026-06-15 → API returns
+// an error for it now. Migrated to Opus 4.8, the current most capable model.
+// Per-call cost is small (planCampaign ~1500 tok output, generateCreativeCopy
+// ~900 tok) so the Sonnet→Opus pricing delta is ~$0.02 per generation.
+const MODEL = "claude-opus-4-8";
 
 type AnthropicResponse = {
   id?: string;

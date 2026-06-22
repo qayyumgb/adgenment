@@ -68,9 +68,17 @@ export default clerkMiddleware(
     // ── Host-based routing ─────────────────────────────────────────────────
     // `app.advertix.io` is the product. `advertix.io` / `www.advertix.io`
     // are marketing. Same Next.js app serves both; we split traffic here.
+    //
+    // Local dev and preview deploys are intentionally exempt — `localhost:3000`
+    // and `*.vercel.app` need to serve every route on the same host so we can
+    // test the full surface without bouncing to production.
     const host = (req.headers.get("host") || "").toLowerCase();
     const pathname = req.nextUrl.pathname;
     const isAppSubdomain = host.startsWith("app.");
+    const isProductionHost =
+      host === "advertix.io" ||
+      host === "www.advertix.io" ||
+      host === "app.advertix.io";
 
     if (isAppSubdomain) {
       // Root on `app.` → dashboard (auth gate below will bounce signed-out
@@ -86,11 +94,14 @@ export default clerkMiddleware(
         const url = new URL(pathname, `https://advertix.io`);
         return NextResponse.redirect(url);
       }
-    } else {
+    } else if (isProductionHost) {
       // On apex (`advertix.io`) or `www.advertix.io`: if the path belongs to
       // the product, send the visitor to `app.advertix.io`. Keeps the OAuth
       // popup origin consistent with FRONTEND_URL on the backend, and gives
       // users / reviewers a single canonical product URL.
+      //
+      // Skipped on localhost / vercel.app / any other non-production host so
+      // dev environments serve the whole surface from one origin.
       const isAppOnly = APP_ONLY_PREFIXES.some(
         (p) => pathname === p || pathname.startsWith(`${p}/`)
       );
