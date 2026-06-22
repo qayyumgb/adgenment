@@ -10,6 +10,12 @@ import rateLimit from "express-rate-limit";
 import router from "./routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { prisma } from "./lib/prisma";
+// ⚠️ TEMPORARY — remove after Meta App Review approves. See
+//    apps/api/src/services/meta-warmup.service.ts header for context.
+import {
+  startMetaWarmupCron,
+  stopMetaWarmupCron,
+} from "./services/meta-warmup.service";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -128,9 +134,14 @@ async function startServer() {
       );
     });
 
+    // ⚠️ TEMPORARY — Meta API warmup cron. Remove after App Review approves.
+    //    See apps/api/src/services/meta-warmup.service.ts.
+    startMetaWarmupCron();
+
     // Graceful shutdown — Railway sends SIGTERM during redeploy
     const shutdown = (signal: string) => {
       console.log(`[advertix-api] ${signal} received — shutting down…`);
+      stopMetaWarmupCron();
       server.close(async () => {
         try {
           await prisma.$disconnect();
