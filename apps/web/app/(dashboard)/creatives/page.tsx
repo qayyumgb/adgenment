@@ -31,6 +31,7 @@ import type {
 } from "@/lib/api";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import EmptyState from "@/components/ui/EmptyState";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 
 /* ───────────────────────────────────────── */
 /* Types & Mock Data                          */
@@ -246,6 +247,15 @@ export default function CreativesPage() {
     return rows;
   }, [creativesQ.data, sort]);
 
+  // Map from creative id → raw API object, so the detail modal can render
+  // the full generated copy (headlines, primary_texts, descriptions, CTAs).
+  // mapApiCreative() flattens to a single `copy` string for the card preview.
+  const rawById = useMemo(() => {
+    const m = new Map<string, ApiCreative>();
+    for (const r of creativesQ.data?.creatives ?? []) m.set(r.id, r);
+    return m;
+  }, [creativesQ.data]);
+
   const filtersActive =
     debouncedSearch.trim() !== "" ||
     typeFilter !== "ALL" ||
@@ -442,16 +452,21 @@ export default function CreativesPage() {
         />
       ) : (
         <div className="grid grid-cols-2 gap-4 animate-in stagger-4 md:grid-cols-3 lg:grid-cols-4">
-          {filtered.map((c) => (
-            <CreativeCard
-              key={c.id}
-              c={c}
-              onDeleted={() => {
-                creativesQ.refetch();
-                statsQ.refetch();
-              }}
-            />
-          ))}
+          {filtered.map((c) => {
+            const raw = rawById.get(c.id);
+            if (!raw) return null;
+            return (
+              <CreativeCard
+                key={c.id}
+                c={c}
+                raw={raw}
+                onDeleted={() => {
+                  creativesQ.refetch();
+                  statsQ.refetch();
+                }}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -633,23 +648,17 @@ function UploadCreativeModal({
     }
   }
 
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <form
-        onSubmit={handleSubmit}
-        className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+    <Modal
+      open={open}
+      onClose={onClose}
+      size="md"
+      ariaLabel="Upload creative"
+      closeOnBackdrop={!submitting}
+      closeOnEscape={!submitting}
+    >
+      <form onSubmit={handleSubmit} className="contents">
+        <ModalHeader>
           <div className="flex items-center gap-2.5">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-slate-900 shadow-sm">
               <Upload className="h-5 w-5 text-white" strokeWidth={2.25} />
@@ -659,7 +668,7 @@ function UploadCreativeModal({
                 Upload Creative
               </h2>
               <p className="text-[11px] font-medium text-slate-500">
-                Paste a public URL — we&apos;ll fetch the asset on demand
+                Image upload or paste a URL
               </p>
             </div>
           </div>
@@ -667,14 +676,14 @@ function UploadCreativeModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            disabled={submitting}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
           >
             <X className="h-4 w-4" />
           </button>
-        </div>
+        </ModalHeader>
 
-        {/* Body */}
-        <div className="space-y-5 overflow-y-auto px-6 py-5">
+        <ModalBody className="space-y-5">
           {/* Type */}
           <div>
             <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
@@ -898,10 +907,9 @@ function UploadCreativeModal({
               )}
             </div>
           )}
-        </div>
+        </ModalBody>
 
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/60 px-6 py-3">
+        <ModalFooter>
           <button
             type="button"
             onClick={onClose}
@@ -931,9 +939,9 @@ function UploadCreativeModal({
               </>
             )}
           </button>
-        </div>
+        </ModalFooter>
       </form>
-    </div>
+    </Modal>
   );
 }
 
@@ -968,15 +976,20 @@ function FilterSelect({
 /* ───────────────────────────────────────── */
 function CreativeCard({
   c,
+  raw,
   onDeleted,
 }: {
   c: Creative;
+  /** Original API creative — needed for the detail modal so we can show
+   *  all generated copy fields (headlines, primary_texts, descriptions, ctas). */
+  raw: ApiCreative;
   onDeleted: () => void;
 }) {
   const Icon = TYPE_ICON[c.type];
   const st = STATUS_META[c.status];
   const api = useApiClient();
   const [deleting, setDeleting] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   async function handleDelete(e: React.MouseEvent) {
     e.stopPropagation();
@@ -999,7 +1012,11 @@ function CreativeCard({
   }
 
   return (
-    <div className="group overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover">
+    <>
+    <div
+      onClick={() => setDetailOpen(true)}
+      className="group cursor-pointer overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover"
+    >
       {/* Preview */}
       <div className="relative aspect-square overflow-hidden">
         <PreviewArea creative={c} />
@@ -1034,26 +1051,6 @@ function CreativeCard({
           {c.type}
         </span>
 
-        {/* Hover overlay */}
-        <div className="absolute inset-x-0 bottom-0 translate-y-full bg-gradient-to-t from-slate-900/95 via-slate-900/80 to-transparent px-3 py-3 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
-          <div className="flex items-end justify-between gap-2">
-            <div className="text-xs">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-white/60">
-                CTR
-              </div>
-              <div className="font-bold text-white">
-                {c.ctr === 0 ? "—" : `${c.ctr.toFixed(2)}%`}
-              </div>
-            </div>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-slate-900 shadow-md transition hover:-translate-y-0.5"
-            >
-              Details
-              <ArrowRight className="h-3 w-3" />
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Below preview */}
@@ -1102,11 +1099,252 @@ function CreativeCard({
         </div>
       </div>
     </div>
+
+    <CreativeDetailModal
+      open={detailOpen}
+      onClose={() => setDetailOpen(false)}
+      creative={c}
+      rawContent={raw.content}
+    />
+    </>
+  );
+}
+
+/* ───────────────────────────────────────── */
+/* Creative Detail Modal                      */
+/* ───────────────────────────────────────── */
+
+function CreativeDetailModal({
+  open,
+  onClose,
+  creative,
+  rawContent,
+}: {
+  open: boolean;
+  onClose: () => void;
+  creative: Creative;
+  rawContent: unknown;
+}) {
+  // Pluck the AI-generated copy arrays. If this isn't an AI creative, these
+  // will all be undefined and the modal falls back to whatever it has.
+  const copy =
+    rawContent && typeof rawContent === "object"
+      ? (rawContent as {
+          headlines?: unknown;
+          primary_texts?: unknown;
+          descriptions?: unknown;
+          ctas?: unknown;
+        })
+      : null;
+  const headlines = Array.isArray(copy?.headlines)
+    ? (copy!.headlines as string[]).filter((s) => typeof s === "string")
+    : [];
+  const primaryTexts = Array.isArray(copy?.primary_texts)
+    ? (copy!.primary_texts as string[]).filter((s) => typeof s === "string")
+    : [];
+  const descriptions = Array.isArray(copy?.descriptions)
+    ? (copy!.descriptions as string[]).filter((s) => typeof s === "string")
+    : [];
+  const ctas = Array.isArray(copy?.ctas)
+    ? (copy!.ctas as string[]).filter((s) => typeof s === "string")
+    : [];
+
+  const hasCopy =
+    headlines.length || primaryTexts.length || descriptions.length || ctas.length;
+
+  function copyToClipboard(text: string) {
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      toast.error("Clipboard not available");
+      return;
+    }
+    void navigator.clipboard.writeText(text).then(() => {
+      toast.success("Copied");
+    });
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} size="lg" ariaLabel={creative.name}>
+      <ModalHeader>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h2 className="truncate text-base font-bold text-slate-900">
+              {creative.name}
+            </h2>
+            {creative.aiGenerated && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary ring-1 ring-primary/20">
+                <Sparkles className="h-2.5 w-2.5" />
+                AI
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-[11px] font-medium text-slate-500">
+            {creative.type} · created {creative.createdAt}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </ModalHeader>
+
+      <ModalBody className="space-y-5">
+          {/* Media preview (if uploaded) */}
+          {creative.url && (
+            <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+              {creative.type === "VIDEO" ? (
+                <video
+                  src={creative.url}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="aspect-video w-full"
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={creative.url}
+                  alt={creative.name}
+                  className="aspect-video w-full object-cover"
+                />
+              )}
+            </div>
+          )}
+
+          {/* Needs-an-image hint when AI copy creative has no upload yet */}
+          {!creative.url && creative.aiGenerated && hasCopy && (
+            <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3 text-[12px] text-amber-900">
+              <strong>Next step:</strong> upload an image for this ad via{" "}
+              <strong>Upload Creative</strong> on the main page. The copy below
+              is ready to use when you launch the campaign.
+            </div>
+          )}
+
+          {/* AI-generated copy sections */}
+          {headlines.length > 0 && (
+            <CopySection
+              title="Headlines"
+              hint="≤ 40 chars · pick the strongest"
+              items={headlines}
+              onCopy={copyToClipboard}
+            />
+          )}
+          {primaryTexts.length > 0 && (
+            <CopySection
+              title="Primary text"
+              hint="≤ 125 chars · the body of the ad"
+              items={primaryTexts}
+              onCopy={copyToClipboard}
+            />
+          )}
+          {descriptions.length > 0 && (
+            <CopySection
+              title="Descriptions"
+              hint="Sub-headline shown under the headline"
+              items={descriptions}
+              onCopy={copyToClipboard}
+            />
+          )}
+          {ctas.length > 0 && (
+            <CopySection
+              title="Call-to-action"
+              hint="Button label shown on the ad"
+              items={ctas}
+              onCopy={copyToClipboard}
+            />
+          )}
+
+          {/* Fallback when there's nothing structured to show */}
+          {!creative.url && !hasCopy && (
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+              <p>
+                This creative has no media uploaded and no generated copy
+                attached. You can delete it and start over, or upload an image
+                via <strong>Upload Creative</strong>.
+              </p>
+            </div>
+          )}
+      </ModalBody>
+    </Modal>
+  );
+}
+
+function CopySection({
+  title,
+  hint,
+  items,
+  onCopy,
+}: {
+  title: string;
+  hint: string;
+  items: string[];
+  onCopy: (text: string) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-baseline justify-between">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+          {title}
+        </h3>
+        <span className="text-[10px] font-medium text-slate-400">{hint}</span>
+      </div>
+      <ul className="space-y-1.5">
+        {items.map((line, i) => (
+          <li
+            key={i}
+            className="group flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            <p className="flex-1 text-sm leading-snug text-slate-800">{line}</p>
+            <button
+              type="button"
+              onClick={() => onCopy(line)}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-white hover:text-slate-700"
+              aria-label={`Copy "${line}"`}
+              title="Copy"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
 function PreviewArea({ creative }: { creative: Creative }) {
   const Icon = TYPE_ICON[creative.type];
+
+  // Copy-only creative (no media URL but we did generate text) — render the
+  // copy as the preview instead of an empty image/video placeholder. Covers
+  // AI-generated creatives where the user chose "Image Ad Copy" / "Carousel
+  // Copy" — we have the headline + body but no image yet.
+  if (
+    !creative.url &&
+    creative.copy &&
+    (creative.type === "IMAGE" || creative.type === "VIDEO" || creative.type === "CAROUSEL")
+  ) {
+    return (
+      <div
+        className={clsx(
+          "flex h-full w-full flex-col justify-between bg-gradient-to-br p-4",
+          creative.gradient
+        )}
+      >
+        <div className="flex items-center justify-between">
+          <Icon className="h-6 w-6 text-white/60" strokeWidth={2} />
+          <span className="rounded-full bg-white/20 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white backdrop-blur">
+            Needs {creative.type === "VIDEO" ? "video" : "image"}
+          </span>
+        </div>
+        <p className="line-clamp-4 text-sm font-bold leading-snug text-white drop-shadow">
+          “{creative.copy}”
+        </p>
+      </div>
+    );
+  }
 
   // Uploaded image/video — render the real asset. Wrapped in a black bg so
   // letterboxed assets and slow loads look intentional instead of broken.
@@ -1216,10 +1454,10 @@ type CopyResult = {
 };
 
 const KIND_OPTIONS: { value: CreativeKind; label: string }[] = [
-  { value: "image", label: "Image Ad" },
+  { value: "image", label: "Image Ad Copy" },
   { value: "video", label: "Video Script" },
-  { value: "carousel", label: "Carousel" },
-  { value: "text", label: "Text Ad" },
+  { value: "carousel", label: "Carousel Copy" },
+  { value: "text", label: "Text Ad Copy" },
 ];
 
 const TONE_OPTIONS: { value: Tone; label: string }[] = [
@@ -1292,8 +1530,6 @@ function AIGenerateModal({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
-
   async function generate() {
     if (brief.trim().length < 10) {
       toast.error("Brief must be at least 10 characters.");
@@ -1334,41 +1570,50 @@ function AIGenerateModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <Modal
+      open={open}
+      onClose={onClose}
+      size="md"
+      ariaLabel="Generate ad copy with AI"
     >
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
-      <div className="relative z-10 flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 shadow-glow">
-              <Sparkles className="h-4 w-4 text-white" strokeWidth={2.5} />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-900">
-                Generate Ad Creative with Advertix AI
-              </h2>
-              <p className="text-[11px] font-medium text-slate-500">
-                Powered by Advertix AI
+      <ModalHeader>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 shadow-glow">
+            <Sparkles className="h-4 w-4 text-white" strokeWidth={2.5} />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-slate-900">
+              Generate Ad Copy with AI
+            </h2>
+            <p className="text-[11px] font-medium text-slate-500">
+              Headlines, body &amp; CTAs — image upload separate
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </ModalHeader>
+
+      <ModalBody className="space-y-4">
+          {/* Honest disclaimer — we generate copy (text), not images. Image
+              generation is bookmarked in FUTURE_FEATURES.md. */}
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+            <div className="flex items-start gap-2">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" strokeWidth={2.5} />
+              <p className="text-[11px] leading-relaxed text-indigo-900">
+                <strong>What this generates:</strong> ad copy only — headlines,
+                body text, descriptions, and CTAs. Upload your image or video
+                separately via <strong>Upload Creative</strong> on the main page.
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
 
-        {/* Scrollable body */}
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
           <div>
             <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">
               Campaign brief
@@ -1586,9 +1831,8 @@ function AIGenerateModal({
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </div>
+      </ModalBody>
+    </Modal>
   );
 }
 
