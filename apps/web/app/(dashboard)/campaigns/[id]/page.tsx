@@ -704,7 +704,7 @@ function OverviewTab({
       });
     }
     return out;
-  }, [metrics.length, avgRoas, totals.clicks, totals.impressions, totals.spend, campaign.budget]);
+  }, [metrics.length, avgRoas, totals.clicks, totals.impressions, totals.spend, campaign.budget, campaign.adAccount?.currency]);
 
   if (metrics.length === 0) {
     return (

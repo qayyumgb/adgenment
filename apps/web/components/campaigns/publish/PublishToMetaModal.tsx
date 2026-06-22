@@ -79,7 +79,17 @@ interface WizardState {
   // Step 5
   creativeSource: "upload" | "library" | "url";
   /** Type of the chosen asset. Drives which fields downstream we use. */
-  creativeType: "IMAGE" | "VIDEO";
+  creativeType: "IMAGE" | "VIDEO" | "CAROUSEL";
+  /** Carousel cards (2-10). Populated when the user picks a carousel
+   *  library creative — read-only in the wizard for MVP (edits happen
+   *  in the Creatives tab). */
+  carouselCards: Array<{
+    imageUrl: string | null;
+    imageHash: string | null;
+    headline: string;
+    description: string;
+    link: string;
+  }>;
   /** Placement preset — translated into publisher_platforms +
    *  facebook_positions + instagram_positions at submit time. */
   placement: PlacementMode;
@@ -297,12 +307,14 @@ export default function PublishToMetaModal({
         return true; // schedule is locked from the campaign
       case 4: {
         if (!state.message.trim() || !state.linkUrl.trim()) return false;
-        // Need at least one resolvable asset — image OR video, from any source.
+        // Need at least one resolvable asset — image, video, carousel,
+        // or library reference (which expands to one of those).
         return Boolean(
           state.imageHash ||
             state.imageUrl ||
             state.videoId ||
             state.videoUrl ||
+            state.carouselCards.length >= 2 ||
             state.libraryCreativeId
         );
       }
@@ -385,9 +397,23 @@ export default function PublishToMetaModal({
     };
 
     // Build the asset half of the payload. Priority order (most specific
-    // → least): pre-resolved Meta handle (imageHash / videoId) > raw URL
-    // > library reference. Backend handles the resolution chain.
+    // → least): carousel cards > pre-resolved Meta handle (imageHash /
+    // videoId) > raw URL > library reference. Backend handles the
+    // resolution chain.
     const assetFields: Partial<PublishCampaignPayload["creative"]> = (() => {
+      if (state.creativeType === "CAROUSEL" && state.carouselCards.length >= 2) {
+        return {
+          cards: state.carouselCards.map((c) => ({
+            ...(c.imageHash ? { imageHash: c.imageHash } : {}),
+            ...(c.imageUrl ? { imageUrl: c.imageUrl } : {}),
+            ...(c.headline.trim() ? { headline: c.headline.trim() } : {}),
+            ...(c.description.trim()
+              ? { description: c.description.trim() }
+              : {}),
+            ...(c.link.trim() ? { link: c.link.trim() } : {}),
+          })),
+        };
+      }
       if (state.videoId) {
         return {
           videoId: state.videoId,
@@ -585,6 +611,7 @@ function initialState(c: Campaign): WizardState {
     savedAudiences: [],
     creativeSource: "library",
     creativeType: "IMAGE",
+    carouselCards: [],
     placement: "all",
     videoWidth: null,
     videoHeight: null,
@@ -949,9 +976,10 @@ function Step5Creative({
 }) {
   const api = useApiClient();
   const fileRef = useRef<HTMLInputElement | null>(null);
-  // Fetch both IMAGE and VIDEO creatives. We make two calls and merge —
-  // the /creatives endpoint accepts a single `type` filter, so this is the
-  // simplest path until we add multi-type filtering on the backend.
+  // Fetch IMAGE, VIDEO, and CAROUSEL creatives. We make three calls and
+  // merge — the /creatives endpoint accepts a single `type` filter, so
+  // this is the simplest path until we add multi-type filtering on the
+  // backend.
   const imagesQ = useApi<CreativesResponse>(
     (c) => c.getCreatives({ type: "IMAGE", limit: "20" }),
     []
@@ -960,16 +988,22 @@ function Step5Creative({
     (c) => c.getCreatives({ type: "VIDEO", limit: "20" }),
     []
   );
-  const creativesLoading = imagesQ.loading || videosQ.loading;
+  const carouselsQ = useApi<CreativesResponse>(
+    (c) => c.getCreatives({ type: "CAROUSEL", limit: "20" }),
+    []
+  );
+  const creativesLoading =
+    imagesQ.loading || videosQ.loading || carouselsQ.loading;
   const allCreatives = useMemo(() => {
     const imgs = imagesQ.data?.creatives ?? [];
     const vids = videosQ.data?.creatives ?? [];
-    // Show most-recent first across both types. Library creatives carry
-    // `createdAt` as ISO strings — string compare works for ISO-8601.
-    return [...imgs, ...vids].sort((a, b) =>
+    const cars = carouselsQ.data?.creatives ?? [];
+    // Show most-recent first across all three types. Library creatives
+    // carry `createdAt` as ISO strings — string compare works for ISO-8601.
+    return [...imgs, ...vids, ...cars].sort((a, b) =>
       (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
     );
-  }, [imagesQ.data, videosQ.data]);
+  }, [imagesQ.data, videosQ.data, carouselsQ.data]);
 
   async function handleUpload(file: File) {
     patch({ uploading: true, uploadFile: file });
@@ -1027,6 +1061,7 @@ function Step5Creative({
                   thumbnailUrl: null,
                   videoWidth: null,
                   videoHeight: null,
+                  carouselCards: [],
                   creativeType: "IMAGE",
                   libraryCreativeId: null,
                   libraryCreativeName: null,
@@ -1073,6 +1108,7 @@ function Step5Creative({
               {allCreatives.map((c) => {
                 const selected = state.libraryCreativeId === c.id;
                 const isVideo = c.type === "VIDEO";
+                const isCarousel = c.type === "CAROUSEL";
                 const previewUrl = extractImageUrl(c);
                 // Auto-populate copy fields from the library creative's AI-
                 // generated content. Previously we only pulled the image and
@@ -1086,12 +1122,31 @@ function Step5Creative({
                     key={c.id}
                     type="button"
                     onClick={() => {
-                      if (isVideo) {
+                      if (isCarousel) {
+                        const cards = extractCarouselCards(c);
+                        patch({
+                          libraryCreativeId: c.id,
+                          libraryCreativeName: c.name,
+                          creativeType: "CAROUSEL",
+                          carouselCards: cards,
+                          // Clear other-asset fields so the submit handler
+                          // takes the carousel branch unambiguously.
+                          imageHash: null,
+                          imageUrl: null,
+                          videoId: null,
+                          videoUrl: null,
+                          thumbnailUrl: null,
+                          videoWidth: null,
+                          videoHeight: null,
+                          ...copyPatch,
+                        });
+                      } else if (isVideo) {
                         const v = extractVideoFields(c);
                         patch({
                           libraryCreativeId: c.id,
                           libraryCreativeName: c.name,
                           creativeType: "VIDEO",
+                          carouselCards: [],
                           videoId: v.videoId,
                           videoUrl: v.videoUrl,
                           thumbnailUrl: v.thumbnailUrl,
@@ -1106,6 +1161,7 @@ function Step5Creative({
                           libraryCreativeId: c.id,
                           libraryCreativeName: c.name,
                           creativeType: "IMAGE",
+                          carouselCards: [],
                           imageUrl: previewUrl,
                           imageHash: null,
                           videoId: null,
@@ -1159,16 +1215,18 @@ function Step5Creative({
                         No preview
                       </div>
                     )}
-                    {/* Type badge — so video vs image is unmistakable. */}
+                    {/* Type badge — so format is unmistakable in the picker. */}
                     <span
                       className={clsx(
                         "absolute left-2 top-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider shadow-sm backdrop-blur",
                         isVideo
                           ? "bg-slate-900/85 text-white"
-                          : "bg-white/90 text-slate-700"
+                          : isCarousel
+                            ? "bg-amber-500/95 text-white"
+                            : "bg-white/90 text-slate-700"
                       )}
                     >
-                      {isVideo ? "Video" : "Image"}
+                      {isVideo ? "Video" : isCarousel ? "Carousel" : "Image"}
                     </span>
                     <div className="truncate p-2 text-[11px] font-semibold text-slate-700">
                       {c.name}
@@ -1230,7 +1288,7 @@ function Step5Creative({
               For <strong>video ads</strong>, upload from{" "}
               <strong>Creatives → Upload Creative</strong> first, then pick the
               video from <strong>Pick from library</strong> here. That flow
-              waits for Meta's transcode to finish.
+              waits for Meta&apos;s transcode to finish.
             </span>
           </div>
           <input
@@ -1299,6 +1357,10 @@ function Step5Creative({
       {state.creativeSource === "url" && (
         <UrlPasteTab state={state} patch={patch} />
       )}
+
+      {/* Per-card edits live in the Creatives tab's detail modal; the
+          publish wizard keeps it simple — pick the carousel, see the
+          preview in the Review step, hit publish. */}
 
       {/* Placement picker — controls where the ad runs. Maps to Meta's
           publisher_platforms + positions arrays at submit time. */}
@@ -1550,6 +1612,9 @@ function Step6Review({
           state.creativeType === "VIDEO" ? state.thumbnailUrl : null
         }
         videoId={state.creativeType === "VIDEO" ? state.videoId : null}
+        carouselCards={
+          state.creativeType === "CAROUSEL" ? state.carouselCards : null
+        }
         message={state.message}
         headline={state.headline}
         description={state.description}
@@ -2167,7 +2232,7 @@ function UrlPasteTab({
       />
       <p className="mt-1 text-[11px] text-slate-500">
         Meta downloads + processes the asset on publish. Video URLs are
-        auto-detected by extension; ad publishing will wait for Meta's
+        auto-detected by extension; ad publishing will wait for Meta&apos;s
         transcode (usually 10–30 seconds).
       </p>
       {liveUrl.startsWith("http") &&
@@ -2212,6 +2277,57 @@ function extractImageUrl(c: Creative): string | null {
  * If the library creative was saved via URL paste, only `url` will be set —
  * the publish backend then uploads to Meta + polls transcode at publish time.
  */
+/**
+ * Pull carousel cards off a library creative. Library carousels store the
+ * card list at `content.cards` (set by the Upload Creative modal's carousel
+ * flow). Each saved card carries `imageUrl` (Meta-hosted) + `imageHash`
+ * (pre-uploaded handle) + optional headline / description / link.
+ *
+ * Returns an empty array for non-carousel creatives or malformed content.
+ */
+function extractCarouselCards(c: Creative): Array<{
+  imageUrl: string | null;
+  imageHash: string | null;
+  headline: string;
+  description: string;
+  link: string;
+}> {
+  if (!c.content || typeof c.content !== "object") return [];
+  const obj = c.content as Record<string, unknown>;
+  if (!Array.isArray(obj.cards)) return [];
+  return obj.cards
+    .map((raw): {
+      imageUrl: string | null;
+      imageHash: string | null;
+      headline: string;
+      description: string;
+      link: string;
+    } | null => {
+      if (!raw || typeof raw !== "object") return null;
+      const card = raw as Record<string, unknown>;
+      return {
+        imageUrl:
+          typeof card.imageUrl === "string"
+            ? card.imageUrl
+            : typeof card.url === "string"
+              ? card.url
+              : null,
+        imageHash:
+          typeof card.imageHash === "string" ? card.imageHash : null,
+        headline:
+          typeof card.headline === "string"
+            ? card.headline
+            : typeof card.name === "string"
+              ? card.name
+              : "",
+        description:
+          typeof card.description === "string" ? card.description : "",
+        link: typeof card.link === "string" ? card.link : "",
+      };
+    })
+    .filter((card): card is NonNullable<typeof card> => card !== null);
+}
+
 function extractVideoFields(c: Creative): {
   videoId: string | null;
   videoUrl: string | null;

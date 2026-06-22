@@ -870,16 +870,22 @@ class MetaAdsService {
   }
 
   /**
-   * Create an ad creative (image OR video + copy + link, owned by a Page).
+   * Create an ad creative (image, video, OR carousel + copy + link, owned
+   * by a Page).
    *
-   * This is the "post" that runs in feeds. Two shapes:
-   *   - Image:  `object_story_spec.link_data` with `image_hash`
-   *   - Video:  `object_story_spec.video_data` with `video_id` (+ thumbnail)
+   * Three shapes Meta accepts in `object_story_spec`:
+   *   - Image:    `link_data` with `image_hash`
+   *   - Video:    `video_data` with `video_id` (+ thumbnail)
+   *   - Carousel: `link_data` with `child_attachments` (2-10 cards)
    *
-   * Caller passes either `imageHash` (image ad) or `videoId` (video ad).
+   * Caller passes ONE of `imageHash` | `videoId` | `cards`. Carousel cards
+   * each carry their own image_hash + name (headline) + description +
+   * link; the top-level `message` and `callToAction` apply across all
+   * cards.
+   *
    * Video ads also need a thumbnail; if `thumbnailUrl` is omitted we fall
-   * back to Meta's auto-generated picture (you should fetch it via
-   * `getVideoStatus` and pass it in for predictable results).
+   * back to Meta's auto-generated picture (fetch it via `getVideoStatus`
+   * and pass it in for predictable results).
    */
   async createAdCreative(
     accessToken: string,
@@ -887,22 +893,32 @@ class MetaAdsService {
     params: {
       name: string;
       pageId: string;
-      message: string; // body copy
+      message: string; // body copy (shared across carousel cards)
       headline?: string;
       description?: string;
       linkUrl: string;
       callToAction?: MetaCallToActionType;
-      /** Provide one of imageHash OR videoId. */
+      /** Provide ONE of imageHash | videoId | cards. */
       imageHash?: string;
       videoId?: string;
+      cards?: Array<{
+        imageHash: string;
+        headline?: string;
+        description?: string;
+        link?: string;
+      }>;
       /** Video poster — required by Meta for video ads. */
       thumbnailUrl?: string;
     }
   ): Promise<{ id: string }> {
-    if (!params.imageHash && !params.videoId) {
+    const hasCarousel = (params.cards?.length ?? 0) >= 2;
+    if (!params.imageHash && !params.videoId && !hasCarousel) {
       throw new Error(
-        "createAdCreative: provide either imageHash (image ad) or videoId (video ad)"
+        "createAdCreative: provide imageHash (image), videoId (video), or cards[] (carousel, 2-10)"
       );
+    }
+    if (params.cards && (params.cards.length < 2 || params.cards.length > 10)) {
+      throw new Error("createAdCreative: carousel needs 2-10 cards");
     }
 
     const accountPath = this.accountPath(adAccountId);
@@ -914,7 +930,34 @@ class MetaAdsService {
       : undefined;
 
     let storySpec: Record<string, unknown>;
-    if (params.videoId) {
+    if (hasCarousel) {
+      // Carousel: child_attachments at the top of link_data. Each card
+      // can override the ad-level link with its own. Meta requires each
+      // card to have a link (it falls back to the parent link_data.link
+      // when omitted, but we pass it explicitly for clarity).
+      const childAttachments = params.cards!.map((c) => {
+        const attachment: Record<string, unknown> = {
+          image_hash: c.imageHash,
+          link: c.link ?? params.linkUrl,
+        };
+        if (c.headline) attachment.name = c.headline;
+        if (c.description) attachment.description = c.description;
+        if (callToAction) attachment.call_to_action = callToAction;
+        return attachment;
+      });
+      const linkData: Record<string, unknown> = {
+        message: params.message,
+        link: params.linkUrl,
+        child_attachments: childAttachments,
+        // multi_share_optimized=true lets Meta reorder cards by performance
+        // — best-practice default. Users who want a fixed order can override
+        // with explicit per-card link/headline differences.
+        multi_share_optimized: true,
+        multi_share_end_card: true,
+      };
+      if (callToAction) linkData.call_to_action = callToAction;
+      storySpec = { page_id: params.pageId, link_data: linkData };
+    } else if (params.videoId) {
       // Video ads use `video_data`. `title` maps to the ad's headline,
       // `message` to the body copy. `image_url` is the poster shown before
       // playback starts — Meta rejects video_data without it.

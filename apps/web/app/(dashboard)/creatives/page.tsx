@@ -63,6 +63,9 @@ type Creative = {
   /** Meta video_id for device-uploaded videos. Use with the video-source
    *  endpoint to get a playable MP4 URL. */
   videoId?: string;
+  /** Number of cards in a CAROUSEL creative. Drives the "+N cards" badge
+   *  on the grid card preview. */
+  cardCount?: number;
   gradient: string;
   createdAt: string;
 };
@@ -128,6 +131,12 @@ function extractVideoId(content: unknown): string | undefined {
   return typeof obj.videoId === "string" ? obj.videoId : undefined;
 }
 
+function extractCardCount(content: unknown): number | undefined {
+  if (!content || typeof content !== "object") return undefined;
+  const obj = content as Record<string, unknown>;
+  return Array.isArray(obj.cards) ? obj.cards.length : undefined;
+}
+
 function mapApiStatus(s: ApiCreativeStatus): Status {
   switch (s) {
     case "APPROVED":
@@ -159,6 +168,7 @@ function mapApiCreative(c: ApiCreative): Creative {
     copy: extractCopy(c.content),
     url: extractMediaUrl(c.content),
     videoId: extractVideoId(c.content),
+    cardCount: extractCardCount(c.content),
     gradient: gradientFor(c.id),
     createdAt: c.createdAt.slice(0, 10),
   };
@@ -576,6 +586,49 @@ function classifyOrientation(width: number, height: number): VideoOrientation {
 
 type UploadTab = "device" | "url";
 
+/** Single carousel card while the user is composing it in the upload
+ *  modal OR editing it in the detail modal. `file` is a freshly picked
+ *  image; `savedImageUrl` / `savedImageHash` are present when the card
+ *  was already uploaded (edit mode). Headlines / descriptions / links
+ *  are all optional — Meta falls back to the ad-level link + the card
+ *  index when omitted. */
+type CarouselCardDraft = {
+  /** Stable ID for React keys — random because we splice cards in/out. */
+  id: string;
+  /** New file picked in this session. Mutually exclusive with savedImageUrl
+   *  for *display* purposes (picking a file replaces the saved image). */
+  file: File | null;
+  filePreviewUrl: string | null;
+  /** Pre-existing Meta-hosted URL (edit mode). Cleared when the user
+   *  picks a new file. */
+  savedImageUrl: string | null;
+  /** Pre-existing Meta image_hash (edit mode). Preserved through save so
+   *  cards without a new file don't get re-uploaded. */
+  savedImageHash: string | null;
+  headline: string;
+  description: string;
+  link: string;
+};
+
+function emptyCard(): CarouselCardDraft {
+  return {
+    id: cardId(),
+    file: null,
+    filePreviewUrl: null,
+    savedImageUrl: null,
+    savedImageHash: null,
+    headline: "",
+    description: "",
+    link: "",
+  };
+}
+
+/** Tiny non-crypto unique id — fine for React keys, not for anything else.
+ *  Math.random in workflow scripts is forbidden but not in app code. */
+function cardId(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
 function UploadCreativeModal({
   open,
   onClose,
@@ -588,7 +641,14 @@ function UploadCreativeModal({
   const api = useApiClient();
   const [tab, setTab] = useState<UploadTab>("device");
   const [name, setName] = useState("");
-  const [type, setType] = useState<"IMAGE" | "VIDEO">("IMAGE");
+  const [type, setType] = useState<"IMAGE" | "VIDEO" | "CAROUSEL">("IMAGE");
+  // Carousel state — 2-10 cards, each with one image + optional headline/
+  // description/link. Cards start with a single placeholder so the user
+  // sees the shape; "Add card" pushes more until 10.
+  const [cards, setCards] = useState<CarouselCardDraft[]>(() => [
+    emptyCard(),
+    emptyCard(),
+  ]);
   // URL-paste mode
   const [url, setUrl] = useState("");
   const [previewError, setPreviewError] = useState(false);
@@ -629,8 +689,23 @@ function UploadCreativeModal({
       setUploadPct(0);
       setPhase(null);
       setVideoMeta(null);
+      setCards([emptyCard(), emptyCard()]);
     }
   }, [open]);
+
+  // Object-URL lifecycle for carousel card previews. When a card's File
+  // changes (picked, replaced, removed), we revoke the old object URL and
+  // create a fresh one. Cleanup runs on modal close via the cards reset.
+  useEffect(() => {
+    return () => {
+      cards.forEach((c) => {
+        if (c.filePreviewUrl) URL.revokeObjectURL(c.filePreviewUrl);
+      });
+    };
+    // We only want cleanup-on-unmount semantics — the per-card preview URL
+    // is created at pick time and revoked at remove time, not in this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Revoke the object URL when the picked file changes or the modal closes —
   // otherwise we leak browser memory on each pick.
@@ -758,6 +833,54 @@ function UploadCreativeModal({
           }
           content = { url: url.trim() };
         }
+      } else if (type === "CAROUSEL") {
+        // CAROUSEL — for each card, upload its image to Meta's /adimages
+        // and stash the hosted URL. We require a file per card (paste-URL
+        // per card is deferred polish). Sequential uploads to stay on the
+        // safe side of Meta's per-account rate limits.
+        if (cards.length < 2) {
+          toast.error("A carousel needs at least 2 cards");
+          setSubmitting(false);
+          return;
+        }
+        const missing = cards.findIndex(
+          (c) => !c.file && !c.savedImageUrl
+        );
+        if (missing !== -1) {
+          toast.error(`Pick an image for card ${missing + 1}`);
+          setSubmitting(false);
+          return;
+        }
+        setPhase("upload");
+        const uploadedCards: Array<Record<string, unknown>> = [];
+        for (const c of cards) {
+          // Either a fresh file (upload it) or a saved card (preserve the
+          // existing url + hash so we don't re-upload unchanged images).
+          let url: string;
+          let hash: string | undefined;
+          if (c.file) {
+            const result = await api.uploadMetaImage(c.file);
+            url = result.url;
+            hash = result.hash;
+          } else {
+            url = c.savedImageUrl!;
+            hash = c.savedImageHash ?? undefined;
+          }
+          uploadedCards.push({
+            url,
+            imageUrl: url,
+            ...(hash ? { imageHash: hash } : {}),
+            headline: c.headline.trim() || undefined,
+            description: c.description.trim() || undefined,
+            link: c.link.trim() || undefined,
+          });
+        }
+        // Persist the cards array. `url` on the top-level content is the
+        // first card's image — used as the library card preview thumbnail.
+        content = {
+          url: (uploadedCards[0]?.url as string) ?? undefined,
+          cards: uploadedCards,
+        };
       } else {
         // VIDEO path — two flavors: device upload (file → /upload-video,
         // then poll transcode) and URL paste (defer upload to publish time
@@ -902,7 +1025,7 @@ function UploadCreativeModal({
             <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
               Type
             </label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => setType("IMAGE")}
@@ -929,11 +1052,24 @@ function UploadCreativeModal({
                 <Film className="h-4 w-4" />
                 Video
               </button>
+              <button
+                type="button"
+                onClick={() => setType("CAROUSEL")}
+                className={clsx(
+                  "flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition",
+                  type === "CAROUSEL"
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                )}
+              >
+                <Layers className="h-4 w-4" />
+                Carousel
+              </button>
             </div>
           </div>
 
-          {/* Source tabs */}
-          <div>
+          {/* Source tabs — hidden for CAROUSEL (device upload only at MVP) */}
+          {type !== "CAROUSEL" && <div>
             <div className="mb-2 flex items-center justify-between">
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
                 Source
@@ -967,7 +1103,7 @@ function UploadCreativeModal({
                 Paste URL
               </button>
             </div>
-          </div>
+          </div>}
 
           {/* Name */}
           <div>
@@ -988,8 +1124,8 @@ function UploadCreativeModal({
             />
           </div>
 
-          {/* Source body — device picker OR URL input */}
-          {tab === "device" ? (
+          {/* Source body — device picker OR URL input — hidden for CAROUSEL */}
+          {type !== "CAROUSEL" && (tab === "device" ? (
             <div>
               <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
                 {type === "VIDEO" ? "Video file" : "Image file"}
@@ -1116,7 +1252,7 @@ function UploadCreativeModal({
                     />
                   </div>
                   <p className="mt-2 text-[10px] text-slate-500">
-                    Short clips usually take 10–30s. Don't close this dialog.
+                    Short clips usually take 10–30s. Don&apos;t close this dialog.
                   </p>
                 </div>
               )}
@@ -1182,6 +1318,15 @@ function UploadCreativeModal({
                 </div>
               )}
             </div>
+          ))}
+
+          {/* Carousel cards editor — only when type=CAROUSEL */}
+          {type === "CAROUSEL" && (
+            <CarouselCardsEditor
+              cards={cards}
+              setCards={setCards}
+              disabled={submitting}
+            />
           )}
         </ModalBody>
 
@@ -1199,7 +1344,12 @@ function UploadCreativeModal({
             disabled={
               submitting ||
               !name.trim() ||
-              (tab === "url" ? !looksLikeUrl : !file)
+              (type === "CAROUSEL"
+                ? cards.length < 2 ||
+                  cards.some((c) => !c.file && !c.savedImageUrl)
+                : tab === "url"
+                  ? !looksLikeUrl
+                  : !file)
             }
             className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
@@ -1245,6 +1395,267 @@ function FilterSelect({
         ))}
       </select>
       <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+    </div>
+  );
+}
+
+/**
+ * Carousel cards editor — 2-10 ordered cards, each with one image + the
+ * standard ad-card copy (headline, description, link). The headline is the
+ * load-bearing field per card; description + link are optional. The ad-
+ * level message + CTA come from the publish wizard (shared across cards),
+ * so we don't ask for them here.
+ *
+ * UX shape: a vertical stack of card rows. Each row shows an image
+ * dropzone + thumbnail on the left, the three text fields on the right.
+ * "Add card" sits at the bottom (disabled at 10). Each card has its own
+ * X to remove (disabled at 2).
+ */
+function CarouselCardsEditor({
+  cards,
+  setCards,
+  disabled,
+}: {
+  cards: CarouselCardDraft[];
+  setCards: React.Dispatch<React.SetStateAction<CarouselCardDraft[]>>;
+  disabled: boolean;
+}) {
+  function patchCard(id: string, updates: Partial<CarouselCardDraft>) {
+    setCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
+  }
+  function removeCard(id: string) {
+    setCards((prev) => {
+      if (prev.length <= 2) return prev;
+      const found = prev.find((c) => c.id === id);
+      if (found?.filePreviewUrl) URL.revokeObjectURL(found.filePreviewUrl);
+      return prev.filter((c) => c.id !== id);
+    });
+  }
+  function addCard() {
+    setCards((prev) => (prev.length >= 10 ? prev : [...prev, emptyCard()]));
+  }
+  function pickFile(id: string, file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Pick an image file (JPEG, PNG, WebP, GIF)");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      toast.error(
+        `Image is ${(file.size / 1024 / 1024).toFixed(1)} MB — Meta caps uploads at 8 MB`
+      );
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setCards((prev) =>
+      prev.map((c) => {
+        if (c.id !== id) return c;
+        if (c.filePreviewUrl) URL.revokeObjectURL(c.filePreviewUrl);
+        // Picking a new file means the user is replacing the saved card
+        // image — clear the savedImageUrl/Hash so the save path uploads
+        // the new bytes rather than preserving the old reference.
+        return {
+          ...c,
+          file,
+          filePreviewUrl: url,
+          savedImageUrl: null,
+          savedImageHash: null,
+        };
+      })
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
+          Cards · {cards.length} of 10
+        </label>
+        <button
+          type="button"
+          onClick={addCard}
+          disabled={disabled || cards.length >= 10}
+          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          + Add card
+        </button>
+      </div>
+      <p className="mb-3 text-[11px] text-slate-500">
+        2–10 cards · square (1:1) images render best across Feed + Reels. The
+        body copy and CTA come from the publish wizard and are shared across
+        cards.
+      </p>
+      <ul className="space-y-2.5">
+        {cards.map((card, idx) => (
+          <li
+            key={card.id}
+            className="rounded-xl border border-slate-200 bg-white p-3"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Card {idx + 1}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeCard(card.id)}
+                disabled={disabled || cards.length <= 2}
+                aria-label={`Remove card ${idx + 1}`}
+                className="text-slate-400 transition hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex gap-3">
+              {/* Image picker — shows freshly-picked file OR previously
+                  saved Meta-hosted image (edit mode). Click swaps either
+                  with a new file. */}
+              <div className="shrink-0">
+                {card.filePreviewUrl || card.savedImageUrl ? (
+                  <label className="block cursor-pointer">
+                    <input
+                      type="file"
+                      accept={ACCEPTED_IMAGE_TYPES}
+                      onChange={(e) =>
+                        pickFile(card.id, e.target.files?.[0] ?? null)
+                      }
+                      className="hidden"
+                      disabled={disabled}
+                    />
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={card.filePreviewUrl ?? card.savedImageUrl ?? ""}
+                      alt={`Card ${idx + 1}`}
+                      className="h-20 w-20 rounded-lg object-cover ring-1 ring-slate-200"
+                    />
+                  </label>
+                ) : (
+                  <label
+                    className={clsx(
+                      "flex h-20 w-20 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 text-center text-[10px] font-semibold text-slate-500 transition hover:border-primary/40 hover:bg-slate-100",
+                      disabled && "pointer-events-none opacity-60"
+                    )}
+                  >
+                    <input
+                      type="file"
+                      accept={ACCEPTED_IMAGE_TYPES}
+                      onChange={(e) =>
+                        pickFile(card.id, e.target.files?.[0] ?? null)
+                      }
+                      className="hidden"
+                      disabled={disabled}
+                    />
+                    <Upload className="h-4 w-4 text-slate-400" />
+                    Pick image
+                  </label>
+                )}
+              </div>
+
+              {/* Copy fields */}
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <input
+                  type="text"
+                  value={card.headline}
+                  onChange={(e) =>
+                    patchCard(card.id, { headline: e.target.value })
+                  }
+                  maxLength={40}
+                  placeholder="Headline (≤ 40 chars)"
+                  disabled={disabled}
+                  className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs placeholder:text-slate-400 focus:border-primary focus:outline-none disabled:opacity-60"
+                />
+                <input
+                  type="text"
+                  value={card.description}
+                  onChange={(e) =>
+                    patchCard(card.id, { description: e.target.value })
+                  }
+                  maxLength={125}
+                  placeholder="Description (optional)"
+                  disabled={disabled}
+                  className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs placeholder:text-slate-400 focus:border-primary focus:outline-none disabled:opacity-60"
+                />
+                <input
+                  type="url"
+                  value={card.link}
+                  onChange={(e) =>
+                    patchCard(card.id, { link: e.target.value })
+                  }
+                  placeholder="Link URL (optional — falls back to ad link)"
+                  disabled={disabled}
+                  className="h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-xs placeholder:text-slate-400 focus:border-primary focus:outline-none disabled:opacity-60"
+                />
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Read-only carousel preview shown in the Detail Modal when NOT editing.
+ * Mirrors the shape of the editor (image left, copy stacked right) but
+ * with no inputs, no replace controls — just the saved data.
+ */
+function CarouselDetailList({ cards }: { cards: CarouselCardDraft[] }) {
+  if (cards.length === 0) {
+    return (
+      <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+        This carousel has no cards saved yet.
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+        Cards · {cards.length}
+      </div>
+      <ul className="space-y-2.5">
+        {cards.map((card, idx) => (
+          <li
+            key={card.id}
+            className="flex gap-3 rounded-xl border border-slate-200 bg-white p-2.5"
+          >
+            <div className="shrink-0">
+              {card.savedImageUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={card.savedImageUrl}
+                  alt={`Card ${idx + 1}`}
+                  className="h-20 w-20 rounded-lg object-cover ring-1 ring-slate-200"
+                />
+              ) : (
+                <div className="flex h-20 w-20 items-center justify-center rounded-lg bg-slate-100 text-[10px] text-slate-400">
+                  No image
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Card {idx + 1}
+              </div>
+              <div className="truncate text-sm font-semibold text-slate-900">
+                {card.headline || (
+                  <span className="font-normal italic text-slate-400">
+                    No headline
+                  </span>
+                )}
+              </div>
+              {card.description && (
+                <div className="line-clamp-2 text-xs text-slate-600">
+                  {card.description}
+                </div>
+              )}
+              {card.link && (
+                <div className="truncate text-[11px] text-primary">
+                  {card.link}
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -1449,6 +1860,11 @@ function CreativeDetailModal({
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoPct, setVideoPct] = useState(0);
   const [videoPhase, setVideoPhase] = useState<"upload" | "processing" | null>(null);
+  // Carousel editing state — only used when creative.type === "CAROUSEL".
+  // Initialized from rawContent.cards on open; each saved card becomes a
+  // `CarouselCardDraft` with savedImageUrl/Hash so the editor can render
+  // the existing image without re-uploading.
+  const [carouselCards, setCarouselCards] = useState<CarouselCardDraft[]>([]);
 
   // Edit-mode copy state. We keep a local mutable copy of each variant array
   // so the user can tweak text inline without clobbering the original until
@@ -1493,6 +1909,35 @@ function CreativeDetailModal({
         ctas: asStringArr(c.ctas),
       });
       setPicked({ headline: 0, primaryText: 0, description: 0, cta: 0 });
+      // Carousel: hydrate the editor draft list from saved card data.
+      const savedCards = Array.isArray(c.cards) ? c.cards : [];
+      setCarouselCards(
+        savedCards.map((raw) => {
+          const card = (raw ?? {}) as Record<string, unknown>;
+          return {
+            id: cardId(),
+            file: null,
+            filePreviewUrl: null,
+            savedImageUrl:
+              typeof card.imageUrl === "string"
+                ? card.imageUrl
+                : typeof card.url === "string"
+                  ? card.url
+                  : null,
+            savedImageHash:
+              typeof card.imageHash === "string" ? card.imageHash : null,
+            headline:
+              typeof card.headline === "string"
+                ? card.headline
+                : typeof card.name === "string"
+                  ? card.name
+                  : "",
+            description:
+              typeof card.description === "string" ? card.description : "",
+            link: typeof card.link === "string" ? card.link : "",
+          };
+        })
+      );
     }
   }, [open, startInEditMode, creative.name, rawContent]);
 
@@ -1553,6 +1998,45 @@ function CreativeDetailModal({
         const result = await api.uploadMetaImage(file);
         nextContent.url = result.url;
       }
+      // Carousel — for each card, either upload its new file or preserve
+      // the existing saved url + hash. Final shape mirrors what
+      // UploadCreativeModal saves so the publish wizard reads them the
+      // same way.
+      if (creative.type === "CAROUSEL") {
+        if (carouselCards.length < 2) {
+          throw new Error("A carousel needs at least 2 cards");
+        }
+        const missing = carouselCards.findIndex(
+          (c) => !c.file && !c.savedImageUrl
+        );
+        if (missing !== -1) {
+          throw new Error(`Pick an image for card ${missing + 1}`);
+        }
+        const out: Array<Record<string, unknown>> = [];
+        for (const c of carouselCards) {
+          let url: string;
+          let hash: string | undefined;
+          if (c.file) {
+            const result = await api.uploadMetaImage(c.file);
+            url = result.url;
+            hash = result.hash;
+          } else {
+            url = c.savedImageUrl!;
+            hash = c.savedImageHash ?? undefined;
+          }
+          out.push({
+            url,
+            imageUrl: url,
+            ...(hash ? { imageHash: hash } : {}),
+            headline: c.headline.trim() || undefined,
+            description: c.description.trim() || undefined,
+            link: c.link.trim() || undefined,
+          });
+        }
+        nextContent.cards = out;
+        nextContent.url = (out[0]?.url as string) ?? nextContent.url;
+      }
+
       // Video replacement — upload to /advideos, then poll transcode.
       // Same shape as UploadCreativeModal: persist videoId + thumbnailUrl,
       // with `url` pointing at the thumbnail for the in-app preview.
@@ -1739,10 +2223,22 @@ function CreativeDetailModal({
       </ModalHeader>
 
       <ModalBody className="space-y-5">
-          {/* Media preview. For VIDEO we render an interactive player —
-              click the thumbnail to fetch Meta's signed source and play
-              inline. For IMAGE just the image. */}
-          {creative.type === "VIDEO" && (creative.url || creative.videoId) ? (
+          {/* Media preview. Render priority by type:
+              - CAROUSEL + editing → CarouselCardsEditor (replace, add, remove, reorder copy)
+              - CAROUSEL + read mode → CarouselDetailList (horizontal cards)
+              - VIDEO → interactive player (click to play)
+              - IMAGE → static <img> */}
+          {creative.type === "CAROUSEL" ? (
+            editing ? (
+              <CarouselCardsEditor
+                cards={carouselCards}
+                setCards={setCarouselCards}
+                disabled={saving}
+              />
+            ) : (
+              <CarouselDetailList cards={carouselCards} />
+            )
+          ) : creative.type === "VIDEO" && (creative.url || creative.videoId) ? (
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
               <VideoThumbnailPlayer
                 thumbnailUrl={creative.url ?? null}
@@ -2069,12 +2565,54 @@ function CreativeDetailModal({
           <button
             type="button"
             onClick={() => {
+              // Cancel = revert local state to the snapshot taken on open.
+              // We re-trigger the open effect by toggling editing off; the
+              // file inputs and carousel-card edits already in local state
+              // get blown away by setEditing(false) leading to nothing
+              // mutating remotely. Re-init carousel cards from rawContent
+              // so any inline text edits revert too.
               setEditing(false);
               setName(creative.name);
               setFile(null);
               setVideoFile(null);
               setVideoPhase(null);
               setVideoPct(0);
+              const c =
+                rawContent && typeof rawContent === "object"
+                  ? (rawContent as Record<string, unknown>)
+                  : {};
+              const savedCards = Array.isArray(c.cards) ? c.cards : [];
+              setCarouselCards(
+                savedCards.map((raw) => {
+                  const card = (raw ?? {}) as Record<string, unknown>;
+                  return {
+                    id: cardId(),
+                    file: null,
+                    filePreviewUrl: null,
+                    savedImageUrl:
+                      typeof card.imageUrl === "string"
+                        ? card.imageUrl
+                        : typeof card.url === "string"
+                          ? card.url
+                          : null,
+                    savedImageHash:
+                      typeof card.imageHash === "string"
+                        ? card.imageHash
+                        : null,
+                    headline:
+                      typeof card.headline === "string"
+                        ? card.headline
+                        : typeof card.name === "string"
+                          ? card.name
+                          : "",
+                    description:
+                      typeof card.description === "string"
+                        ? card.description
+                        : "",
+                    link: typeof card.link === "string" ? card.link : "",
+                  };
+                })
+              );
             }}
             disabled={saving}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -2353,6 +2891,32 @@ function PreviewArea({ creative }: { creative: Creative }) {
     );
   }
   if (creative.type === "CAROUSEL") {
+    // Show the first card's image with a stacked-edges visual hint so the
+    // grid card feels distinct from a single-image creative. The "+N more"
+    // badge clarifies how many cards are behind the front one.
+    const cardCount = creative.cardCount ?? 0;
+    if (creative.url) {
+      return (
+        <div className="relative h-full w-full bg-slate-900">
+          {/* Stack illusion — two faint rectangles peeking out behind. */}
+          <div className="absolute right-1 top-1 bottom-1 left-3 rounded-md bg-white/10" />
+          <div className="absolute right-2 top-2 bottom-2 left-2 rounded-md bg-white/15" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={creative.url}
+            alt={creative.name}
+            className="absolute inset-0 h-full w-full rounded-none object-cover"
+          />
+          {cardCount > 1 && (
+            <span className="absolute right-3 bottom-3 inline-flex items-center gap-1 rounded-full bg-slate-900/85 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm backdrop-blur">
+              <Layers className="h-2.5 w-2.5" />
+              {cardCount} cards
+            </span>
+          )}
+        </div>
+      );
+    }
+    // No images uploaded yet — fall back to the original gradient-stack.
     return (
       <div className="relative h-full w-full">
         <div

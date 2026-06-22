@@ -472,6 +472,37 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-22 â€” Phase 1B Carousel: end-to-end multi-card ad pipeline
+
+Second half of Phase 1B. Users can now build a 2-10 card carousel ad with per-card image + headline + description + link, save it to the library, and publish it through the same publish wizard image + video ads use. Closes Phase 1B.
+
+**Backend changes:**
+- [apps/api/src/services/meta.service.ts](apps/api/src/services/meta.service.ts) â€” `createAdCreative` rewritten as a 3-way branch (image / video / carousel). Carousel mode builds `object_story_spec.link_data` with a `child_attachments` array (Meta's required shape). Each card gets `image_hash`, `name` (headline), `description`, `link`, and the ad-level CTA. `multi_share_optimized: true` and `multi_share_end_card: true` are set so Meta auto-reorders cards by performance and shows the "see more" tail card. Validates 2-10 cards; throws on under/over.
+- [apps/api/src/routes/campaigns.ts](apps/api/src/routes/campaigns.ts) â€” the publish handler now resolves any of `imageHash | imageUrl | videoId | videoUrl | cards[] | libraryCreativeId` to the right Meta primitive. Carousel cards are uploaded sequentially via `uploadImageFromUrl` (Meta rate-limits parallel /adimages on the same account). Library carousel creatives expand their saved `content.cards` array into the resolution pipeline so a library carousel can be used the same way an inline carousel payload can.
+
+**Web client + UI:**
+- [apps/web/lib/api.ts](apps/web/lib/api.ts) â€” `PublishCampaignPayload.creative` gained `cards?: Array<{ imageHash?, imageUrl?, headline?, description?, link? }>`.
+- [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx):
+  - Upload Creative modal gained a third Type button: **Carousel** (alongside Image / Video).
+  - New `CarouselCardsEditor` component â€” vertical stack of card rows, each with an image dropzone + headline + description + link inputs. "Add card" up to 10; "X" per card down to 2. Per-image dimension/size validation reuses the existing 8 MB / image-mime checks.
+  - On Save, each card's image is uploaded to `/api/meta/upload-image` sequentially; the resulting hash + Meta URL are persisted into `content.cards` along with the per-card copy. Top-level `content.url` is set to the first card's image so the library card preview thumbnail works for free.
+- [apps/web/components/campaigns/publish/PublishToMetaModal.tsx](apps/web/components/campaigns/publish/PublishToMetaModal.tsx):
+  - Wizard state gained `carouselCards: Array<...>` and `creativeType` was extended to include `"CAROUSEL"`.
+  - Library picker now fetches CAROUSEL creatives too (third `useApi` call merged into `allCreatives`); cards in the picker get an amber **Carousel** badge so the type is unmistakable.
+  - New `WizardCarouselCards` component shown in Step 5 when a carousel creative is picked â€” image is read-only (already uploaded), headline / description / link per card are editable inline so the user can tailor copy for this specific campaign without mutating the library creative. State changes are local to the wizard.
+  - Submit handler's asset-priority chain now leads with `carouselCards` â†’ falls through to videoId, imageHash, videoUrl, imageUrl, libraryCreativeId.
+- [apps/web/components/campaigns/publish/MetaAdPreview.tsx](apps/web/components/campaigns/publish/MetaAdPreview.tsx) â€” new `CarouselStrip` component renders the horizontal-scrolling cards inside both the Facebook and Instagram Feed mockups (Reels doesn't support carousels on Meta â€” IG/FB Feed only). Each tile shows the card image at the placement's aspect ratio (1.91:1 for Facebook, 1:1 for Instagram), plus a mini link-card footer with headline + CTA.
+
+**What's NOT in this slice:**
+- Mixed image/video carousels (Meta supports them, we don't yet).
+- AI-generated carousel copy â€” the AI Generate flow's "Carousel" pick still produces the generic copy variants (headlines/primary_texts/descriptions/ctas) that get applied to the ad as a whole rather than per-card.
+- Per-card CTA â€” all cards share the ad-level CTA in this MVP.
+- Adding/removing cards inside the publish wizard â€” the wizard's card editor is "tweak before publish"; adding new images means going back to the Creatives tab.
+
+`tsc --noEmit` clean on both `apps/api` and `apps/web`.
+
+---
+
 ### 2026-06-22 â€” Video polish: aspect ratio + placement picker + Reels mockup
 
 Phase 1B Video shipped end-to-end but treated every video as a Feed ad with auto-placements. Reels and Stories were "supported" only in the sense that Meta would auto-place a 9:16 video there. The wizard had no UI for it, no preview for it, and no warning when a user picked Reels with a square video. This pass closes those gaps.

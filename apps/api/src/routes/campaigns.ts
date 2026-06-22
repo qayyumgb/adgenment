@@ -505,17 +505,27 @@ router.post(
     if (typeof creative.linkUrl !== "string" || !creative.linkUrl.trim()) {
       return res.status(400).json({ error: "creative.linkUrl is required" });
     }
+    const hasCarouselCards = (creative.cards?.length ?? 0) >= 2;
     if (
       !creative.imageUrl &&
       !creative.imageHash &&
       !creative.videoUrl &&
       !creative.videoId &&
+      !hasCarouselCards &&
       !creative.libraryCreativeId
     ) {
       return res.status(400).json({
         error:
-          "creative needs imageUrl, imageHash, videoUrl, videoId, or libraryCreativeId",
+          "creative needs imageUrl, imageHash, videoUrl, videoId, cards (2-10), or libraryCreativeId",
       });
+    }
+    if (
+      creative.cards &&
+      (creative.cards.length < 2 || creative.cards.length > 10)
+    ) {
+      return res
+        .status(400)
+        .json({ error: "carousel needs 2-10 cards" });
     }
 
     const token = metaService.decryptToken(campaign.adAccount.accessToken);
@@ -552,24 +562,35 @@ router.post(
     }
 
     try {
-      // ── 1. Resolve asset → image_hash OR video_id ──────────────────────
-      // The publish payload can carry either an image (imageHash/imageUrl)
-      // or a video (videoId/videoUrl), optionally via a library creative
-      // reference (libraryCreativeId). We figure out which kind of ad
-      // we're building here so the rest of the flow knows whether to
-      // upload to /adimages or /advideos.
+      // ── 1. Resolve asset → image_hash | video_id | child_attachments ──
+      // The publish payload can carry an image (imageHash/imageUrl), a
+      // video (videoId/videoUrl), a carousel (cards[2-10]), or a library
+      // creative reference (libraryCreativeId) that resolves to one of
+      // those. We figure out the ad shape here so the rest of the flow
+      // knows whether to upload to /adimages, /advideos, or build a
+      // child_attachments array.
       let imageHash: string | undefined = creative.imageHash;
       let videoId: string | undefined = creative.videoId;
       let thumbnailUrl: string | undefined = creative.thumbnailUrl;
       let imageUrlForResolution: string | undefined = creative.imageUrl;
       let videoUrlForResolution: string | undefined = creative.videoUrl;
+      let resolvedCards: Array<{
+        imageHash: string;
+        headline?: string;
+        description?: string;
+        link?: string;
+      }> | undefined;
       let libCreativeType: string | undefined;
 
+      // Library creative lookup — only when no direct asset was provided.
+      // For carousel library creatives we expand the saved card list and
+      // re-upload any images that aren't already hashed.
       if (
         !imageHash &&
         !videoId &&
         !imageUrlForResolution &&
         !videoUrlForResolution &&
+        !hasCarouselCards &&
         creative.libraryCreativeId
       ) {
         const libCreative = await prisma.creative.findFirst({
@@ -585,21 +606,60 @@ router.post(
         }
         libCreativeType = libCreative.type;
         const content = (libCreative.content ?? {}) as Record<string, unknown>;
-        const url =
-          typeof content.imageUrl === "string"
-            ? content.imageUrl
-            : typeof content.url === "string"
-              ? content.url
-              : null;
-        if (!url) {
-          return res
-            .status(400)
-            .json({ error: "Library creative has no media URL" });
-        }
-        if (libCreative.type === "VIDEO") {
-          videoUrlForResolution = url;
+        if (libCreative.type === "CAROUSEL") {
+          // Library carousel stores cards on content.cards. Hand them to
+          // the same card-upload code path below — pre-uploaded hashes
+          // are passed through, raw URLs get uploaded on the fly.
+          const cards = Array.isArray(content.cards) ? content.cards : [];
+          if (cards.length < 2 || cards.length > 10) {
+            return res.status(400).json({
+              error: "Library carousel must have 2-10 cards",
+            });
+          }
+          creative.cards = cards.map((c) => {
+            const card = (c ?? {}) as Record<string, unknown>;
+            return {
+              imageHash:
+                typeof card.imageHash === "string"
+                  ? card.imageHash
+                  : undefined,
+              imageUrl:
+                typeof card.imageUrl === "string"
+                  ? card.imageUrl
+                  : typeof card.url === "string"
+                    ? card.url
+                    : undefined,
+              headline:
+                typeof card.headline === "string"
+                  ? card.headline
+                  : typeof card.name === "string"
+                    ? card.name
+                    : undefined,
+              description:
+                typeof card.description === "string"
+                  ? card.description
+                  : undefined,
+              link:
+                typeof card.link === "string" ? card.link : undefined,
+            };
+          });
         } else {
-          imageUrlForResolution = url;
+          const url =
+            typeof content.imageUrl === "string"
+              ? content.imageUrl
+              : typeof content.url === "string"
+                ? content.url
+                : null;
+          if (!url) {
+            return res
+              .status(400)
+              .json({ error: "Library creative has no media URL" });
+          }
+          if (libCreative.type === "VIDEO") {
+            videoUrlForResolution = url;
+          } else {
+            imageUrlForResolution = url;
+          }
         }
       }
 
@@ -660,10 +720,46 @@ router.post(
         imageHash = uploaded.hash;
       }
 
-      if (!imageHash && !videoId) {
+      // Resolve each carousel card → image_hash. Cards that already carry
+      // a hash pass through unchanged; cards with just an imageUrl get
+      // uploaded to /adimages here. Done sequentially because Meta rate-
+      // limits parallel uploads on the same ad account.
+      if (creative.cards && creative.cards.length >= 2) {
+        const out: Array<{
+          imageHash: string;
+          headline?: string;
+          description?: string;
+          link?: string;
+        }> = [];
+        for (const card of creative.cards) {
+          let hash = card.imageHash;
+          if (!hash && card.imageUrl) {
+            const uploaded = await metaService.uploadImageFromUrl(
+              token,
+              adAccountId,
+              card.imageUrl
+            );
+            hash = uploaded.hash;
+          }
+          if (!hash) {
+            return res.status(400).json({
+              error: "Each carousel card needs imageUrl or imageHash",
+            });
+          }
+          out.push({
+            imageHash: hash,
+            headline: card.headline,
+            description: card.description,
+            link: card.link,
+          });
+        }
+        resolvedCards = out;
+      }
+
+      if (!imageHash && !videoId && !resolvedCards) {
         return res.status(400).json({
           error:
-            "Could not resolve asset — provide image/video URL, hash, or libraryCreativeId",
+            "Could not resolve asset — provide image/video URL, hash, cards, or libraryCreativeId",
         });
       }
       void libCreativeType;
@@ -713,6 +809,7 @@ router.post(
           pageId,
           imageHash,
           videoId,
+          cards: resolvedCards,
           thumbnailUrl,
           message: creative.message,
           headline: creative.headline,
@@ -862,7 +959,16 @@ interface PublishPayload {
     videoId?: string;
     videoUrl?: string;
     thumbnailUrl?: string;
-    // Library reference — for either an image or video creative in the library
+    // Carousel inputs — 2-10 cards. Each card either has a pre-uploaded
+    // image_hash OR an imageUrl we re-upload to Meta on publish.
+    cards?: Array<{
+      imageHash?: string;
+      imageUrl?: string;
+      headline?: string;
+      description?: string;
+      link?: string;
+    }>;
+    // Library reference — image, video, or carousel
     libraryCreativeId?: string;
   };
 }

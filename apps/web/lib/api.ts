@@ -679,8 +679,19 @@ export interface PublishCampaignPayload {
     videoUrl?: string;
     videoId?: string;
     thumbnailUrl?: string;
-    /** Library reference — one of our Creative rows, image OR video. The
-     *  backend reads the row's type to pick the right asset path. */
+    /** Carousel cards (2-10). Each card has its own image (URL or hash)
+     *  plus optional headline / description / link. The ad-level message
+     *  + callToAction are shared across all cards. */
+    cards?: Array<{
+      imageHash?: string;
+      imageUrl?: string;
+      headline?: string;
+      description?: string;
+      link?: string;
+    }>;
+    /** Library reference — one of our Creative rows, image / video /
+     *  carousel. The backend reads the row's type to pick the right asset
+     *  path. */
     libraryCreativeId?: string;
   };
 }
