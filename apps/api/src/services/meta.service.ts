@@ -174,6 +174,27 @@ export interface MetaTargeting {
   /** Placement controls; omit for automatic placements (Meta's default
    *  recommendation). Set to e.g. `["facebook"]` for FB only. */
   publisher_platforms?: Array<"facebook" | "instagram" | "messenger" | "audience_network">;
+  /** Per-platform position picks. Meta requires that every entry in
+   *  `publisher_platforms` has a corresponding *_positions array. */
+  facebook_positions?: Array<
+    | "feed"
+    | "right_hand_column"
+    | "instant_article"
+    | "instream_video"
+    | "marketplace"
+    | "story"
+    | "search"
+    | "facebook_reels"
+    | "video_feeds"
+  >;
+  instagram_positions?: Array<
+    | "stream"
+    | "story"
+    | "explore"
+    | "reels"
+    | "igtv"
+    | "shop"
+  >;
   flexible_spec?: Array<{ interests?: Array<{ id: string }>; behaviors?: Array<{ id: string }> }>;
 }
 
@@ -646,6 +667,109 @@ class MetaAdsService {
   }
 
   /**
+   * Upload a video by URL. Meta fetches the asset itself and returns a
+   * `video_id` — the handle we pass into the ad creative spec later.
+   *
+   * Used when a creative already has a hosted asset (URL paste, or a video
+   * the user uploaded earlier and now reuses from the library).
+   *
+   * Note: videos transcode async — call `getVideoStatus(id)` and wait for
+   * `video_status === "ready"` before using the id in `createAdCreative`.
+   */
+  async uploadVideoFromUrl(
+    accessToken: string,
+    adAccountId: string,
+    videoUrl: string
+  ): Promise<{ id: string }> {
+    const accountPath = this.accountPath(adAccountId);
+    const body = new URLSearchParams({
+      file_url: videoUrl,
+      access_token: accessToken,
+    });
+    const data = await this.graphFetch<{ id: string }>(
+      `${GRAPH_BASE}/${accountPath}/advideos`,
+      { method: "POST", body }
+    );
+    return { id: data.id };
+  }
+
+  /**
+   * Upload a video by raw bytes. Multipart form-data POST to /advideos.
+   * Returns a `video_id` — same transcode-and-poll caveat as uploadVideoFromUrl.
+   */
+  async uploadVideoFromBytes(
+    accessToken: string,
+    adAccountId: string,
+    fileBuffer: Buffer,
+    filename: string,
+    mimeType: string
+  ): Promise<{ id: string }> {
+    const accountPath = this.accountPath(adAccountId);
+    const form = new FormData();
+    const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
+    form.append("source", blob, filename);
+    form.append("access_token", accessToken);
+    const data = await this.graphFetch<{ id: string }>(
+      `${GRAPH_BASE}/${accountPath}/advideos`,
+      { method: "POST", body: form }
+    );
+    return { id: data.id };
+  }
+
+  /**
+   * Fetch a streamable MP4 URL for a previously-uploaded video so we can
+   * play it back inside our app (not just at Meta ad-delivery time).
+   *
+   * The `source` field on a Graph video returns a signed URL — rotates
+   * every few hours, so callers should NOT cache it; fetch fresh per play
+   * session. `permalink_url` is the Facebook viewer URL we keep as a
+   * last-resort "open in new tab" fallback.
+   *
+   * Returns `null` for either field if the video hasn't transcoded yet
+   * (Meta omits `source` until status is "ready").
+   */
+  async getVideoSource(
+    accessToken: string,
+    videoId: string
+  ): Promise<{ source: string | null; permalinkUrl: string | null }> {
+    const url = `${GRAPH_BASE}/${videoId}?fields=source,permalink_url&access_token=${encodeURIComponent(accessToken)}`;
+    const data = await this.graphFetch<{
+      source?: string;
+      permalink_url?: string;
+    }>(url);
+    return {
+      source: data.source ?? null,
+      permalinkUrl: data.permalink_url ?? null,
+    };
+  }
+
+  /**
+   * Poll a video's processing status. Meta transcodes uploads asynchronously
+   * — values are "processing" | "ready" | "error". Returns `null` if the
+   * field isn't present yet (Meta sometimes 200s before the status row exists).
+   *
+   * Also returns a thumbnail URL when available (Meta auto-generates one we
+   * can use as the ad's poster image).
+   */
+  async getVideoStatus(
+    accessToken: string,
+    videoId: string
+  ): Promise<{
+    status: "processing" | "ready" | "error" | null;
+    thumbnailUrl: string | null;
+  }> {
+    const url = `${GRAPH_BASE}/${videoId}?fields=status,picture&access_token=${encodeURIComponent(accessToken)}`;
+    const data = await this.graphFetch<{
+      status?: { video_status?: string };
+      picture?: string;
+    }>(url);
+    const raw = data.status?.video_status;
+    const status =
+      raw === "ready" || raw === "processing" || raw === "error" ? raw : null;
+    return { status, thumbnailUrl: data.picture ?? null };
+  }
+
+  /**
    * Create a Lookalike Custom Audience from an existing seed audience.
    * Meta runs this asynchronously — `delivery_status` will show "pending"
    * for several minutes/hours after creation.
@@ -746,10 +870,16 @@ class MetaAdsService {
   }
 
   /**
-   * Create an ad creative (image + copy + link, owned by a Page).
+   * Create an ad creative (image OR video + copy + link, owned by a Page).
    *
-   * This is the "post" that runs in feeds. The combination of page_id +
-   * image_hash + message + headline + link defines the creative.
+   * This is the "post" that runs in feeds. Two shapes:
+   *   - Image:  `object_story_spec.link_data` with `image_hash`
+   *   - Video:  `object_story_spec.video_data` with `video_id` (+ thumbnail)
+   *
+   * Caller passes either `imageHash` (image ad) or `videoId` (video ad).
+   * Video ads also need a thumbnail; if `thumbnailUrl` is omitted we fall
+   * back to Meta's auto-generated picture (you should fetch it via
+   * `getVideoStatus` and pass it in for predictable results).
    */
   async createAdCreative(
     accessToken: string,
@@ -757,34 +887,61 @@ class MetaAdsService {
     params: {
       name: string;
       pageId: string;
-      imageHash: string;
       message: string; // body copy
       headline?: string;
       description?: string;
       linkUrl: string;
       callToAction?: MetaCallToActionType;
+      /** Provide one of imageHash OR videoId. */
+      imageHash?: string;
+      videoId?: string;
+      /** Video poster — required by Meta for video ads. */
+      thumbnailUrl?: string;
     }
   ): Promise<{ id: string }> {
-    const accountPath = this.accountPath(adAccountId);
-    const linkData: Record<string, unknown> = {
-      message: params.message,
-      link: params.linkUrl,
-      image_hash: params.imageHash,
-    };
-    if (params.headline) linkData.name = params.headline;
-    if (params.description) linkData.description = params.description;
-    if (params.callToAction) {
-      linkData.call_to_action = {
-        type: params.callToAction,
-        value: { link: params.linkUrl },
-      };
+    if (!params.imageHash && !params.videoId) {
+      throw new Error(
+        "createAdCreative: provide either imageHash (image ad) or videoId (video ad)"
+      );
     }
+
+    const accountPath = this.accountPath(adAccountId);
+    const callToAction = params.callToAction
+      ? {
+          type: params.callToAction,
+          value: { link: params.linkUrl },
+        }
+      : undefined;
+
+    let storySpec: Record<string, unknown>;
+    if (params.videoId) {
+      // Video ads use `video_data`. `title` maps to the ad's headline,
+      // `message` to the body copy. `image_url` is the poster shown before
+      // playback starts — Meta rejects video_data without it.
+      const videoData: Record<string, unknown> = {
+        video_id: params.videoId,
+        message: params.message,
+        link_description: params.description ?? undefined,
+        title: params.headline ?? undefined,
+      };
+      if (params.thumbnailUrl) videoData.image_url = params.thumbnailUrl;
+      if (callToAction) videoData.call_to_action = callToAction;
+      storySpec = { page_id: params.pageId, video_data: videoData };
+    } else {
+      const linkData: Record<string, unknown> = {
+        message: params.message,
+        link: params.linkUrl,
+        image_hash: params.imageHash,
+      };
+      if (params.headline) linkData.name = params.headline;
+      if (params.description) linkData.description = params.description;
+      if (callToAction) linkData.call_to_action = callToAction;
+      storySpec = { page_id: params.pageId, link_data: linkData };
+    }
+
     const body = new URLSearchParams({
       name: params.name,
-      object_story_spec: JSON.stringify({
-        page_id: params.pageId,
-        link_data: linkData,
-      }),
+      object_story_spec: JSON.stringify(storySpec),
       access_token: accessToken,
     });
     const created = await this.graphFetch<{ id: string }>(

@@ -12,6 +12,7 @@ import {
   Send,
   ChevronRight,
 } from "lucide-react";
+import { VideoThumbnailPlayer } from "@/components/ui/VideoThumbnailPlayer";
 
 /**
  * Renders a faithful mock of how an ad will look in Facebook Feed and
@@ -26,23 +27,39 @@ import {
 export function MetaAdPreview({
   pageName,
   imageUrl,
+  videoUrl,
+  videoThumbnailUrl,
+  videoId,
   message,
   headline,
   description,
   linkUrl,
   callToAction,
+  initialPlacement = "facebook",
 }: {
   pageName: string;
   imageUrl: string | null;
+  /** When set, the preview renders an inline video instead of an image. */
+  videoUrl?: string | null;
+  /** Used as the <video poster> — Meta's auto-generated thumbnail. */
+  videoThumbnailUrl?: string | null;
+  /** Meta video_id — used by the player to fetch a fresh signed MP4 URL
+   *  on demand (device-upload videos don't have a public stream URL). */
+  videoId?: string | null;
   message: string;
   headline: string;
   description: string;
   linkUrl: string;
   callToAction: string;
+  /** Which tab to land on initially. Driven by the wizard's placement
+   *  picker so "Reels & Stories only" auto-selects the Reels mockup
+   *  here instead of the default Facebook Feed. The user can still
+   *  flip tabs after — this is just the seed. */
+  initialPlacement?: "facebook" | "instagram" | "reels";
 }) {
-  const [placement, setPlacement] = useState<"facebook" | "instagram">(
-    "facebook"
-  );
+  const [placement, setPlacement] = useState<
+    "facebook" | "instagram" | "reels"
+  >(initialPlacement);
 
   // Strip protocol + path → just the bare domain to look like a real ad's
   // bottom row ("yourbrand.com" rather than "https://yourbrand.com/path").
@@ -86,24 +103,54 @@ export function MetaAdPreview({
           >
             Instagram
           </button>
+          <button
+            type="button"
+            onClick={() => setPlacement("reels")}
+            className={clsx(
+              "rounded-full px-3 py-1 text-xs font-bold transition",
+              placement === "reels"
+                ? "bg-slate-900 text-white shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            )}
+          >
+            Reels / Stories
+          </button>
         </div>
       </div>
 
       <div className="rounded-2xl bg-slate-100 p-4">
-        {placement === "facebook" ? (
+        {placement === "facebook" && (
           <FacebookFeedAd
             pageName={pageName}
             imageUrl={imageUrl}
+            videoUrl={videoUrl ?? null}
+            videoThumbnailUrl={videoThumbnailUrl ?? null}
+            videoId={videoId ?? null}
             message={message}
             headline={headline}
             description={description}
             displayDomain={displayDomain}
             callToAction={callToAction}
           />
-        ) : (
+        )}
+        {placement === "instagram" && (
           <InstagramFeedAd
             pageName={pageName}
             imageUrl={imageUrl}
+            videoUrl={videoUrl ?? null}
+            videoThumbnailUrl={videoThumbnailUrl ?? null}
+            videoId={videoId ?? null}
+            message={message}
+            callToAction={callToAction}
+          />
+        )}
+        {placement === "reels" && (
+          <ReelsAd
+            pageName={pageName}
+            imageUrl={imageUrl}
+            videoUrl={videoUrl ?? null}
+            videoThumbnailUrl={videoThumbnailUrl ?? null}
+            videoId={videoId ?? null}
             message={message}
             callToAction={callToAction}
           />
@@ -125,6 +172,9 @@ function PageAvatar({ pageName }: { pageName: string }) {
 function FacebookFeedAd(props: {
   pageName: string;
   imageUrl: string | null;
+  videoUrl: string | null;
+  videoThumbnailUrl: string | null;
+  videoId: string | null;
   message: string;
   headline: string;
   description: string;
@@ -134,6 +184,9 @@ function FacebookFeedAd(props: {
   const {
     pageName,
     imageUrl,
+    videoUrl,
+    videoThumbnailUrl,
+    videoId,
     message,
     headline,
     description,
@@ -170,9 +223,23 @@ function FacebookFeedAd(props: {
         </div>
       )}
 
-      {/* Image */}
+      {/* Asset render priority:
+            1. streamable video (videoUrl OR Meta videoId via source fetch)
+               → <video controls> (click-to-play, lazy fetch)
+            2. imageUrl → <img>
+            3. fallback */}
       <div className="relative bg-slate-200">
-        {imageUrl ? (
+        {videoUrl || videoId || videoThumbnailUrl ? (
+          <VideoThumbnailPlayer
+            thumbnailUrl={videoThumbnailUrl ?? null}
+            videoId={videoId ?? null}
+            directSrc={videoUrl ?? null}
+            alt={headline || "Video ad preview"}
+            className="aspect-[1.91/1] w-full"
+            buttonSize="md"
+            showBadge={false}
+          />
+        ) : imageUrl ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
             src={imageUrl}
@@ -181,7 +248,7 @@ function FacebookFeedAd(props: {
           />
         ) : (
           <div className="flex aspect-[1.91/1] w-full items-center justify-center bg-slate-200 text-xs text-slate-500">
-            No image — upload one in Step 5
+            No asset — pick a creative in Step 5
           </div>
         )}
       </div>
@@ -240,10 +307,21 @@ function EngagementButton({
 function InstagramFeedAd(props: {
   pageName: string;
   imageUrl: string | null;
+  videoUrl: string | null;
+  videoThumbnailUrl: string | null;
+  videoId: string | null;
   message: string;
   callToAction: string;
 }) {
-  const { pageName, imageUrl, message, callToAction } = props;
+  const {
+    pageName,
+    imageUrl,
+    videoUrl,
+    videoThumbnailUrl,
+    videoId,
+    message,
+    callToAction,
+  } = props;
 
   return (
     <div className="mx-auto max-w-sm overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
@@ -269,9 +347,21 @@ function InstagramFeedAd(props: {
         </button>
       </div>
 
-      {/* Image (square — IG default) */}
+      {/* Asset (square — IG default). Same render-priority chain as the
+          Facebook variant: playable video (lazy-fetched from Meta) > image
+          > fallback. */}
       <div className="relative bg-slate-200">
-        {imageUrl ? (
+        {videoUrl || videoId || videoThumbnailUrl ? (
+          <VideoThumbnailPlayer
+            thumbnailUrl={videoThumbnailUrl ?? null}
+            videoId={videoId ?? null}
+            directSrc={videoUrl ?? null}
+            alt="Video ad preview"
+            className="aspect-square w-full"
+            buttonSize="md"
+            showBadge={false}
+          />
+        ) : imageUrl ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
             src={imageUrl}
@@ -280,7 +370,7 @@ function InstagramFeedAd(props: {
           />
         ) : (
           <div className="flex aspect-square w-full items-center justify-center bg-slate-200 text-xs text-slate-500">
-            No image — upload one in Step 5
+            No asset — pick a creative in Step 5
           </div>
         )}
 
@@ -306,6 +396,111 @@ function InstagramFeedAd(props: {
           <span className="whitespace-pre-line text-slate-700">{message}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Reels / Stories ad mockup. Renders the 9:16 vertical placement used by
+ * Instagram Reels, Facebook Reels, and Stories on both platforms (they all
+ * share the same vertical immersive layout — page avatar + name in the
+ * top-left, side icons for like/comment/share/audio on the right, CTA
+ * button anchored at the bottom over the asset).
+ *
+ * If the user picked a horizontal/square video this mockup looks visibly
+ * wrong (the asset gets letterboxed inside the 9:16 frame) — that's an
+ * intentional truthful preview. The PlacementPicker also warns explicitly
+ * about that mismatch upstream.
+ */
+function ReelsAd(props: {
+  pageName: string;
+  imageUrl: string | null;
+  videoUrl: string | null;
+  videoThumbnailUrl: string | null;
+  videoId: string | null;
+  message: string;
+  callToAction: string;
+}) {
+  const {
+    pageName,
+    imageUrl,
+    videoUrl,
+    videoThumbnailUrl,
+    videoId,
+    message,
+    callToAction,
+  } = props;
+
+  const hasAsset =
+    Boolean(videoUrl || videoId || videoThumbnailUrl) || Boolean(imageUrl);
+
+  return (
+    <div className="mx-auto w-full max-w-[240px] overflow-hidden rounded-2xl bg-black shadow-lg ring-1 ring-slate-300">
+      {/* 9:16 stage */}
+      <div className="relative aspect-[9/16] w-full bg-slate-900">
+        {videoUrl || videoId || videoThumbnailUrl ? (
+          <VideoThumbnailPlayer
+            thumbnailUrl={videoThumbnailUrl ?? null}
+            videoId={videoId ?? null}
+            directSrc={videoUrl ?? null}
+            alt="Reels ad preview"
+            className="h-full w-full"
+            buttonSize="md"
+            showBadge={false}
+          />
+        ) : imageUrl ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={imageUrl}
+            alt="Ad creative"
+            className="h-full w-full object-contain"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">
+            No asset
+          </div>
+        )}
+
+        {/* Top-left: page chip */}
+        <div className="absolute left-3 top-3 flex items-center gap-2 text-white drop-shadow">
+          <div className="rounded-full bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 p-[1.5px]">
+            <div className="rounded-full bg-black p-[1.5px]">
+              <PageAvatar pageName={pageName} />
+            </div>
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-[12px] font-semibold">{pageName}</div>
+            <div className="text-[10px] opacity-80">Sponsored · Follow</div>
+          </div>
+        </div>
+
+        {/* Right rail: like / comment / share / audio */}
+        <div className="pointer-events-none absolute right-2 top-1/3 flex flex-col items-center gap-3 text-white drop-shadow">
+          <Heart className="h-5 w-5" />
+          <MessageCircle className="h-5 w-5" />
+          <Send className="h-5 w-5" />
+          <Bookmark className="h-5 w-5" />
+          <MoreHorizontal className="h-5 w-5" />
+        </div>
+
+        {/* Bottom: caption + CTA, sitting over a gradient scrim so they're
+            legible on any background. */}
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-3">
+          {message && (
+            <p className="line-clamp-3 text-[11px] leading-snug text-white">
+              {message}
+            </p>
+          )}
+          <button
+            type="button"
+            className="mt-2 w-full rounded-md bg-white py-1.5 text-[11px] font-bold text-slate-900 shadow-sm"
+          >
+            {callToAction || "Learn more"}
+          </button>
+        </div>
+
+        {!hasAsset && null}
+      </div>
     </div>
   );
 }

@@ -472,6 +472,96 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-22 â€” Video polish: aspect ratio + placement picker + Reels mockup
+
+Phase 1B Video shipped end-to-end but treated every video as a Feed ad with auto-placements. Reels and Stories were "supported" only in the sense that Meta would auto-place a 9:16 video there. The wizard had no UI for it, no preview for it, and no warning when a user picked Reels with a square video. This pass closes those gaps.
+
+**Aspect ratio detection on upload** â€” new `readVideoMetadata(file)` helper in [creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) mounts an off-DOM `<video preload="metadata">` and reads `videoWidth` / `videoHeight` / `duration` once the moov atom arrives (only a few KB transferred, no full upload). The Upload Creative modal probes the file when picked and shows an orientation pill ("Vertical Â· 9:16" / "Square Â· 1:1" / "Horizontal Â· 16:9") under the file name. On save, the dimensions + `videoOrientation` enum are persisted into `content` so the publish wizard can read them back without re-probing.
+
+**Placement picker in the publish wizard** â€” new `PlacementPicker` component in [PublishToMetaModal.tsx](apps/web/components/campaigns/publish/PublishToMetaModal.tsx) renders three cards: "All placements (recommended)", "Feed only", "Reels & Stories only". Selection drives a new `placement: PlacementMode` field on `WizardState`. The submit handler runs `placementToTargeting(mode)` to build the `publisher_platforms` + `facebook_positions` + `instagram_positions` arrays that Meta requires:
+- `all` â†’ omits position fields entirely (Advantage+ Placements)
+- `feed` â†’ `facebook: [feed, video_feeds]` + `instagram: [stream, explore]`
+- `reels_stories` â†’ `facebook: [facebook_reels, story]` + `instagram: [reels, story]`
+
+**Mismatch warning** â€” `PlacementPicker` compares the picked video's `videoWidth/videoHeight` (from library creative content) against the placement mode and shows an amber inline warning when they conflict: vertical 9:16 video + Feed-only placement, or horizontal/square video + Reels-only placement. Silent on `all`.
+
+**Reels / Stories preview mockup** â€” new `ReelsAd` component in [MetaAdPreview.tsx](apps/web/components/campaigns/publish/MetaAdPreview.tsx) renders a 9:16 vertical immersive ad: page chip top-left, side rail icons (like/comment/share/save), bottom gradient scrim with caption + full-width CTA button over the asset. The Review-step preview gained a third placement tab ("Reels / Stories") alongside Facebook / Instagram Feed. Uses the same `VideoThumbnailPlayer` so playback works the same way.
+
+**Backend type extensions** â€” `MetaTargeting` in [meta.service.ts](apps/api/src/services/meta.service.ts) and `MetaTargetingSpec` in [api.ts](apps/web/lib/api.ts) both gained `facebook_positions` and `instagram_positions` arrays. `createAdSet` JSON-stringifies the full targeting object, so no logic change â€” the new fields flow straight to Meta.
+
+**What's NOT in this slice:** dynamic creative / asset feed spec (uploading a vertical *and* horizontal video and letting Meta pick per placement). Beta users uploading one video per ad is fine; we can layer multi-asset on top once we see demand. Also no orientation badge on the library card â€” the publish wizard's mismatch warning is the load-bearing surface, not the library.
+
+`tsc --noEmit` clean on both `apps/api` and `apps/web`.
+
+---
+
+### 2026-06-22 â€” Video preview: device-uploaded videos are now playable in-app
+
+Initial Phase 1B Video shipped showed only the Meta-generated thumbnail for device-uploaded videos â€” the actual video wasn't playable anywhere in the app (cards, detail modal, publish-wizard preview). Two reasons:
+1. We were saving a `blob:` URL into `content.url`, which dies on page reload.
+2. Meta's `/advideos` upload doesn't return a public stream URL â€” only a `video_id` that Meta uses at ad-serve time.
+
+Fixed in two passes:
+
+**Pass 1 â€” stop saving the blob URL.** The Upload Creative modal now saves `content = { url: thumbnailUrl, videoId, thumbnailUrl }` â€” the canonical `url` becomes Meta's auto-generated thumbnail (Meta-hosted, public, persists). The publish wizard's `extractVideoFields` was hardened to ONLY treat the explicit `content.videoUrl` field as streamable, so a thumbnail URL doesn't accidentally end up inside `<video src>`.
+
+**Pass 2 â€” actually play the video.** Added a new endpoint and a shared component so any preview surface can play videos on demand:
+
+- [apps/api/src/services/meta.service.ts](apps/api/src/services/meta.service.ts) â€” new `getVideoSource(token, videoId)` returns `{ source, permalinkUrl }` from Meta's Graph fields (`source` is a signed MP4 URL that rotates; `permalink_url` is the FB viewer page used as a fallback when Meta declines the source).
+- [apps/api/src/routes/meta.ts](apps/api/src/routes/meta.ts) â€” `GET /meta/video-source/:videoId` route. Auth + workspace-scoped via the same `resolveMetaContext` as the existing video-status endpoint.
+- [apps/web/lib/api.ts](apps/web/lib/api.ts) â€” `getMetaVideoSource(videoId)` client method.
+- [apps/web/components/ui/VideoThumbnailPlayer.tsx](apps/web/components/ui/VideoThumbnailPlayer.tsx) â€” NEW shared component. Renders the thumbnail + play overlay; on click fetches the signed MP4 URL and swaps in `<video controls autoPlay>`. Three button-size variants (sm/md/lg) for the different surfaces. Accepts an optional `directSrc` to bypass the Meta fetch when we already have a streamable URL (URL-paste path). If Meta declines the source we surface the FB permalink as a "open on Facebook" fallback rather than showing a broken player.
+
+**Wired into 4 surfaces:**
+- Creatives library card preview (`PreviewArea` in [creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx))
+- Creative Detail Modal (large player)
+- MetaAdPreview Facebook Feed mock
+- MetaAdPreview Instagram Feed mock
+
+(The publish-wizard library *picker* card is left as a static thumbnail â€” it's a select button, not a player. Users can click the creative to pick it; playback happens in the Review step's MetaAdPreview.)
+
+**Why fetch-on-click instead of at mount?**
+- Meta's signed URLs rotate every few hours â€” caching at mount would break replay later in the session.
+- Each fetch is a real Graph API call (cost + rate-limit). Lazy fetch keeps the library grid cheap.
+
+**Data-model addition:** `Creative` type in the Creatives page now carries `videoId?: string`, populated via `extractVideoId(content)` during the API→UI mapping. Without this the preview surface had no way to fetch a fresh source URL for an existing video creative.
+
+`tsc --noEmit` clean on both `apps/api` and `apps/web`.
+
+---
+
+### 2026-06-22 â€” Phase 1B Video: end-to-end video ad pipeline (upload → publish)
+
+First half of Phase 1B. Users can now upload an MP4/MOV/WebM video to Meta and publish it as a video ad through the same publish wizard image ads already use. Carousel is the other half of 1B and is up next.
+
+**Backend changes:**
+- [apps/api/src/services/meta.service.ts](apps/api/src/services/meta.service.ts) â€” three new helpers:
+  - `uploadVideoFromUrl(token, accountId, videoUrl)` â†’ `{ id }` â€” Meta fetches the asset by URL.
+  - `uploadVideoFromBytes(token, accountId, buffer, filename, mimeType)` â†’ `{ id }` â€” multipart POST to `/act_{id}/advideos`.
+  - `getVideoStatus(token, videoId)` â†’ `{ status: "processing" | "ready" | "error" | null, thumbnailUrl }` â€” polls `/{video_id}?fields=status,picture` for transcode state and Meta's auto-generated poster.
+- `createAdCreative` rewritten to branch on `imageHash` vs `videoId`. Image ads build `object_story_spec.link_data` with `image_hash`; video ads build `object_story_spec.video_data` with `video_id` + `image_url` (poster) + `title` + `message` + `link_description`. Throws if neither is provided.
+- [apps/api/src/routes/meta.ts](apps/api/src/routes/meta.ts) â€” two new routes:
+  - `POST /meta/upload-video` (multer 200 MB cap for memory upload, separate from the 10 MB image instance) accepts a `video` field and forwards to `uploadVideoFromBytes`.
+  - `GET /meta/video-status/:videoId` polls Meta on the client's behalf so the browser never has to authenticate with Meta directly.
+- [apps/api/src/routes/campaigns.ts](apps/api/src/routes/campaigns.ts) â€” the publish handler now resolves any of `videoId | videoUrl | imageHash | imageUrl | libraryCreativeId` to either `imageHash` (image ad) or `videoId` (video ad). When resolving to a video, the handler polls `getVideoStatus` for up to 2 minutes; returns `502` on Meta transcode error and `504` on timeout. Pulls the auto-generated thumbnail when one isn't passed.
+
+**Web client + UI:**
+- [apps/web/lib/api.ts](apps/web/lib/api.ts) â€” `uploadMetaVideo(file, { onProgress })` (XHR-based so we can surface real upload-progress events; `fetch` doesn't yet expose them) and `getMetaVideoStatus(videoId)`. Extended `PublishCampaignPayload.creative` with `videoUrl`, `videoId`, `thumbnailUrl`.
+- [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) â€” `UploadCreativeModal` no longer disables device upload when type=VIDEO. Picks MP4/MOV/WebM up to 200 MB, uploads with progress meter, then polls transcode (up to 3 min) with phase-aware copy (*Uploading… 67%* → *Meta is processing the video…*). On success the creative is persisted with `content: { url, videoId, thumbnailUrl }` so the publish wizard can re-use `videoId` directly â€” no second upload.
+- [apps/web/components/campaigns/publish/PublishToMetaModal.tsx](apps/web/components/campaigns/publish/PublishToMetaModal.tsx):
+  - Wizard state now carries `creativeType`, `videoId`, `videoUrl`, `thumbnailUrl`.
+  - Library picker fetches both IMAGE and VIDEO creatives (parallel calls, merged + sorted by recency) and badges each card with "Image" / "Video" so the type is unmistakable.
+  - URL paste auto-detects video by extension (`.mp4|.mov|.webm|.m4v`) and routes into `videoUrl` instead of `imageUrl`. Preview swaps to `<video controls>` automatically.
+  - "Upload new" tab kept image-only at this surface with a small hint pointing video users to the Creatives tab's Upload Creative modal (where the transcode poll is wired). Avoids duplicating that flow in the wizard.
+  - Submit handler builds the asset half of the payload via a priority chain: `videoId > imageHash > videoUrl > imageUrl > libraryCreativeId`. Backend handles whichever it gets.
+- [apps/web/components/campaigns/publish/MetaAdPreview.tsx](apps/web/components/campaigns/publish/MetaAdPreview.tsx) â€” Facebook and Instagram mocks now render `<video controls poster={thumbnailUrl}>` when `videoUrl` is present, falling back to image / placeholder otherwise.
+
+**What's NOT in this slice:** AI prompt branching for video ("write a 15-sec script" vs ad copy). The existing AI copy prompt is platform/objective-aware but not asset-type-aware â€” response shape is the same `{ headlines, primary_texts, descriptions, ctas }` for both. Holding off on a video-specific prompt until we hear from a beta user that copy quality differs noticeably.
+
+`tsc --noEmit` clean on both `apps/api` and `apps/web`.
+
+---
+
 ### 2026-06-22 â€” Creative Detail Modal: variants are now re-pickable + inline editable
 
 The Edit mode added earlier only handled name + image attach â€” the headline / primary text / description / CTA variants were still read-only. The user can now re-pick which variant is the default *and* tweak text inline without regenerating from AI.

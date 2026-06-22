@@ -508,11 +508,14 @@ router.post(
     if (
       !creative.imageUrl &&
       !creative.imageHash &&
+      !creative.videoUrl &&
+      !creative.videoId &&
       !creative.libraryCreativeId
     ) {
-      return res
-        .status(400)
-        .json({ error: "creative needs imageUrl, imageHash, or libraryCreativeId" });
+      return res.status(400).json({
+        error:
+          "creative needs imageUrl, imageHash, videoUrl, videoId, or libraryCreativeId",
+      });
     }
 
     const token = metaService.decryptToken(campaign.adAccount.accessToken);
@@ -549,11 +552,26 @@ router.post(
     }
 
     try {
-      // ── 1. Resolve image → image_hash ───────────────────────────────
+      // ── 1. Resolve asset → image_hash OR video_id ──────────────────────
+      // The publish payload can carry either an image (imageHash/imageUrl)
+      // or a video (videoId/videoUrl), optionally via a library creative
+      // reference (libraryCreativeId). We figure out which kind of ad
+      // we're building here so the rest of the flow knows whether to
+      // upload to /adimages or /advideos.
       let imageHash: string | undefined = creative.imageHash;
+      let videoId: string | undefined = creative.videoId;
+      let thumbnailUrl: string | undefined = creative.thumbnailUrl;
       let imageUrlForResolution: string | undefined = creative.imageUrl;
+      let videoUrlForResolution: string | undefined = creative.videoUrl;
+      let libCreativeType: string | undefined;
 
-      if (!imageHash && creative.libraryCreativeId) {
+      if (
+        !imageHash &&
+        !videoId &&
+        !imageUrlForResolution &&
+        !videoUrlForResolution &&
+        creative.libraryCreativeId
+      ) {
         const libCreative = await prisma.creative.findFirst({
           where: {
             id: creative.libraryCreativeId,
@@ -565,22 +583,75 @@ router.post(
             .status(404)
             .json({ error: "Library creative not found in this workspace" });
         }
+        libCreativeType = libCreative.type;
         const content = (libCreative.content ?? {}) as Record<string, unknown>;
-        const resolved =
+        const url =
           typeof content.imageUrl === "string"
             ? content.imageUrl
             : typeof content.url === "string"
               ? content.url
               : null;
-        if (!resolved) {
+        if (!url) {
           return res
             .status(400)
-            .json({ error: "Library creative has no image URL" });
+            .json({ error: "Library creative has no media URL" });
         }
-        imageUrlForResolution = resolved;
+        if (libCreative.type === "VIDEO") {
+          videoUrlForResolution = url;
+        } else {
+          imageUrlForResolution = url;
+        }
       }
 
-      if (!imageHash && imageUrlForResolution) {
+      // Resolve to video_id when this is a video ad. Meta transcodes async,
+      // so we have to poll status before using the id in a creative — short
+      // timeout because the upstream upload should already have been done
+      // via /meta/upload-video (where the client did the long poll). This
+      // poll here is the fallback when the user pasted a videoUrl directly.
+      if (!videoId && videoUrlForResolution) {
+        const uploaded = await metaService.uploadVideoFromUrl(
+          token,
+          adAccountId,
+          videoUrlForResolution
+        );
+        videoId = uploaded.id;
+      }
+
+      if (videoId) {
+        // Wait until ready (or fail fast). We poll for up to ~2 minutes —
+        // longer than that means the user should retry from a finished
+        // upload via the Upload Creative flow.
+        const startedAt = Date.now();
+        const maxMs = 2 * 60 * 1000;
+        // Loop body is sequential by design — each iteration is one
+        // Graph fetch, and we sleep between. Disable the lint rule that
+        // would push us to Promise.all.
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const probe = await metaService.getVideoStatus(token, videoId);
+          if (probe.status === "ready") {
+            if (!thumbnailUrl && probe.thumbnailUrl) {
+              thumbnailUrl = probe.thumbnailUrl;
+            }
+            break;
+          }
+          if (probe.status === "error") {
+            return res.status(502).json({
+              error: "Meta failed to transcode the uploaded video",
+            });
+          }
+          if (Date.now() - startedAt > maxMs) {
+            return res.status(504).json({
+              error:
+                "Video is still processing on Meta — wait a minute and publish again",
+            });
+          }
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
+
+      // Resolve to image_hash for image ads.
+      if (!videoId && !imageHash && imageUrlForResolution) {
         const uploaded = await metaService.uploadImageFromUrl(
           token,
           adAccountId,
@@ -589,11 +660,13 @@ router.post(
         imageHash = uploaded.hash;
       }
 
-      if (!imageHash) {
-        return res
-          .status(400)
-          .json({ error: "Could not resolve image — provide imageUrl, imageHash, or libraryCreativeId" });
+      if (!imageHash && !videoId) {
+        return res.status(400).json({
+          error:
+            "Could not resolve asset — provide image/video URL, hash, or libraryCreativeId",
+        });
       }
+      void libCreativeType;
 
       // ── 2. Create Campaign on Meta ───────────────────────────────────
       const budgetNumber = Number(campaign.budget) || 0;
@@ -639,6 +712,8 @@ router.post(
           name: `${campaign.name} — Creative`,
           pageId,
           imageHash,
+          videoId,
+          thumbnailUrl,
           message: creative.message,
           headline: creative.headline,
           description: creative.description,
@@ -780,8 +855,14 @@ interface PublishPayload {
     description?: string;
     linkUrl?: string;
     callToAction?: import("../services/meta.service").MetaCallToActionType;
+    // Image-ad inputs (one of these resolves to image_hash)
     imageHash?: string;
     imageUrl?: string;
+    // Video-ad inputs (one of these resolves to video_id)
+    videoId?: string;
+    videoUrl?: string;
+    thumbnailUrl?: string;
+    // Library reference — for either an image or video creative in the library
     libraryCreativeId?: string;
   };
 }

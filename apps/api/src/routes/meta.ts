@@ -16,6 +16,15 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
 });
 
+// Separate multer for /upload-video. Meta accepts videos up to 4GB but
+// holding 4GB in process memory is a hard no — we cap at 200MB which covers
+// the vast majority of social-format videos (≤ 90sec, ≤ 4K). If users hit
+// the cap, they can host the file themselves and use the URL-paste path.
+const uploadVideo = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024, files: 1 },
+});
+
 const FRONTEND_URL =
   process.env.FRONTEND_URL ??
   process.env.WEB_ORIGIN ??
@@ -429,6 +438,106 @@ router.post(
         file.originalname || "upload.jpg",
         file.mimetype
       );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * POST /meta/upload-video — multipart upload of a video for use in a video ad.
+ *
+ * Body: multipart/form-data with field `video` containing the file.
+ * Returns: `{ id }` — Meta's `video_id`, used in `object_story_spec.video_data`.
+ *
+ * Important: Meta transcodes videos asynchronously. The returned id is NOT
+ * immediately usable in an ad — the client must poll `/meta/video-status/:id`
+ * until status is "ready" before publishing.
+ */
+router.post(
+  "/upload-video",
+  requireAuth,
+  uploadVideo.single("video"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const file = req.file;
+      if (!file) {
+        return res
+          .status(400)
+          .json({ error: "No video file uploaded (field name must be 'video')" });
+      }
+      if (!file.mimetype.startsWith("video/")) {
+        return res.status(400).json({ error: "Uploaded file must be a video" });
+      }
+      const result = await metaService.uploadVideoFromBytes(
+        ctx.token,
+        ctx.accountId,
+        file.buffer,
+        file.originalname || "upload.mp4",
+        file.mimetype
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /meta/video-status/:videoId — poll a video's transcode status.
+ *
+ * Returns `{ status, thumbnailUrl }`:
+ *   - status: "processing" | "ready" | "error" | null (Meta hasn't populated yet)
+ *   - thumbnailUrl: Meta's auto-generated poster, available once ready
+ *
+ * Clients should poll every 2–3 seconds with a hard timeout (~5 min) — short
+ * clips usually transcode in 10-30s, but Meta can take minutes for 4K/HEVC.
+ */
+router.get(
+  "/video-status/:videoId",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const { videoId } = req.params;
+      if (!videoId || !/^\d+$/.test(videoId)) {
+        return res.status(400).json({ error: "Invalid video id" });
+      }
+      const result = await metaService.getVideoStatus(ctx.token, videoId);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /meta/video-source/:videoId — fetch a playable MP4 URL for a video.
+ *
+ * Used by the in-app preview to actually play a video uploaded via /advideos
+ * (Meta doesn't return a public stream URL at upload time — we have to ask
+ * for `source` explicitly, and the signed URL rotates so it can't be cached
+ * client-side).
+ *
+ * Returns `{ source, permalinkUrl }` — either may be null if the video is
+ * still transcoding or Meta declines to share the source for this asset.
+ */
+router.get(
+  "/video-source/:videoId",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const { videoId } = req.params;
+      if (!videoId || !/^\d+$/.test(videoId)) {
+        return res.status(400).json({ error: "Invalid video id" });
+      }
+      const result = await metaService.getVideoSource(ctx.token, videoId);
       res.json(result);
     } catch (err) {
       next(err);

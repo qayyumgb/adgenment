@@ -78,8 +78,25 @@ interface WizardState {
   // Step 4 (schedule is taken from the campaign — confirmed here)
   // Step 5
   creativeSource: "upload" | "library" | "url";
+  /** Type of the chosen asset. Drives which fields downstream we use. */
+  creativeType: "IMAGE" | "VIDEO";
+  /** Placement preset — translated into publisher_platforms +
+   *  facebook_positions + instagram_positions at submit time. */
+  placement: PlacementMode;
+  /** Probed video dimensions when the picked creative is a video, used to
+   *  warn about placement-vs-aspect-ratio mismatches. */
+  videoWidth: number | null;
+  videoHeight: number | null;
   imageHash: string | null;
   imageUrl: string | null; // populated either from URL paste OR from upload preview
+  /** Video-ad inputs. `videoId` is Meta's already-uploaded handle (set when
+   *  the user picks a library video that was uploaded via Upload Creative).
+   *  `videoUrl` is set when the user pastes a public URL — the backend
+   *  uploads to Meta + polls transcode at publish time. `thumbnailUrl` is
+   *  Meta's auto-generated poster, surfaced after transcode. */
+  videoId: string | null;
+  videoUrl: string | null;
+  thumbnailUrl: string | null;
   libraryCreativeId: string | null;
   libraryCreativeName: string | null;
   headline: string;
@@ -99,6 +116,66 @@ interface WizardState {
   callToAction: MetaCallToAction;
   uploading: boolean;
   uploadFile: File | null;
+}
+
+/** Where the ad runs. Maps to Meta's publisher_platforms + positions
+ *  arrays at submit time. "all" defers to Meta's Advantage+ placements
+ *  recommendation, which is what 95% of advertisers should use unless they
+ *  have a specific format constraint (e.g. a 9:16-only video). */
+type PlacementMode = "all" | "feed" | "reels_stories";
+
+const PLACEMENT_OPTIONS: Array<{
+  value: PlacementMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "all",
+    label: "All placements",
+    description:
+      "Recommended. Meta picks the best mix of Feed, Reels, Stories and the rest.",
+  },
+  {
+    value: "feed",
+    label: "Feed only",
+    description: "Facebook + Instagram Feed. Square / 4:5 / 16:9 videos work best.",
+  },
+  {
+    value: "reels_stories",
+    label: "Reels & Stories only",
+    description:
+      "Vertical placements only. Needs a 9:16 video — square / landscape will fail delivery.",
+  },
+];
+
+/**
+ * Convert a PlacementMode to the Meta targeting fields. Returns the partial
+ * targeting object the caller merges into the full MetaTargetingSpec.
+ *
+ * For "all" we omit publisher_platforms entirely — Meta treats absence as
+ * "auto placements". For the constrained modes we pin BOTH the platform
+ * list AND the per-platform positions (Meta rejects an ad set that has
+ * publisher_platforms without matching positions arrays).
+ */
+function placementToTargeting(
+  mode: PlacementMode
+): Partial<MetaTargetingSpec> {
+  switch (mode) {
+    case "all":
+      return {};
+    case "feed":
+      return {
+        publisher_platforms: ["facebook", "instagram"],
+        facebook_positions: ["feed", "video_feeds"],
+        instagram_positions: ["stream", "explore"],
+      };
+    case "reels_stories":
+      return {
+        publisher_platforms: ["facebook", "instagram"],
+        facebook_positions: ["facebook_reels", "story"],
+        instagram_positions: ["reels", "story"],
+      };
+  }
 }
 
 const STEP_LABELS = [
@@ -220,9 +297,13 @@ export default function PublishToMetaModal({
         return true; // schedule is locked from the campaign
       case 4: {
         if (!state.message.trim() || !state.linkUrl.trim()) return false;
-        // Need at least one of: imageHash, imageUrl, libraryCreativeId
+        // Need at least one resolvable asset — image OR video, from any source.
         return Boolean(
-          state.imageHash || state.imageUrl || state.libraryCreativeId
+          state.imageHash ||
+            state.imageUrl ||
+            state.videoId ||
+            state.videoUrl ||
+            state.libraryCreativeId
         );
       }
       case 5:
@@ -297,7 +378,29 @@ export default function PublishToMetaModal({
             saved_audiences: state.savedAudiences.map((a) => ({ id: a.id })),
           }
         : {}),
+      // Placement preset → publisher_platforms + positions. Spread last
+      // so it overrides anything earlier (nothing should conflict today,
+      // but defensive). For "all" this is a no-op.
+      ...placementToTargeting(state.placement),
     };
+
+    // Build the asset half of the payload. Priority order (most specific
+    // → least): pre-resolved Meta handle (imageHash / videoId) > raw URL
+    // > library reference. Backend handles the resolution chain.
+    const assetFields: Partial<PublishCampaignPayload["creative"]> = (() => {
+      if (state.videoId) {
+        return {
+          videoId: state.videoId,
+          ...(state.thumbnailUrl ? { thumbnailUrl: state.thumbnailUrl } : {}),
+        };
+      }
+      if (state.imageHash) return { imageHash: state.imageHash };
+      if (state.videoUrl) return { videoUrl: state.videoUrl };
+      if (state.imageUrl) return { imageUrl: state.imageUrl };
+      if (state.libraryCreativeId)
+        return { libraryCreativeId: state.libraryCreativeId };
+      return {};
+    })();
 
     const creative: PublishCampaignPayload["creative"] = {
       message: state.message,
@@ -305,13 +408,7 @@ export default function PublishToMetaModal({
       description: state.description || undefined,
       linkUrl: state.linkUrl,
       callToAction: state.callToAction,
-      ...(state.imageHash
-        ? { imageHash: state.imageHash }
-        : state.libraryCreativeId
-          ? { libraryCreativeId: state.libraryCreativeId }
-          : state.imageUrl
-            ? { imageUrl: state.imageUrl }
-            : {}),
+      ...assetFields,
     };
 
     try {
@@ -487,8 +584,15 @@ function initialState(c: Campaign): WizardState {
     excludedCustomAudiences: [],
     savedAudiences: [],
     creativeSource: "library",
+    creativeType: "IMAGE",
+    placement: "all",
+    videoWidth: null,
+    videoHeight: null,
     imageHash: null,
     imageUrl: null,
+    videoId: null,
+    videoUrl: null,
+    thumbnailUrl: null,
     libraryCreativeId: null,
     libraryCreativeName: null,
     headline: c.name,
@@ -845,10 +949,27 @@ function Step5Creative({
 }) {
   const api = useApiClient();
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const creativesQ = useApi<CreativesResponse>(
+  // Fetch both IMAGE and VIDEO creatives. We make two calls and merge —
+  // the /creatives endpoint accepts a single `type` filter, so this is the
+  // simplest path until we add multi-type filtering on the backend.
+  const imagesQ = useApi<CreativesResponse>(
     (c) => c.getCreatives({ type: "IMAGE", limit: "20" }),
     []
   );
+  const videosQ = useApi<CreativesResponse>(
+    (c) => c.getCreatives({ type: "VIDEO", limit: "20" }),
+    []
+  );
+  const creativesLoading = imagesQ.loading || videosQ.loading;
+  const allCreatives = useMemo(() => {
+    const imgs = imagesQ.data?.creatives ?? [];
+    const vids = videosQ.data?.creatives ?? [];
+    // Show most-recent first across both types. Library creatives carry
+    // `createdAt` as ISO strings — string compare works for ISO-8601.
+    return [...imgs, ...vids].sort((a, b) =>
+      (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
+    );
+  }, [imagesQ.data, videosQ.data]);
 
   async function handleUpload(file: File) {
     patch({ uploading: true, uploadFile: file });
@@ -901,10 +1022,16 @@ function Step5Creative({
                   creativeSource: opt.value,
                   imageHash: null,
                   imageUrl: null,
+                  videoId: null,
+                  videoUrl: null,
+                  thumbnailUrl: null,
+                  videoWidth: null,
+                  videoHeight: null,
+                  creativeType: "IMAGE",
                   libraryCreativeId: null,
                   libraryCreativeName: null,
                   // Don't reset the copy fields — the user might want to keep
-                  // the AI-generated headline/body while switching the image
+                  // the AI-generated headline/body while switching the asset
                   // source. We only reset the *variant chips* because they're
                   // tied to a specific library creative.
                   headlineVariants: [],
@@ -930,22 +1057,23 @@ function Step5Creative({
       {/* Library picker */}
       {state.creativeSource === "library" && (
         <div>
-          {creativesQ.loading && (
+          {creativesLoading && (
             <div className="flex items-center gap-2 py-4 text-sm text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading creatives…
             </div>
           )}
-          {creativesQ.data && creativesQ.data.creatives.length === 0 && (
+          {!creativesLoading && allCreatives.length === 0 && (
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-center text-sm text-slate-500">
-              No image creatives in your library yet. Generate one in the
-              Creatives tab, or use Upload/URL instead.
+              No image or video creatives in your library yet. Generate one
+              in the Creatives tab, or use Upload/URL instead.
             </div>
           )}
-          {creativesQ.data && creativesQ.data.creatives.length > 0 && (
+          {allCreatives.length > 0 && (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-              {creativesQ.data.creatives.map((c) => {
+              {allCreatives.map((c) => {
                 const selected = state.libraryCreativeId === c.id;
-                const img = extractImageUrl(c);
+                const isVideo = c.type === "VIDEO";
+                const previewUrl = extractImageUrl(c);
                 // Auto-populate copy fields from the library creative's AI-
                 // generated content. Previously we only pulled the image and
                 // left headline/body/CTA whatever the user had typed — making
@@ -957,34 +1085,91 @@ function Step5Creative({
                   <button
                     key={c.id}
                     type="button"
-                    onClick={() =>
-                      patch({
-                        libraryCreativeId: c.id,
-                        libraryCreativeName: c.name,
-                        imageUrl: img,
-                        imageHash: null,
-                        ...copyPatch,
-                      })
-                    }
+                    onClick={() => {
+                      if (isVideo) {
+                        const v = extractVideoFields(c);
+                        patch({
+                          libraryCreativeId: c.id,
+                          libraryCreativeName: c.name,
+                          creativeType: "VIDEO",
+                          videoId: v.videoId,
+                          videoUrl: v.videoUrl,
+                          thumbnailUrl: v.thumbnailUrl,
+                          videoWidth: v.videoWidth,
+                          videoHeight: v.videoHeight,
+                          imageHash: null,
+                          imageUrl: null,
+                          ...copyPatch,
+                        });
+                      } else {
+                        patch({
+                          libraryCreativeId: c.id,
+                          libraryCreativeName: c.name,
+                          creativeType: "IMAGE",
+                          imageUrl: previewUrl,
+                          imageHash: null,
+                          videoId: null,
+                          videoUrl: null,
+                          thumbnailUrl: null,
+                          videoWidth: null,
+                          videoHeight: null,
+                          ...copyPatch,
+                        });
+                      }
+                    }}
                     className={clsx(
-                      "group overflow-hidden rounded-xl border-2 text-left transition",
+                      "group relative overflow-hidden rounded-xl border-2 text-left transition",
                       selected
                         ? "border-primary shadow-glow"
                         : "border-slate-200 hover:border-slate-300"
                     )}
                   >
-                    {img ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={img}
-                        alt={c.name}
-                        className="aspect-square w-full object-cover"
-                      />
+                    {previewUrl ? (
+                      // For both image AND video creatives the saved
+                      // `content.url` is a still image (Meta's thumbnail
+                      // for videos). Always render <img>; the type badge +
+                      // play overlay below communicate that it's video.
+                      <div className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={previewUrl}
+                          alt={c.name}
+                          className={clsx(
+                            "aspect-square w-full object-cover",
+                            isVideo && "bg-slate-900 object-contain"
+                          )}
+                        />
+                        {isVideo && (
+                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/15">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/95 shadow">
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                                className="ml-0.5 h-4 w-4 text-slate-900"
+                                aria-hidden
+                              >
+                                <path d="M8 5v14l11-7z" />
+                              </svg>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <div className="flex aspect-square w-full items-center justify-center bg-slate-100 text-xs text-slate-400">
                         No preview
                       </div>
                     )}
+                    {/* Type badge — so video vs image is unmistakable. */}
+                    <span
+                      className={clsx(
+                        "absolute left-2 top-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider shadow-sm backdrop-blur",
+                        isVideo
+                          ? "bg-slate-900/85 text-white"
+                          : "bg-white/90 text-slate-700"
+                      )}
+                    >
+                      {isVideo ? "Video" : "Image"}
+                    </span>
                     <div className="truncate p-2 text-[11px] font-semibold text-slate-700">
                       {c.name}
                     </div>
@@ -994,10 +1179,12 @@ function Step5Creative({
             </div>
           )}
 
-          {/* Library creative is selected but has no image — guide the user
-              to add one. Switching tabs preserves headline/body/description
-              so the AI copy survives the source switch. */}
-          {state.libraryCreativeId && !state.imageUrl && (
+          {/* Library creative is selected but has no asset — guide the user
+              to add one. Skipped for video creatives since they always have
+              a videoId or videoUrl by the time they reach the library. */}
+          {state.libraryCreativeId &&
+            state.creativeType === "IMAGE" &&
+            !state.imageUrl && (
             <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
               <ImageIcon
                 className="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
@@ -1029,9 +1216,23 @@ function Step5Creative({
         </div>
       )}
 
-      {/* Upload */}
+      {/* Upload — image-only at this surface; videos go through the
+          Creatives tab → Upload Creative modal (where we run the transcode
+          poll properly), then get picked from Library here. */}
       {state.creativeSource === "upload" && (
         <div>
+          <div className="mb-2 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+            <ImageIcon
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400"
+              strokeWidth={2.25}
+            />
+            <span>
+              For <strong>video ads</strong>, upload from{" "}
+              <strong>Creatives → Upload Creative</strong> first, then pick the
+              video from <strong>Pick from library</strong> here. That flow
+              waits for Meta's transcode to finish.
+            </span>
+          </div>
           <input
             type="file"
             ref={fileRef}
@@ -1091,35 +1292,17 @@ function Step5Creative({
         </div>
       )}
 
-      {/* URL paste */}
+      {/* URL paste — auto-detects image vs video from extension. Falls back
+          to image when the URL doesn't end in a known video extension; the
+          worst case is the backend image-uploads a video URL and Meta
+          rejects it with a clear error. */}
       {state.creativeSource === "url" && (
-        <div>
-          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
-            Public image URL
-          </label>
-          <input
-            type="url"
-            value={state.imageUrl ?? ""}
-            onChange={(e) => patch({ imageUrl: e.target.value, imageHash: null, libraryCreativeId: null })}
-            placeholder="https://example.com/image.jpg"
-            className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
-          />
-          <p className="mt-1 text-[11px] text-slate-500">
-            Meta will download the image from this URL on publish.
-          </p>
-          {state.imageUrl && state.imageUrl.startsWith("http") && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={state.imageUrl}
-              alt="Preview"
-              className="mt-3 max-h-60 rounded-lg border border-slate-200 object-contain"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = "none";
-              }}
-            />
-          )}
-        </div>
+        <UrlPasteTab state={state} patch={patch} />
       )}
+
+      {/* Placement picker — controls where the ad runs. Maps to Meta's
+          publisher_platforms + positions arrays at submit time. */}
+      <PlacementPicker state={state} patch={patch} />
 
       {/* Copy fields */}
       <div className="space-y-3 border-t border-slate-100 pt-4">
@@ -1362,6 +1545,11 @@ function Step6Review({
       <MetaAdPreview
         pageName={state.pageName || "Your Page"}
         imageUrl={state.imageUrl}
+        videoUrl={state.creativeType === "VIDEO" ? state.videoUrl : null}
+        videoThumbnailUrl={
+          state.creativeType === "VIDEO" ? state.thumbnailUrl : null
+        }
+        videoId={state.creativeType === "VIDEO" ? state.videoId : null}
         message={state.message}
         headline={state.headline}
         description={state.description}
@@ -1369,6 +1557,12 @@ function Step6Review({
         callToAction={
           CTA_OPTIONS.find((c) => c.value === state.callToAction)?.label ??
           state.callToAction
+        }
+        // Default the preview tab to match the Step 5 placement choice.
+        // "reels_stories" → Reels tab; everything else → Facebook Feed.
+        // User can still flip tabs after — this is just the seed.
+        initialPlacement={
+          state.placement === "reels_stories" ? "reels" : "facebook"
         }
       />
     </div>
@@ -1824,6 +2018,183 @@ function SavedAudiencePicker({
 
 /* ─────────── helpers ─────────── */
 
+/**
+ * Where the ad will run. Three preset options instead of the 30+
+ * checkbox grid Ads Manager shows — beta users don't need granular per-
+ * position toggles, and "all" is the right default for almost everyone.
+ *
+ * Also surfaces an aspect-ratio warning when the picked placement is
+ * incompatible with the picked video's orientation:
+ *   - "feed" + vertical 9:16 video → Meta will letterbox the video
+ *   - "reels_stories" + horizontal/square video → Reels delivery skipped
+ */
+function PlacementPicker({
+  state,
+  patch,
+}: {
+  state: WizardState;
+  patch: (u: Partial<WizardState>) => void;
+}) {
+  // Compute the aspect-ratio mismatch hint, if any. We only show it when
+  // the user explicitly picked a placement that filters by orientation
+  // and the video doesn't match — silent on "all".
+  const mismatch = (() => {
+    if (state.creativeType !== "VIDEO") return null;
+    if (!state.videoWidth || !state.videoHeight) return null;
+    const ratio = state.videoWidth / state.videoHeight;
+    const isVertical = ratio < 0.85;
+    if (state.placement === "feed" && isVertical) {
+      return "Your video is vertical (9:16). Feed placements expect square or horizontal — Meta will letterbox it.";
+    }
+    if (state.placement === "reels_stories" && !isVertical) {
+      return "Your video isn't 9:16 vertical. Reels & Stories will skip delivery for this ad.";
+    }
+    return null;
+  })();
+
+  return (
+    <div className="border-t border-slate-100 pt-4">
+      <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-500">
+        Where it runs
+      </label>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        {PLACEMENT_OPTIONS.map((opt) => {
+          const selected = state.placement === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => patch({ placement: opt.value })}
+              className={clsx(
+                "rounded-xl border-2 p-3 text-left transition",
+                selected
+                  ? "border-primary bg-primary/5 shadow-glow"
+                  : "border-slate-200 bg-white hover:border-slate-300"
+              )}
+            >
+              <div
+                className={clsx(
+                  "text-xs font-bold",
+                  selected ? "text-primary" : "text-slate-900"
+                )}
+              >
+                {opt.label}
+              </div>
+              <div className="mt-1 text-[10px] leading-snug text-slate-500">
+                {opt.description}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {mismatch && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-[11px] leading-relaxed text-amber-900">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="mt-0.5 h-3.5 w-3.5 shrink-0"
+            aria-hidden
+          >
+            <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <span>{mismatch}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * URL paste tab — supports both image + video URLs. We auto-detect the
+ * asset type from the file extension so the user doesn't have to flip a
+ * toggle. The detected type drives:
+ *   - which wizard state field gets populated (imageUrl vs videoUrl)
+ *   - whether the preview renders <img> or <video>
+ *   - the help text + placeholder
+ */
+function UrlPasteTab({
+  state,
+  patch,
+}: {
+  state: WizardState;
+  patch: (u: Partial<WizardState>) => void;
+}) {
+  const VIDEO_EXT = /\.(mp4|mov|webm|m4v)(\?|#|$)/i;
+  // Whichever side currently has a value is the live URL we render.
+  const liveUrl = state.videoUrl ?? state.imageUrl ?? "";
+  const looksLikeVideo = VIDEO_EXT.test(liveUrl);
+
+  function handleChange(url: string) {
+    const trimmed = url.trim();
+    if (VIDEO_EXT.test(trimmed)) {
+      patch({
+        creativeType: "VIDEO",
+        videoUrl: trimmed,
+        imageUrl: null,
+        imageHash: null,
+        videoId: null,
+        thumbnailUrl: null,
+        libraryCreativeId: null,
+        libraryCreativeName: null,
+      });
+    } else {
+      patch({
+        creativeType: "IMAGE",
+        imageUrl: trimmed,
+        videoUrl: null,
+        videoId: null,
+        thumbnailUrl: null,
+        imageHash: null,
+        libraryCreativeId: null,
+        libraryCreativeName: null,
+      });
+    }
+  }
+
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+        Public image or video URL
+      </label>
+      <input
+        type="url"
+        value={liveUrl}
+        onChange={(e) => handleChange(e.target.value)}
+        placeholder="https://example.com/asset.jpg  (or .mp4, .mov, .webm)"
+        className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
+      />
+      <p className="mt-1 text-[11px] text-slate-500">
+        Meta downloads + processes the asset on publish. Video URLs are
+        auto-detected by extension; ad publishing will wait for Meta's
+        transcode (usually 10–30 seconds).
+      </p>
+      {liveUrl.startsWith("http") &&
+        (looksLikeVideo ? (
+          <video
+            src={liveUrl}
+            controls
+            playsInline
+            muted
+            preload="metadata"
+            className="mt-3 max-h-60 w-full rounded-lg border border-slate-200 bg-slate-900 object-contain"
+          />
+        ) : (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={liveUrl}
+            alt="Preview"
+            className="mt-3 max-h-60 rounded-lg border border-slate-200 object-contain"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
+          />
+        ))}
+    </div>
+  );
+}
+
 function extractImageUrl(c: Creative): string | null {
   if (!c.content || typeof c.content !== "object") return null;
   const obj = c.content as Record<string, unknown>;
@@ -1831,6 +2202,50 @@ function extractImageUrl(c: Creative): string | null {
   if (typeof obj.url === "string") return obj.url;
   if (typeof obj.image === "string") return obj.image;
   return null;
+}
+
+/**
+ * Pull video-asset fields off a library creative. Returns the Meta video_id
+ * if the upload modal already uploaded it (the common path), plus a thumbnail
+ * URL if Meta auto-generated one and the preview URL we display in-app.
+ *
+ * If the library creative was saved via URL paste, only `url` will be set —
+ * the publish backend then uploads to Meta + polls transcode at publish time.
+ */
+function extractVideoFields(c: Creative): {
+  videoId: string | null;
+  videoUrl: string | null;
+  thumbnailUrl: string | null;
+  videoWidth: number | null;
+  videoHeight: number | null;
+} {
+  if (!c.content || typeof c.content !== "object")
+    return {
+      videoId: null,
+      videoUrl: null,
+      thumbnailUrl: null,
+      videoWidth: null,
+      videoHeight: null,
+    };
+  const obj = c.content as Record<string, unknown>;
+  // `videoUrl` is the ONLY playable-video field. Don't fall back to
+  // `content.url` here — for device-uploaded videos, `content.url` is a
+  // thumbnail (image) and feeding it into `<video src>` produces a broken
+  // player. The wizard's MetaAdPreview falls through to thumbnail-as-img
+  // when videoUrl is null but thumbnailUrl is set.
+  const thumb =
+    typeof obj.thumbnailUrl === "string"
+      ? obj.thumbnailUrl
+      : typeof obj.url === "string"
+        ? obj.url
+        : null;
+  return {
+    videoId: typeof obj.videoId === "string" ? obj.videoId : null,
+    videoUrl: typeof obj.videoUrl === "string" ? obj.videoUrl : null,
+    thumbnailUrl: thumb,
+    videoWidth: typeof obj.videoWidth === "number" ? obj.videoWidth : null,
+    videoHeight: typeof obj.videoHeight === "number" ? obj.videoHeight : null,
+  };
 }
 
 /**

@@ -488,6 +488,72 @@ export function useApiClient() {
       }
       return res.json();
     },
+    /**
+     * Upload a video file to Meta (forwarded to /advideos by our API).
+     * Returns `{ id }` — Meta's `video_id`. Note: the video isn't usable in
+     * an ad immediately — call `getMetaVideoStatus(id)` until `status === "ready"`.
+     */
+    uploadMetaVideo: async (
+      file: File,
+      opts?: { onProgress?: (pct: number) => void }
+    ): Promise<{ id: string }> => {
+      const token = await getToken();
+      const form = new FormData();
+      form.append("video", file);
+      // Use XHR (not fetch) so we can report upload progress — videos are
+      // large enough that an indeterminate spinner is a bad UX. fetch()
+      // doesn't expose upload progress events on browsers yet.
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${API_BASE}/api/meta/upload-video`, true);
+        if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        // Don't set Content-Type — XHR fills in the multipart boundary.
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && opts?.onProgress) {
+            opts.onProgress(Math.round((e.loaded / e.total) * 100));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText) as { id: string });
+            } catch {
+              reject(new Error("Invalid response from upload endpoint"));
+            }
+            return;
+          }
+          let msg = `Upload failed (${xhr.status})`;
+          try {
+            const body = JSON.parse(xhr.responseText) as { error?: string };
+            if (body.error) msg = body.error;
+          } catch {
+            // ignore
+          }
+          reject(new Error(msg));
+        };
+        xhr.onerror = () => reject(new Error("Network error during upload"));
+        xhr.send(form);
+      });
+    },
+    /**
+     * Poll a Meta video's transcode status. Returns:
+     *   - status: "processing" | "ready" | "error" | null (not populated yet)
+     *   - thumbnailUrl: Meta-generated poster (only present once ready)
+     */
+    getMetaVideoStatus: (videoId: string) =>
+      apiFetch<{
+        status: "processing" | "ready" | "error" | null;
+        thumbnailUrl: string | null;
+      }>(`/meta/video-status/${encodeURIComponent(videoId)}`),
+    /**
+     * Fetch a fresh signed MP4 URL for a previously-uploaded video. Don't
+     * cache the result — the URL rotates. Call this on demand right before
+     * playback (eg. when the user clicks the play overlay).
+     */
+    getMetaVideoSource: (videoId: string) =>
+      apiFetch<{ source: string | null; permalinkUrl: string | null }>(
+        `/meta/video-source/${encodeURIComponent(videoId)}`
+      ),
     launchCampaign: (id: string, status: "ACTIVE" | "PAUSED" = "ACTIVE") =>
       apiFetch<{ success: boolean; campaign: Campaign }>(
         `/campaigns/${id}/launch`,
@@ -570,6 +636,27 @@ export interface MetaTargetingSpec {
   excluded_custom_audiences?: Array<{ id: string }>;
   saved_audiences?: Array<{ id: string }>;
   publisher_platforms?: Array<"facebook" | "instagram" | "messenger" | "audience_network">;
+  /** Position picks per platform — required when publisher_platforms is set.
+   *  Omit both arrays for Meta's "automatic placements" (recommended). */
+  facebook_positions?: Array<
+    | "feed"
+    | "right_hand_column"
+    | "instant_article"
+    | "instream_video"
+    | "marketplace"
+    | "story"
+    | "search"
+    | "facebook_reels"
+    | "video_feeds"
+  >;
+  instagram_positions?: Array<
+    | "stream"
+    | "story"
+    | "explore"
+    | "reels"
+    | "igtv"
+    | "shop"
+  >;
 }
 
 export interface PublishCampaignPayload {
@@ -581,11 +668,19 @@ export interface PublishCampaignPayload {
     description?: string;
     linkUrl: string;
     callToAction?: MetaCallToAction;
-    /** Choose ONE: imageUrl (public URL Meta will download) OR
-     *  imageHash (pre-uploaded to Meta) OR libraryCreativeId (one of
-     *  our existing Creative rows — backend resolves to its imageUrl). */
+    /** Image-ad inputs — choose ONE: imageUrl (public URL Meta will
+     *  download) OR imageHash (pre-uploaded to Meta). */
     imageUrl?: string;
     imageHash?: string;
+    /** Video-ad inputs — choose ONE: videoUrl (Meta downloads it) OR
+     *  videoId (pre-uploaded via /meta/upload-video). When using a video
+     *  the backend also needs a thumbnail; if you don't pass thumbnailUrl
+     *  it falls back to Meta's auto-generated poster. */
+    videoUrl?: string;
+    videoId?: string;
+    thumbnailUrl?: string;
+    /** Library reference — one of our Creative rows, image OR video. The
+     *  backend reads the row's type to pick the right asset path. */
     libraryCreativeId?: string;
   };
 }

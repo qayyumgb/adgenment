@@ -35,6 +35,7 @@ import type {
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import EmptyState from "@/components/ui/EmptyState";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { VideoThumbnailPlayer } from "@/components/ui/VideoThumbnailPlayer";
 
 /* ───────────────────────────────────────── */
 /* Types & Mock Data                          */
@@ -54,8 +55,14 @@ type Creative = {
   ctr: number;
   impressions: number;
   copy?: string;
-  /** Public asset URL — present for uploaded image/video creatives. */
+  /** Public asset URL — present for uploaded image/video creatives. For
+   *  videos this is the Meta-hosted *thumbnail* (still image), not a
+   *  streamable URL. Use `videoId` + the /meta/video-source endpoint to
+   *  fetch a playable URL on demand. */
   url?: string;
+  /** Meta video_id for device-uploaded videos. Use with the video-source
+   *  endpoint to get a playable MP4 URL. */
+  videoId?: string;
   gradient: string;
   createdAt: string;
 };
@@ -115,6 +122,12 @@ function extractMediaUrl(content: unknown): string | undefined {
   return undefined;
 }
 
+function extractVideoId(content: unknown): string | undefined {
+  if (!content || typeof content !== "object") return undefined;
+  const obj = content as Record<string, unknown>;
+  return typeof obj.videoId === "string" ? obj.videoId : undefined;
+}
+
 function mapApiStatus(s: ApiCreativeStatus): Status {
   switch (s) {
     case "APPROVED":
@@ -145,6 +158,7 @@ function mapApiCreative(c: ApiCreative): Creative {
     impressions: 0,
     copy: extractCopy(c.content),
     url: extractMediaUrl(c.content),
+    videoId: extractVideoId(c.content),
     gradient: gradientFor(c.id),
     createdAt: c.createdAt.slice(0, 10),
   };
@@ -501,7 +515,64 @@ export default function CreativesPage() {
 
 /** Hard limits — fail fast client-side instead of waiting for Meta to 400. */
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // Meta's hard cap on /adimages
+const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // Matches the API route's multer limit
 const ACCEPTED_IMAGE_TYPES = "image/jpeg,image/jpg,image/png,image/webp,image/gif";
+const ACCEPTED_VIDEO_TYPES = "video/mp4,video/quicktime,video/webm";
+
+/**
+ * Read width / height / duration off a picked video file by mounting an
+ * off-DOM <video> with `preload="metadata"`. Cheap (only the moov atom is
+ * fetched, not the bytes). Returns null on decode error so callers can fall
+ * back to "unknown orientation" gracefully.
+ *
+ * We use this to (a) save the aspect ratio with the creative so the publish
+ * wizard can later warn about placement mismatches and (b) drive the orient-
+ * ation badge in the upload UI.
+ */
+async function readVideoMetadata(
+  file: File
+): Promise<{ width: number; height: number; duration: number } | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    const objectUrl = URL.createObjectURL(file);
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+    video.onloadedmetadata = () => {
+      const result = {
+        width: video.videoWidth,
+        height: video.videoHeight,
+        duration: video.duration,
+      };
+      cleanup();
+      resolve(
+        result.width > 0 && result.height > 0 ? result : null
+      );
+    };
+    video.onerror = () => {
+      cleanup();
+      resolve(null);
+    };
+    video.src = objectUrl;
+  });
+}
+
+/**
+ * Classify a video's aspect ratio into the placement bucket Meta supports.
+ * Used in the upload UI (orientation badge) and at publish time (mismatch
+ * warning when the user targets Reels with a 16:9 video).
+ *
+ *   ≥ 1.5  → "horizontal" (16:9 ish) — Feed eligible, NOT Reels/Stories
+ *   ≥ 0.85 → "square"     (1:1 or 4:5) — Feed eligible
+ *   < 0.85 → "vertical"   (9:16 ish) — Reels/Stories eligible
+ */
+type VideoOrientation = "horizontal" | "square" | "vertical";
+function classifyOrientation(width: number, height: number): VideoOrientation {
+  const ratio = width / height;
+  if (ratio >= 1.5) return "horizontal";
+  if (ratio >= 0.85) return "square";
+  return "vertical";
+}
 
 type UploadTab = "device" | "url";
 
@@ -527,6 +598,20 @@ function UploadCreativeModal({
   const [isDragging, setIsDragging] = useState(false);
   // Shared
   const [submitting, setSubmitting] = useState(false);
+  // Video upload progress / Meta transcode polling state — only set during
+  // a video submit. `phase` drives the spinner copy so users understand
+  // *why* we're still spinning ("Uploading…" vs "Meta is processing…").
+  const [uploadPct, setUploadPct] = useState(0);
+  const [phase, setPhase] = useState<"upload" | "processing" | null>(null);
+  // Probed dimensions of the picked video — used for the orientation badge
+  // (so the user sees "Vertical · 9:16" vs "Horizontal · 16:9" before they
+  // commit). Re-probed every time `file` changes.
+  const [videoMeta, setVideoMeta] = useState<{
+    width: number;
+    height: number;
+    duration: number;
+    orientation: VideoOrientation;
+  } | null>(null);
 
   // Reset state every time the modal opens so a previous in-flight submit
   // doesn't leak through.
@@ -541,6 +626,9 @@ function UploadCreativeModal({
       setSubmitting(false);
       setPreviewError(false);
       setIsDragging(false);
+      setUploadPct(0);
+      setPhase(null);
+      setVideoMeta(null);
     }
   }, [open]);
 
@@ -556,12 +644,32 @@ function UploadCreativeModal({
     return () => URL.revokeObjectURL(objUrl);
   }, [file]);
 
-  // Device upload only supports images right now (Meta's /adimages endpoint).
-  // If the user picks "Video" type, force them onto the URL tab — building
-  // video upload requires Meta's /advideos endpoint, which is Phase 1B work.
+  // Probe video metadata as soon as a file is picked (only for VIDEO type).
+  // The result hydrates the orientation badge in the upload card so users
+  // can sanity-check aspect ratio *before* a 30-second Meta upload.
   useEffect(() => {
-    if (type === "VIDEO" && tab === "device") setTab("url");
-  }, [type, tab]);
+    if (!file || type !== "VIDEO") {
+      setVideoMeta(null);
+      return;
+    }
+    let cancelled = false;
+    void readVideoMetadata(file).then((m) => {
+      if (cancelled || !m) return;
+      setVideoMeta({
+        ...m,
+        orientation: classifyOrientation(m.width, m.height),
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [file, type]);
+
+  // Clear the picked file when the user flips IMAGE ↔ VIDEO so we never end
+  // up with a JPEG selected while the type says VIDEO (and vice-versa).
+  useEffect(() => {
+    setFile(null);
+  }, [type]);
 
   // Lightweight client-side URL validity check. We only care that the string
   // looks like an HTTPS URL — actual reachability is the user's problem (and
@@ -576,15 +684,28 @@ function UploadCreativeModal({
       setFile(null);
       return;
     }
-    if (!picked.type.startsWith("image/")) {
-      toast.error("Pick an image file (JPEG, PNG, WebP, GIF)");
-      return;
-    }
-    if (picked.size > MAX_IMAGE_BYTES) {
-      toast.error(
-        `Image is ${(picked.size / 1024 / 1024).toFixed(1)} MB — Meta caps uploads at 8 MB`
-      );
-      return;
+    if (type === "IMAGE") {
+      if (!picked.type.startsWith("image/")) {
+        toast.error("Pick an image file (JPEG, PNG, WebP, GIF)");
+        return;
+      }
+      if (picked.size > MAX_IMAGE_BYTES) {
+        toast.error(
+          `Image is ${(picked.size / 1024 / 1024).toFixed(1)} MB — Meta caps uploads at 8 MB`
+        );
+        return;
+      }
+    } else {
+      if (!picked.type.startsWith("video/")) {
+        toast.error("Pick a video file (MP4, MOV, or WebM)");
+        return;
+      }
+      if (picked.size > MAX_VIDEO_BYTES) {
+        toast.error(
+          `Video is ${(picked.size / 1024 / 1024).toFixed(0)} MB — we cap device uploads at 200 MB. Host it yourself and use Paste URL instead.`
+        );
+        return;
+      }
     }
     setFile(picked);
     // Auto-name from filename if the user hasn't typed one yet.
@@ -611,30 +732,114 @@ function UploadCreativeModal({
 
     setSubmitting(true);
     try {
-      // Resolve the final asset URL — either by uploading to Meta, or by
-      // taking the user-pasted URL verbatim.
-      let finalUrl: string;
-      if (tab === "device") {
-        if (!file) {
-          toast.error("Pick a file to upload");
-          setSubmitting(false);
-          return;
+      // The shape we persist on the Creative row varies by asset type:
+      //   - IMAGE: { url } — a hosted URL the publish wizard re-uploads to
+      //     Meta on publish (image_hash is account-scoped so we don't cache).
+      //   - VIDEO: { url, videoId, thumbnailUrl } — videoId is Meta's
+      //     handle (account-scoped); the publish wizard uses it directly
+      //     and skips re-upload. `url` is kept for the in-app preview.
+      let content: Record<string, unknown>;
+
+      if (type === "IMAGE") {
+        if (tab === "device") {
+          if (!file) {
+            toast.error("Pick a file to upload");
+            setSubmitting(false);
+            return;
+          }
+          setPhase("upload");
+          const result = await api.uploadMetaImage(file);
+          content = { url: result.url };
+        } else {
+          if (!looksLikeUrl) {
+            toast.error("Paste a public HTTPS URL to the asset");
+            setSubmitting(false);
+            return;
+          }
+          content = { url: url.trim() };
         }
-        const result = await api.uploadMetaImage(file);
-        finalUrl = result.url;
       } else {
-        if (!looksLikeUrl) {
-          toast.error("Paste a public HTTPS URL to the asset");
-          setSubmitting(false);
-          return;
+        // VIDEO path — two flavors: device upload (file → /upload-video,
+        // then poll transcode) and URL paste (defer upload to publish time
+        // since we don't have Meta context at this point in the URL flow
+        // we could trigger it server-side, but keeping it simple: pasted
+        // URLs get re-uploaded when the user hits Publish).
+        if (tab === "device") {
+          if (!file) {
+            toast.error("Pick a video to upload");
+            setSubmitting(false);
+            return;
+          }
+          // Probe the video locally for width/height before we ship the
+          // bytes. Cheap (~1ms after the metadata atom arrives), and lets
+          // us save the orientation server-side so the publish wizard can
+          // later warn if placements + aspect ratio mismatch.
+          const meta = await readVideoMetadata(file);
+          setPhase("upload");
+          setUploadPct(0);
+          const uploaded = await api.uploadMetaVideo(file, {
+            onProgress: (pct) => setUploadPct(pct),
+          });
+          // Poll for Meta's transcode to finish. Short videos take ~10-30s,
+          // longer/4K can take a few minutes — we cap waiting at ~3 min.
+          setPhase("processing");
+          let thumbnailUrl: string | null = null;
+          const startedAt = Date.now();
+          const maxMs = 3 * 60 * 1000;
+          while (true) {
+            const probe = await api.getMetaVideoStatus(uploaded.id);
+            if (probe.status === "ready") {
+              thumbnailUrl = probe.thumbnailUrl;
+              break;
+            }
+            if (probe.status === "error") {
+              throw new Error("Meta failed to transcode this video");
+            }
+            if (Date.now() - startedAt > maxMs) {
+              throw new Error(
+                "Video is still processing on Meta — try again in a minute or use a smaller file"
+              );
+            }
+            await new Promise((r) => setTimeout(r, 3000));
+          }
+          // Persistence note: we cannot store `filePreviewUrl` (blob: URL)
+          // — those die when the page reloads. Meta's /advideos upload
+          // doesn't give us a public streaming URL either, only the
+          // `video_id` (used at publish time) and a thumbnail. So the
+          // in-app preview becomes the thumbnail. The actual video is only
+          // streamed when Meta serves the ad.
+          content = {
+            url: thumbnailUrl ?? undefined,
+            videoId: uploaded.id,
+            thumbnailUrl: thumbnailUrl ?? undefined,
+            ...(meta
+              ? {
+                  videoWidth: meta.width,
+                  videoHeight: meta.height,
+                  videoDurationSec: Math.round(meta.duration),
+                  videoOrientation: classifyOrientation(
+                    meta.width,
+                    meta.height
+                  ),
+                }
+              : {}),
+          };
+        } else {
+          if (!looksLikeUrl) {
+            toast.error("Paste a public HTTPS URL to the video");
+            setSubmitting(false);
+            return;
+          }
+          // For URL paste we just save the URL — the publish wizard will
+          // upload it to Meta + poll status at publish time.
+          content = { url: url.trim() };
         }
-        finalUrl = url.trim();
       }
 
       await api.createCreative({
         name: name.trim(),
         type,
-        content: { url: finalUrl },
+        content,
         aiGenerated: false,
       });
       toast.success("Creative added to your library");
@@ -652,6 +857,7 @@ function UploadCreativeModal({
         toast.error(msg);
       }
       setSubmitting(false);
+      setPhase(null);
     }
   }
 
@@ -732,23 +938,16 @@ function UploadCreativeModal({
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
                 Source
               </label>
-              {type === "VIDEO" && (
-                <span className="text-[10px] font-semibold text-slate-400">
-                  Device upload coming with Phase 1B
-                </span>
-              )}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setTab("device")}
-                disabled={type === "VIDEO"}
                 className={clsx(
                   "flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition",
-                  tab === "device" && type !== "VIDEO"
+                  tab === "device"
                     ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
-                  type === "VIDEO" && "cursor-not-allowed opacity-50"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
                 )}
               >
                 <Upload className="h-3.5 w-3.5" strokeWidth={2.5} />
@@ -793,28 +992,62 @@ function UploadCreativeModal({
           {tab === "device" ? (
             <div>
               <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
-                Image file
+                {type === "VIDEO" ? "Video file" : "Image file"}
               </label>
               {file && filePreviewUrl ? (
                 <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={filePreviewUrl}
-                    alt={file.name}
-                    className="h-16 w-16 shrink-0 rounded-lg object-cover bg-slate-900"
-                  />
+                  {type === "VIDEO" ? (
+                    <video
+                      src={filePreviewUrl}
+                      className="h-16 w-16 shrink-0 rounded-lg bg-slate-900 object-cover"
+                      preload="metadata"
+                      muted
+                    />
+                  ) : (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={filePreviewUrl}
+                      alt={file.name}
+                      className="h-16 w-16 shrink-0 rounded-lg object-cover bg-slate-900"
+                    />
+                  )}
                   <div className="min-w-0 flex-1 text-xs">
                     <div className="truncate font-semibold text-slate-700">
                       {file.name}
                     </div>
                     <div className="text-[10px] text-slate-500">
-                      {(file.size / 1024).toFixed(0)} KB · {file.type}
+                      {(file.size / 1024 / 1024).toFixed(2)} MB · {file.type}
                     </div>
+                    {type === "VIDEO" && videoMeta && (
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <span
+                          className={clsx(
+                            "inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+                            videoMeta.orientation === "vertical"
+                              ? "bg-purple-100 text-purple-800"
+                              : videoMeta.orientation === "square"
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-sky-100 text-sky-800"
+                          )}
+                        >
+                          {videoMeta.orientation === "vertical"
+                            ? "Vertical · 9:16"
+                            : videoMeta.orientation === "square"
+                              ? "Square · 1:1"
+                              : "Horizontal · 16:9"}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {videoMeta.width}×{videoMeta.height} ·{" "}
+                          {Math.round(videoMeta.duration)}s
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <button
                     type="button"
                     onClick={() => setFile(null)}
-                    className="shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                    disabled={submitting}
+                    className="shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
                   >
                     Change
                   </button>
@@ -840,16 +1073,52 @@ function UploadCreativeModal({
                     Drag &amp; drop or click to pick
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    JPEG / PNG / WebP / GIF · max 8 MB
+                    {type === "VIDEO"
+                      ? "MP4 / MOV / WebM · max 200 MB"
+                      : "JPEG / PNG / WebP / GIF · max 8 MB"}
                   </div>
                   <input
                     id="creative-file"
                     type="file"
-                    accept={ACCEPTED_IMAGE_TYPES}
+                    accept={
+                      type === "VIDEO"
+                        ? ACCEPTED_VIDEO_TYPES
+                        : ACCEPTED_IMAGE_TYPES
+                    }
                     onChange={(e) => handlePickFile(e.target.files?.[0] ?? null)}
                     className="sr-only"
                   />
                 </label>
+              )}
+
+              {/* Submit-time status — only meaningful for video (image upload
+                  is fast enough to skip the meter). */}
+              {submitting && type === "VIDEO" && phase && (
+                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                    {phase === "upload"
+                      ? `Uploading to Meta… ${uploadPct}%`
+                      : "Meta is processing the video (transcoding)…"}
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className={clsx(
+                        "h-full rounded-full bg-primary transition-all",
+                        phase === "processing" && "animate-pulse"
+                      )}
+                      style={{
+                        width:
+                          phase === "upload"
+                            ? `${uploadPct}%`
+                            : "100%",
+                      }}
+                    />
+                  </div>
+                  <p className="mt-2 text-[10px] text-slate-500">
+                    Short clips usually take 10–30s. Don't close this dialog.
+                  </p>
+                </div>
               )}
               <p className="mt-1.5 text-[11px] text-slate-500">
                 Uploaded to Meta&apos;s CDN and stored against your connected ad
@@ -1174,6 +1443,12 @@ function CreativeDetailModal({
   const [file, setFile] = useState<File | null>(null);
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Video replacement flow for VIDEO creatives. When the user picks a new
+  // file, we upload + poll on Save (same path as UploadCreativeModal); the
+  // result swaps out videoId / thumbnailUrl on the creative content.
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoPct, setVideoPct] = useState(0);
+  const [videoPhase, setVideoPhase] = useState<"upload" | "processing" | null>(null);
 
   // Edit-mode copy state. We keep a local mutable copy of each variant array
   // so the user can tweak text inline without clobbering the original until
@@ -1199,6 +1474,9 @@ function CreativeDetailModal({
       setEditing(startInEditMode);
       setName(creative.name);
       setFile(null);
+      setVideoFile(null);
+      setVideoPct(0);
+      setVideoPhase(null);
       setSaving(false);
       // Snapshot the copy arrays from rawContent. If a field is missing or
       // malformed we fall back to [] so the section just renders empty.
@@ -1275,6 +1553,40 @@ function CreativeDetailModal({
         const result = await api.uploadMetaImage(file);
         nextContent.url = result.url;
       }
+      // Video replacement — upload to /advideos, then poll transcode.
+      // Same shape as UploadCreativeModal: persist videoId + thumbnailUrl,
+      // with `url` pointing at the thumbnail for the in-app preview.
+      if (videoFile) {
+        setVideoPhase("upload");
+        setVideoPct(0);
+        const uploaded = await api.uploadMetaVideo(videoFile, {
+          onProgress: (pct) => setVideoPct(pct),
+        });
+        setVideoPhase("processing");
+        let newThumb: string | null = null;
+        const startedAt = Date.now();
+        const maxMs = 3 * 60 * 1000;
+        while (true) {
+          const probe = await api.getMetaVideoStatus(uploaded.id);
+          if (probe.status === "ready") {
+            newThumb = probe.thumbnailUrl;
+            break;
+          }
+          if (probe.status === "error") {
+            throw new Error("Meta failed to transcode the new video");
+          }
+          if (Date.now() - startedAt > maxMs) {
+            throw new Error(
+              "Video still processing — try again in a minute or use a smaller file"
+            );
+          }
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+        nextContent.videoId = uploaded.id;
+        nextContent.thumbnailUrl = newThumb ?? undefined;
+        nextContent.url = newThumb ?? nextContent.url;
+        setVideoPhase(null);
+      }
       // Reorder each array so the picked variant lands at index [0] —
       // this is what makes "picking a default" actually take effect when
       // the creative is used in the publish wizard later.
@@ -1314,6 +1626,7 @@ function CreativeDetailModal({
         toast.error(msg);
       }
       setSaving(false);
+      setVideoPhase(null);
     }
   }
 
@@ -1341,8 +1654,9 @@ function CreativeDetailModal({
     ? (copy!.ctas as string[]).filter((s) => typeof s === "string")
     : [];
 
-  const hasCopy =
-    headlines.length || primaryTexts.length || descriptions.length || ctas.length;
+  const hasCopy = Boolean(
+    headlines.length || primaryTexts.length || descriptions.length || ctas.length
+  );
 
   function copyToClipboard(text: string) {
     if (typeof navigator === "undefined" || !navigator.clipboard) {
@@ -1425,30 +1739,141 @@ function CreativeDetailModal({
       </ModalHeader>
 
       <ModalBody className="space-y-5">
-          {/* Media preview (if uploaded) */}
-          {creative.url && (
+          {/* Media preview. For VIDEO we render an interactive player —
+              click the thumbnail to fetch Meta's signed source and play
+              inline. For IMAGE just the image. */}
+          {creative.type === "VIDEO" && (creative.url || creative.videoId) ? (
             <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
-              {creative.type === "VIDEO" ? (
-                <video
-                  src={creative.url}
-                  controls
-                  playsInline
-                  preload="metadata"
-                  className="aspect-video w-full"
-                />
+              <VideoThumbnailPlayer
+                thumbnailUrl={creative.url ?? null}
+                videoId={creative.videoId ?? null}
+                alt={creative.name}
+                className="aspect-video w-full"
+                buttonSize="lg"
+                showBadge={false}
+              />
+            </div>
+          ) : creative.url ? (
+            <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={creative.url}
+                alt={creative.name}
+                className="aspect-video w-full object-contain"
+              />
+            </div>
+          ) : null}
+
+          {/* Replace-video picker — only in edit mode for VIDEO creatives.
+              Mirrors the upload + transcode flow from UploadCreativeModal
+              but staged: nothing actually goes to Meta until the user clicks
+              Save changes. */}
+          {editing && creative.type === "VIDEO" && (
+            <div>
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
+                Replace video
+              </label>
+              {videoFile ? (
+                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2">
+                  <video
+                    src={URL.createObjectURL(videoFile)}
+                    className="h-16 w-16 shrink-0 rounded-lg bg-slate-900 object-cover"
+                    preload="metadata"
+                    muted
+                  />
+                  <div className="min-w-0 flex-1 text-xs">
+                    <div className="truncate font-semibold text-slate-700">
+                      {videoFile.name}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      {(videoFile.size / 1024 / 1024).toFixed(2)} MB ·{" "}
+                      {videoFile.type}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setVideoFile(null)}
+                    disabled={saving}
+                    className="shrink-0 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                </div>
               ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={creative.url}
-                  alt={creative.name}
-                  className="aspect-video w-full object-cover"
-                />
+                <label
+                  className={clsx(
+                    "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center transition hover:border-primary/40 hover:bg-slate-100",
+                    saving && "pointer-events-none opacity-60"
+                  )}
+                >
+                  <input
+                    type="file"
+                    accept={ACCEPTED_VIDEO_TYPES}
+                    onChange={(e) => {
+                      const picked = e.target.files?.[0];
+                      if (!picked) return;
+                      if (!picked.type.startsWith("video/")) {
+                        toast.error("Pick a video file (MP4, MOV, WebM)");
+                        return;
+                      }
+                      if (picked.size > MAX_VIDEO_BYTES) {
+                        toast.error(
+                          `Video is ${(picked.size / 1024 / 1024).toFixed(
+                            0
+                          )} MB — we cap at 200 MB`
+                        );
+                        return;
+                      }
+                      setVideoFile(picked);
+                    }}
+                    className="hidden"
+                    disabled={saving}
+                  />
+                  <Upload className="h-5 w-5 text-slate-500" />
+                  <p className="text-xs font-semibold text-slate-700">
+                    Click to pick a new video
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    MP4 / MOV / WebM · up to 200 MB
+                  </p>
+                </label>
               )}
+
+              {/* Live status row while saving. Same UI as UploadCreativeModal
+                  so users see the same progress treatment whether they
+                  upload a fresh video or replace an existing one. */}
+              {saving && videoPhase && (
+                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                    {videoPhase === "upload"
+                      ? `Uploading replacement… ${videoPct}%`
+                      : "Meta is processing the new video…"}
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className={clsx(
+                        "h-full rounded-full bg-primary transition-all",
+                        videoPhase === "processing" && "animate-pulse"
+                      )}
+                      style={{
+                        width:
+                          videoPhase === "upload" ? `${videoPct}%` : "100%",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <p className="mt-2 text-[11px] text-slate-500">
+                The old Meta video stays on Meta — replacing here points the
+                creative at the new one for future campaigns.
+              </p>
             </div>
           )}
 
           {/* Attach-image picker — shown in edit mode when no media exists. */}
-          {editing && !creative.url && (
+          {editing && creative.type !== "VIDEO" && !creative.url && (
             <div>
               <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
                 Attach image
@@ -1647,6 +2072,9 @@ function CreativeDetailModal({
               setEditing(false);
               setName(creative.name);
               setFile(null);
+              setVideoFile(null);
+              setVideoPhase(null);
+              setVideoPct(0);
             }}
             disabled={saving}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1886,37 +2314,29 @@ function PreviewArea({ creative }: { creative: Creative }) {
     );
   }
 
-  // Uploaded image/video — render the real asset. Wrapped in a black bg so
-  // letterboxed assets and slow loads look intentional instead of broken.
+  // Uploaded image/video — render the still asset. For video this is the
+  // Meta thumbnail with a decorative play overlay; click-to-play is only
+  // wired in the Detail Modal (so each grid card doesn't trigger a Meta
+  // API call when the user opens the page).
   if (creative.url && (creative.type === "IMAGE" || creative.type === "VIDEO")) {
     return (
       <div className="relative h-full w-full bg-slate-900">
-        {creative.type === "VIDEO" ? (
-          <>
-            <video
-              src={creative.url}
-              muted
-              playsInline
-              preload="metadata"
-              className="h-full w-full object-cover"
-            />
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/95 shadow-xl">
-                <Play
-                  className="ml-0.5 h-5 w-5 text-slate-900"
-                  fill="currentColor"
-                  strokeWidth={0}
-                />
-              </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={creative.url}
+          alt={creative.name}
+          className="h-full w-full object-cover"
+        />
+        {creative.type === "VIDEO" && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/15">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/95 shadow-xl">
+              <Play
+                className="ml-0.5 h-5 w-5 text-slate-900"
+                fill="currentColor"
+                strokeWidth={0}
+              />
             </div>
-          </>
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={creative.url}
-            alt={creative.name}
-            className="h-full w-full object-cover"
-          />
+          </div>
         )}
       </div>
     );
