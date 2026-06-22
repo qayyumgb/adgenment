@@ -42,7 +42,7 @@ router.post("/plan-campaign", async (req: Request, res: Response) => {
 });
 
 router.post("/generate-copy", async (req: Request, res: Response) => {
-  const { brief, platform, objective } = req.body ?? {};
+  const { brief, platform, objective, kind, cardCount } = req.body ?? {};
 
   if (typeof brief !== "string" || brief.trim().length < 10) {
     return res.status(400).json({
@@ -55,13 +55,33 @@ router.post("/generate-copy", async (req: Request, res: Response) => {
   if (typeof objective !== "string" || !objective.trim()) {
     return res.status(400).json({ error: "Objective is required." });
   }
+  // Carousel-specific validation. We default to 4 cards when carousel kind
+  // is requested without an explicit count — that's the sweet spot for
+  // narrative flow + completion rate per Meta's own carousel best
+  // practices. Cap at 5 here (Meta supports up to 10 but more cards =
+  // longer prompts = worse copy quality from the LLM in practice).
+  const isCarousel = kind === "carousel";
+  let resolvedCardCount = 4;
+  if (isCarousel) {
+    if (typeof cardCount === "number") {
+      if (cardCount < 2 || cardCount > 5) {
+        return res
+          .status(400)
+          .json({ error: "cardCount must be between 2 and 5" });
+      }
+      resolvedCardCount = Math.round(cardCount);
+    }
+  }
 
   try {
-    const { json, tokensUsed } = await aiService.generateCreativeCopy(
-      brief,
-      platform,
-      objective
-    );
+    const { json, tokensUsed } = isCarousel
+      ? await aiService.generateCarouselCopy(
+          brief,
+          platform,
+          objective,
+          resolvedCardCount
+        )
+      : await aiService.generateCreativeCopy(brief, platform, objective);
     const copy = JSON.parse(json);
     return res.json({ success: true, copy, tokensUsed });
   } catch (err) {

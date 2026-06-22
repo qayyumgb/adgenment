@@ -316,7 +316,22 @@ export default function CreativesPage() {
         content: input.content,
         aiGenerated: true,
       });
-      toast.success("Creative saved to your library");
+      // Carousel-specific toast — the user needs to know they have to
+      // upload images per card before this is publishable. For image /
+      // video / text creatives the standard "saved" message is fine.
+      if (
+        input.type === "CAROUSEL" &&
+        Array.isArray(
+          (input.content as Record<string, unknown>).cards
+        )
+      ) {
+        toast.success(
+          "Carousel saved — open it to upload one image per card",
+          { duration: 5000 }
+        );
+      } else {
+        toast.success("Creative saved to your library");
+      }
       creativesQ.refetch();
       statsQ.refetch();
     } catch (err) {
@@ -753,6 +768,73 @@ function UploadCreativeModal({
     url.startsWith("https://") &&
     url.length > "https://".length &&
     !url.includes(" ");
+
+  // Detect video-hosting page URLs (YouTube, Vimeo, TikTok, etc.) so we can
+  // refuse them up-front with a clear message. None of these expose a
+  // direct media file at the page URL — they serve an HTML player — so
+  // both <video src> and Meta's /advideos endpoint will fail. The user
+  // either uploads from device or pastes a direct .mp4/.mov/.webm URL.
+  const hostedVideoPagePattern =
+    /(?:youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|dailymotion\.com|twitch\.tv|facebook\.com\/watch|instagram\.com\/reel)/i;
+  const isHostedVideoPage =
+    type === "VIDEO" && tab === "url" && hostedVideoPagePattern.test(url);
+
+  // Live validation of the pasted URL — kicks off a probe whenever the URL
+  // changes (debounced). For video we mount a hidden <video preload=metadata>
+  // and wait for `loadedmetadata` (ok) or `error` (broken). For image we
+  // do the same with an Image() object. Drives the inline status pill and
+  // gates the submit button — a probed-broken URL can't be saved.
+  type UrlStatus = "idle" | "validating" | "ok" | "error";
+  const [urlStatus, setUrlStatus] = useState<UrlStatus>("idle");
+  useEffect(() => {
+    if (tab !== "url" || !looksLikeUrl || isHostedVideoPage) {
+      setUrlStatus("idle");
+      return;
+    }
+    setUrlStatus("validating");
+    let cancelled = false;
+    const debounce = setTimeout(() => {
+      if (type === "VIDEO") {
+        const probe = document.createElement("video");
+        probe.preload = "metadata";
+        probe.muted = true;
+        probe.crossOrigin = "anonymous";
+        probe.onloadedmetadata = () => {
+          if (cancelled) return;
+          // Sanity check: a real video has non-zero dimensions. Some HTML
+          // pages served as application/octet-stream load enough bytes
+          // for `loadedmetadata` to fire on a malformed stream.
+          if (probe.videoWidth > 0 && probe.videoHeight > 0) {
+            setUrlStatus("ok");
+          } else {
+            setUrlStatus("error");
+          }
+        };
+        probe.onerror = () => {
+          if (!cancelled) setUrlStatus("error");
+        };
+        probe.src = url;
+      } else {
+        const probe = new Image();
+        probe.onload = () => {
+          if (cancelled) return;
+          if (probe.naturalWidth > 0 && probe.naturalHeight > 0) {
+            setUrlStatus("ok");
+          } else {
+            setUrlStatus("error");
+          }
+        };
+        probe.onerror = () => {
+          if (!cancelled) setUrlStatus("error");
+        };
+        probe.src = url;
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(debounce);
+    };
+  }, [url, type, tab, looksLikeUrl, isHostedVideoPage]);
 
   function handlePickFile(picked: File | null) {
     if (!picked) {
@@ -1277,16 +1359,84 @@ function UploadCreativeModal({
                   setUrl(e.target.value);
                   setPreviewError(false);
                 }}
-                placeholder="https://example.com/asset.jpg"
+                placeholder={
+                  type === "VIDEO"
+                    ? "https://your-cdn.com/clip.mp4"
+                    : "https://example.com/asset.jpg"
+                }
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm placeholder:text-slate-400 focus:border-primary focus:outline-none"
               />
               <p className="mt-1.5 text-[11px] text-slate-500">
-                Must be publicly reachable over HTTPS. Imgur, Cloudinary, your CDN,
-                or a Meta-hosted image URL all work.
+                {type === "VIDEO" ? (
+                  <>
+                    Must be a <strong>direct video file URL</strong> ending
+                    in .mp4, .mov, or .webm — hosted on your CDN, S3,
+                    Cloudflare R2, etc. YouTube / Vimeo / TikTok page links
+                    won&apos;t work (they serve a web player, not a
+                    downloadable video).
+                  </>
+                ) : (
+                  <>
+                    Must be publicly reachable over HTTPS. Imgur, Cloudinary,
+                    your CDN, or a Meta-hosted image URL all work.
+                  </>
+                )}
               </p>
 
-              {/* Preview */}
-              {looksLikeUrl && (
+              {/* Live URL status pill — visible whenever a syntactically
+                  valid URL is being probed or has been classified. */}
+              {looksLikeUrl && !isHostedVideoPage && urlStatus !== "idle" && (
+                <div className="mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold">
+                  {urlStatus === "validating" && (
+                    <span className="inline-flex items-center gap-1.5 text-slate-500">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Checking URL…
+                    </span>
+                  )}
+                  {urlStatus === "ok" && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 ring-1 ring-emerald-200">
+                      <Check className="h-3 w-3" strokeWidth={3} />
+                      URL looks good — {type === "VIDEO" ? "video" : "image"}
+                      {" loaded"}
+                    </span>
+                  )}
+                  {urlStatus === "error" && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2 py-0.5 text-rose-700 ring-1 ring-rose-200">
+                      <X className="h-3 w-3" strokeWidth={3} />
+                      Can&apos;t load — not a public {type === "VIDEO" ? "video" : "image"} file
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* YouTube / Vimeo / TikTok detection — fail fast with a
+                  clear message instead of letting <video src> silently
+                  flop into the generic "Could not load preview". */}
+              {isHostedVideoPage && (
+                <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-[12px] leading-relaxed text-amber-900">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                    aria-hidden
+                  >
+                    <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  </svg>
+                  <div>
+                    <strong>That&apos;s a page URL, not a video file.</strong>{" "}
+                    YouTube / Vimeo / TikTok don&apos;t expose direct downloads
+                    — Meta can&apos;t fetch the video from a page link.
+                    <br />
+                    Use <strong>Upload from device</strong> instead, or paste a
+                    direct <code>.mp4</code> URL from your own CDN.
+                  </div>
+                </div>
+              )}
+
+              {/* Preview — skipped for known page URLs above. */}
+              {looksLikeUrl && !isHostedVideoPage && (
                 <div className="mt-4">
                   <div className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
                     Preview
@@ -1294,7 +1444,8 @@ function UploadCreativeModal({
                   <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-900">
                     {previewError ? (
                       <div className="flex aspect-video items-center justify-center text-xs text-slate-400">
-                        Could not load preview — check the URL is public
+                        Could not load preview — check the URL is public and
+                        points to a direct file
                       </div>
                     ) : type === "VIDEO" ? (
                       <video
@@ -1348,7 +1499,10 @@ function UploadCreativeModal({
                 ? cards.length < 2 ||
                   cards.some((c) => !c.file && !c.savedImageUrl)
                 : tab === "url"
-                  ? !looksLikeUrl
+                  ? !looksLikeUrl ||
+                    isHostedVideoPage ||
+                    urlStatus === "validating" ||
+                    urlStatus === "error"
                   : !file)
             }
             className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
@@ -2971,10 +3125,16 @@ type CreativeKind = "image" | "video" | "carousel" | "text";
 type Tone = "professional" | "playful" | "urgent" | "inspirational";
 
 type CopyResult = {
-  headlines: string[];
+  // Image / video / text creatives return all four arrays.
+  headlines?: string[];
   primary_texts: string[];
-  descriptions: string[];
+  descriptions?: string[];
   ctas: string[];
+  /** Carousel creatives return a `cards` array (length 2-5) instead of
+   *  flat headlines/descriptions. Each card has its own per-card copy;
+   *  the user uploads one image per card later (via Edit) to complete
+   *  the creative. */
+  cards?: Array<{ headline: string; description?: string }>;
 };
 
 const KIND_OPTIONS: { value: CreativeKind; label: string }[] = [
@@ -3031,6 +3191,10 @@ function AIGenerateModal({
   const [objective, setObjective] = useState<string>("Conversions");
   const [kind, setKind] = useState<CreativeKind>("image");
   const [tone, setTone] = useState<Tone>("professional");
+  // Carousel card count — only meaningful when kind === "carousel". Range
+  // is 2-5 (Meta supports up to 10, but more cards → longer AI prompts →
+  // weaker per-card quality. 5 is the sweet spot for narrative + completion.)
+  const [cardCount, setCardCount] = useState(4);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CopyResult | null>(null);
   // Index of the user's chosen variant within each result array. Defaults
@@ -3087,6 +3251,12 @@ function AIGenerateModal({
           brief: `${brief}\n\nTone: ${tone}. Creative type: ${kind}.`,
           platform,
           objective,
+          // Carousel-specific signal — the backend switches to the per-card
+          // copy prompt when kind === "carousel". Other types use the flat
+          // headlines/primary_texts/descriptions/ctas shape.
+          ...(kind === "carousel"
+            ? { kind: "carousel", cardCount }
+            : {}),
         }),
       });
       const data = await res.json();
@@ -3225,6 +3395,35 @@ function AIGenerateModal({
             </div>
           </div>
 
+          {kind === "carousel" && (
+            <div>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">
+                Number of cards
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {[2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setCardCount(n)}
+                    className={clsx(
+                      "min-w-[42px] rounded-full px-3 py-1.5 text-xs font-semibold transition",
+                      cardCount === n
+                        ? "bg-primary text-white shadow-sm"
+                        : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[10px] text-slate-500">
+                AI writes a connected story across cards (hook → benefit → CTA).
+                You upload one image per card after generating.
+              </p>
+            </div>
+          )}
+
           <div>
             <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">
               Tone
@@ -3282,31 +3481,78 @@ function AIGenerateModal({
                     strokeWidth={3}
                   />
                   <p>
-                    <strong>Tap any variant to pick it.</strong> The picked
-                    one becomes the default when this creative is used in a
-                    campaign — the rest are kept as swap options.
+                    {result.cards && result.cards.length > 0 ? (
+                      <>
+                        <strong>Carousel story generated.</strong> Each card
+                        has its own headline + description. Save to your
+                        library, then open the creative to upload one image
+                        per card.
+                      </>
+                    ) : (
+                      <>
+                        <strong>Tap any variant to pick it.</strong> The picked
+                        one becomes the default when this creative is used in
+                        a campaign — the rest are kept as swap options.
+                      </>
+                    )}
                   </p>
                 </div>
               </div>
 
-              <div className="border-t border-slate-100 pt-4">
-                <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Headlines · {result.headlines?.length ?? 0} options
-                </h3>
-                <ul className="space-y-1.5">
-                  {result.headlines?.map((h, i) => (
-                    <CopyItem
-                      key={`h-${i}`}
-                      text={h}
-                      onCopy={copyToClipboard}
-                      selected={picked.headline === i}
-                      onSelect={() =>
-                        setPicked((p) => ({ ...p, headline: i }))
-                      }
-                    />
-                  ))}
-                </ul>
-              </div>
+              {/* Carousel-only: per-card story. Renders instead of the flat
+                  Headlines / Descriptions sections — those are per-card
+                  here, not ad-level. */}
+              {result.cards && result.cards.length > 0 && (
+                <div className="border-t border-slate-100 pt-4">
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Carousel story · {result.cards.length} cards
+                  </h3>
+                  <ol className="space-y-2">
+                    {result.cards.map((card, i) => (
+                      <li
+                        key={`card-${i}`}
+                        className="rounded-xl border border-slate-200 bg-white p-3"
+                      >
+                        <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                          Card {i + 1}
+                        </div>
+                        <div className="text-sm font-bold leading-snug text-slate-900">
+                          {card.headline}
+                        </div>
+                        {card.description && (
+                          <div className="mt-0.5 text-[12px] text-slate-600">
+                            {card.description}
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
+              {/* Image / video / text path: flat headline picker. Skipped
+                  for carousels — per-card headlines above are the load-
+                  bearing copy there. */}
+              {!result.cards && result.headlines && result.headlines.length > 0 && (
+                <div className="border-t border-slate-100 pt-4">
+                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Headlines · {result.headlines.length} options
+                  </h3>
+                  <ul className="space-y-1.5">
+                    {result.headlines.map((h, i) => (
+                      <CopyItem
+                        key={`h-${i}`}
+                        text={h}
+                        onCopy={copyToClipboard}
+                        selected={picked.headline === i}
+                        onSelect={() =>
+                          setPicked((p) => ({ ...p, headline: i }))
+                        }
+                      />
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               <div>
                 <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -3328,26 +3574,28 @@ function AIGenerateModal({
                 </ul>
               </div>
 
-              {result.descriptions && result.descriptions.length > 0 && (
-                <div>
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Descriptions · {result.descriptions.length} options
-                  </h3>
-                  <ul className="space-y-1.5">
-                    {result.descriptions.map((d, i) => (
-                      <CopyItem
-                        key={`d-${i}`}
-                        text={d}
-                        onCopy={copyToClipboard}
-                        selected={picked.description === i}
-                        onSelect={() =>
-                          setPicked((p) => ({ ...p, description: i }))
-                        }
-                      />
-                    ))}
-                  </ul>
-                </div>
-              )}
+              {!result.cards &&
+                result.descriptions &&
+                result.descriptions.length > 0 && (
+                  <div>
+                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Descriptions · {result.descriptions.length} options
+                    </h3>
+                    <ul className="space-y-1.5">
+                      {result.descriptions.map((d, i) => (
+                        <CopyItem
+                          key={`d-${i}`}
+                          text={d}
+                          onCopy={copyToClipboard}
+                          selected={picked.description === i}
+                          onSelect={() =>
+                            setPicked((p) => ({ ...p, description: i }))
+                          }
+                        />
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
               <div>
                 <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -3391,10 +3639,41 @@ function AIGenerateModal({
                       carousel: "CAROUSEL",
                       text: "TEXT",
                     };
-                    // Reorder each array so the user's picked variant lands
-                    // at index [0]. The publish wizard auto-fills from [0],
-                    // so this is what makes "pick a variant" actually stick
-                    // when the creative gets used later.
+                    // Carousel path — persist a `cards` array (text only,
+                    // no images yet). The user opens the creative via Edit
+                    // to upload one image per card. The publish wizard's
+                    // pre-publish validation enforces an image per card,
+                    // so a text-only carousel is "draft" until images are
+                    // attached.
+                    if (result.cards && result.cards.length >= 2) {
+                      const cardsForSave = result.cards.map((c) => ({
+                        // No imageUrl / imageHash yet — the Detail Modal's
+                        // CarouselCardsEditor renders an empty dropzone
+                        // when both are missing.
+                        headline: c.headline,
+                        description: c.description ?? undefined,
+                      }));
+                      await onSave({
+                        type: "CAROUSEL",
+                        platform,
+                        objective,
+                        content: {
+                          cards: cardsForSave,
+                          primary_texts: pickFirst(
+                            result.primary_texts,
+                            picked.primaryText
+                          ),
+                          ctas: pickFirst(result.ctas, picked.cta),
+                          brief,
+                          tone,
+                        },
+                      });
+                      onClose();
+                      return;
+                    }
+
+                    // Image / video / text path — flat copy variants,
+                    // reorder so picked variant is at [0] for auto-fill.
                     const reordered = {
                       headlines: pickFirst(result.headlines, picked.headline),
                       primary_texts: pickFirst(

@@ -472,6 +472,39 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-22 â€” AI Carousel: per-card copy generation
+
+Before this change, the "Carousel" type in the AI Generate modal was scaffolding â€” it returned the same flat `{ headlines, primary_texts, descriptions, ctas }` shape as image/video creatives. Saving it didn't produce a publishable carousel (no `cards` array, so the publish wizard rejected it). Users could only build carousels by uploading 2-10 images manually with the Upload Creative flow.
+
+This pass wires AI per-card copy through end-to-end. The AI writes a coherent N-card story (2-5 cards, default 4), and saving creates a "draft" carousel with text-only cards. The user then opens the creative â†’ Edit â†’ uploads one image per card to publish.
+
+**Backend:**
+- [apps/api/src/services/ai.service.ts](apps/api/src/services/ai.service.ts) â€” new `generateCarouselCopy(brief, platform, objective, cardCount)` method + `CAROUSEL_COPY_SYSTEM_PROMPT(cardCount)` prompt builder. The prompt asks for a narrative arc (card 1 = hook, middle = benefit, last = direct CTA), per-card headline (â‰¤ 40 chars) + optional description (â‰¤ 30 chars for Meta's sub-headline cap), plus the same ad-level `primary_texts` + `ctas` arrays the single-asset flow returns. 1200-token cap (roughly 200 tokens/card headroom for 5 cards).
+- [apps/api/src/routes/ai.ts](apps/api/src/routes/ai.ts) â€” `POST /api/ai/generate-copy` accepts new optional `kind: "carousel"` + `cardCount` body fields. Validates `cardCount` to 2-5; defaults to 4 when missing. When `kind === "carousel"` it routes to the new service method; otherwise unchanged.
+- [apps/web/app/api/ai/generate-copy/route.ts](apps/web/app/api/ai/generate-copy/route.ts) â€” the Next.js proxy passes `kind` + `cardCount` through to the API.
+
+**UI:**
+- [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) AI Generate modal:
+  - New "Number of cards" picker (2 / 3 / 4 / 5) that shows ONLY when kind === "carousel".
+  - `CopyResult` type widened: `headlines` + `descriptions` are now optional; new optional `cards: Array<{ headline, description? }>` lives alongside.
+  - Results render branches on `result.cards`:
+    - Carousel â†’ "Carousel story Â· N cards" ordered list with each card's headline + description displayed read-only. Flat Headlines / Descriptions sections are hidden (per-card replaces them).
+    - Image / video / text â†’ unchanged.
+  - Helper banner switches copy: *"Carousel story generated. Each card has its own headline + description. Save to your library, then open the creative to upload one image per card."*
+  - "Use This Creative" save handler builds `content.cards` (text-only) for carousels and `content.{headlines, primary_texts, descriptions, ctas}` (reordered by picked variant) for everything else. Primary text + CTA picker still applies to carousels because those are ad-level.
+- Toast on save tailored to the type: carousels show *"Carousel saved â€” open it to upload one image per card"* (5s duration), everything else gets the standard "saved" message.
+
+**Handoff to publish:** the Detail Modal's existing `CarouselCardsEditor` already renders dropzones for cards with no saved image, so an AI-generated text-only carousel opens to a pre-filled headline/description per row with empty image pickers. Once the user picks an image per card and hits Save, the carousel becomes publishable through the same publish-wizard library flow as a manually-uploaded carousel.
+
+**What's NOT in this slice:**
+- Per-card image generation (deferred â€” still gated on paid customers + App Review per [FUTURE_FEATURES.md](FUTURE_FEATURES.md)).
+- Carousel size > 5 (Meta supports up to 10, but more cards = weaker per-card AI quality. 5 is the cap for now.)
+- A "regenerate this card only" button â€” regenerating means re-running the whole story.
+
+`tsc --noEmit` clean on both apps. `next lint` reports `âœ” No ESLint warnings or errors`.
+
+---
+
 ### 2026-06-22 â€” Phase 1B Carousel: end-to-end multi-card ad pipeline
 
 Second half of Phase 1B. Users can now build a 2-10 card carousel ad with per-card image + headline + description + link, save it to the library, and publish it through the same publish wizard image + video ads use. Closes Phase 1B.
