@@ -472,6 +472,65 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-22 â€” Creative Detail Modal: variants are now re-pickable + inline editable
+
+The Edit mode added earlier only handled name + image attach â€” the headline / primary text / description / CTA variants were still read-only. The user can now re-pick which variant is the default *and* tweak text inline without regenerating from AI.
+
+In [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx):
+
+- `CreativeDetailModal` now keeps a local `edited` snapshot of the four variant arrays plus a `picked` index map. Initialized from `rawContent` whenever the modal opens; reset on close.
+- `CopySection` gained three optional props: `selectedIndex`, `onSelect`, `onEdit`. When all are provided the section flips into edit/pick mode:
+  - Rows are clickable to set the selected variant; selected row gets a filled `border-primary bg-primary/5` + checkmark radio.
+  - A pencil button per row (visible on hover) reveals an inline `<input>` â€” Enter / green check saves, Escape / X cancels.
+  - Read-only sections keep the copy-to-clipboard icon, unchanged.
+- Indigo helper banner in edit mode: *"Tap a row to pick it as the default. Tap the pencil to edit the text..."*
+- Variant counts (e.g. "Headlines Â· 5 options") added to each section header in edit mode.
+- Save handler builds the next payload from `edited` + `picked`: empty/whitespace lines are stripped (so the user can blank a chip to delete it), each array is reordered via the existing `pickFirst()` so the picked variant lands at index `[0]`, and the result is merged into `content` alongside any newly uploaded image URL. Single `updateCreative` call persists everything.
+
+**Why this matters in the broader flow:** the publish wizard auto-fills from index `[0]`. So picking a different default variant here now actually propagates downstream â€” the user's choice in the library survives all the way to the launched ad.
+
+`tsc --noEmit` clean.
+
+---
+
+### 2026-06-22 â€” Creative card: Edit (rename + attach image)
+
+Creative cards had Delete on hover but no Edit affordance. Two real edit needs surfaced:
+1. **Rename** â€” auto-generated names like "AI Headline - 2026-06-22" are ugly and not searchable.
+2. **Attach image** â€” AI Generate produces copy-only creatives. Until now the only way to turn one into a full image creative was to delete it and re-upload via Upload Creative.
+
+Added a pencil button to the card's hover toolbar (paired with Delete, bottom-right of the preview tile in [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx)). Reused the existing `CreativeDetailModal` instead of building a separate edit modal:
+
+- New props: `startInEditMode?: boolean` and `onSaved?: () => void`. The card's pencil sets `startInEditMode=true`; clicking the card body still opens read-only.
+- New "Edit" pill in the modal header when in read mode â†’ flips to edit mode without re-opening.
+- In edit mode: the title becomes an `<input>` (max 120 chars); when `creative.url` is empty, an "Attach image" dropzone appears (reusing `MAX_IMAGE_BYTES` + `ACCEPTED_IMAGE_TYPES` constants + the existing `api.uploadMetaImage` flow).
+- New `ModalFooter` with Cancel / Save changes. Cancel reverts local state; Save uploads any picked image, then calls `api.updateCreative(id, { name, content: { ...existingContent, url } })` â€” merging the new URL with existing copy fields so AI variants survive the edit.
+- Backdrop + ESC dismissal are disabled while saving (`closeOnBackdrop={!saving}` + `closeOnEscape={!saving}`) to avoid losing an in-flight upload.
+- The amber "Next step: upload an image" hint inside the modal now points users to the Edit button instead of the main page's Upload Creative modal (one fewer step).
+
+**Scoped narrowly on purpose.** Did not add copy-field editing (the AI Generate modal is the better re-generation surface), platform editing (we don't yet support per-platform creatives), or CTA editing (it's a sub-field of AI content already pickable in the AI flow). Status is auto-managed by the publish wizard.
+
+`tsc --noEmit` clean.
+
+---
+
+### 2026-06-22 â€” AI Generate: variants are now pickable + chosen variant becomes default
+
+The AI Generate modal in [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) was returning 5 headlines / 3 primary texts / 3 descriptions / 4 CTAs as **copy-only** chips â€” the user could click to copy but couldn't tell Advertix which one they actually wanted as the default. When that creative got pulled into the publish wizard later, the wizard auto-filled from index `[0]` regardless of user intent.
+
+Wired up selection state:
+- New `picked` state (`{ headline, primaryText, description, cta }`) defaulting to `0` for each, reset whenever a new generation arrives.
+- `CopyItem` now accepts `selected` + `onSelect` props; selected state renders `border-primary bg-primary/10` with a checkmark badge. The copy-to-clipboard action stays â€” itâ€™s now secondary (the row body is the select target).
+- CTAs were plain pill buttons that copied to clipboard. Replaced with selectable chips using the same visual pattern (filled = picked, outlined = unpicked).
+- Added an indigo helper banner at the top of the results block: *"Tap any variant to pick it. The picked one becomes the default when this creative is used in a campaign â€” the rest are kept as swap options."*
+- Variant counts (e.g. "Headlines Â· 5 options") added to each section header so users see what they're choosing between.
+
+**The key bit:** the `Use This Creative` save handler now reorders each array via new `pickFirst<T>(arr, idx)` helper so the picked variant lands at index `[0]` before persisting. The wizard's existing `extractCopyFields` reads `[0]` first â†’ the user's pick is now the default that pre-fills the publish form. Non-picked variants are preserved in original order at indices `1..N-1` and continue to show up as swap chips in the wizard.
+
+`tsc --noEmit` clean.
+
+---
+
 ### 2026-06-22 â€” AI service migration: Sonnet 4 (retired) â†’ Opus 4.8
 
 `/api/ai/generate-copy` and `/api/ai/plan-campaign` started returning 500 because the model ID `claude-sonnet-4-20250514` retired on **2026-06-15** and the Anthropic API now rejects requests for it. Migrated [apps/api/src/services/ai.service.ts](apps/api/src/services/ai.service.ts) and [apps/api/src/routes/ai.ts](apps/api/src/routes/ai.ts) from `claude-sonnet-4-20250514` â†’ `claude-opus-4-8` (current most-capable model). Only the `MODEL` constant changed â€” the rest of the service is clean (no `temperature`, `top_p`, `top_k`, `thinking`, `budget_tokens`, or assistant prefills, all of which are removed/rejected on Claude 4.7+ models).

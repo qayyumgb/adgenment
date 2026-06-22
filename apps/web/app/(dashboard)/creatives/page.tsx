@@ -20,6 +20,9 @@ import {
   RefreshCw,
   Palette,
   Trash2,
+  Check,
+  Pencil,
+  Save,
   type LucideIcon,
 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
@@ -461,6 +464,10 @@ export default function CreativesPage() {
                 c={c}
                 raw={raw}
                 onDeleted={() => {
+                  creativesQ.refetch();
+                  statsQ.refetch();
+                }}
+                onUpdated={() => {
                   creativesQ.refetch();
                   statsQ.refetch();
                 }}
@@ -978,18 +985,24 @@ function CreativeCard({
   c,
   raw,
   onDeleted,
+  onUpdated,
 }: {
   c: Creative;
   /** Original API creative — needed for the detail modal so we can show
    *  all generated copy fields (headlines, primary_texts, descriptions, ctas). */
   raw: ApiCreative;
   onDeleted: () => void;
+  onUpdated: () => void;
 }) {
   const Icon = TYPE_ICON[c.type];
   const st = STATUS_META[c.status];
   const api = useApiClient();
   const [deleting, setDeleting] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  // When the user clicks the pencil we open the same modal but with the
+  // editable fields visible from the start. Reading the card → opening
+  // read-only is the default.
+  const [openInEditMode, setOpenInEditMode] = useState(false);
 
   async function handleDelete(e: React.MouseEvent) {
     e.stopPropagation();
@@ -1029,21 +1042,36 @@ function CreativeCard({
           </span>
         )}
 
-        {/* Delete (hover) */}
-        <button
-          type="button"
-          onClick={handleDelete}
-          disabled={deleting}
-          aria-label="Delete creative"
-          title="Delete creative"
-          className="absolute right-3 bottom-3 z-10 flex h-7 w-7 items-center justify-center rounded-lg bg-white/95 text-rose-600 opacity-0 shadow-sm ring-1 ring-rose-200 backdrop-blur transition group-hover:opacity-100 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {deleting ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Trash2 className="h-3.5 w-3.5" />
-          )}
-        </button>
+        {/* Hover actions — Edit + Delete, anchored bottom-right */}
+        <div className="absolute right-3 bottom-3 z-10 flex items-center gap-1.5 opacity-0 transition group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpenInEditMode(true);
+              setDetailOpen(true);
+            }}
+            aria-label="Edit creative"
+            title="Edit creative"
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/95 text-slate-700 shadow-sm ring-1 ring-slate-200 backdrop-blur transition hover:bg-slate-50 hover:text-primary"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={deleting}
+            aria-label="Delete creative"
+            title="Delete creative"
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/95 text-rose-600 shadow-sm ring-1 ring-rose-200 backdrop-blur transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {deleting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </div>
 
         {/* Type badge */}
         <span className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700 shadow-sm backdrop-blur">
@@ -1102,9 +1130,14 @@ function CreativeCard({
 
     <CreativeDetailModal
       open={detailOpen}
-      onClose={() => setDetailOpen(false)}
+      onClose={() => {
+        setDetailOpen(false);
+        setOpenInEditMode(false);
+      }}
       creative={c}
       rawContent={raw.content}
+      startInEditMode={openInEditMode}
+      onSaved={onUpdated}
     />
     </>
   );
@@ -1119,12 +1152,171 @@ function CreativeDetailModal({
   onClose,
   creative,
   rawContent,
+  startInEditMode = false,
+  onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   creative: Creative;
   rawContent: unknown;
+  /** If true, the modal opens with the edit fields visible. The pencil
+   *  button on the card sets this; clicking the card body leaves it false. */
+  startInEditMode?: boolean;
+  /** Called after a successful save so the parent can refetch the list. */
+  onSaved?: () => void;
 }) {
+  const api = useApiClient();
+  const [editing, setEditing] = useState(startInEditMode);
+  const [name, setName] = useState(creative.name);
+  // For attaching an image to a copy-only creative. Mirrors the small subset
+  // of state UploadCreativeModal manages — we don't need URL paste here;
+  // device upload is enough.
+  const [file, setFile] = useState<File | null>(null);
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Edit-mode copy state. We keep a local mutable copy of each variant array
+  // so the user can tweak text inline without clobbering the original until
+  // they hit Save. `picked` tracks which variant in each array the user wants
+  // as the default — at save time we reorder so picked lands at index [0].
+  const [edited, setEdited] = useState({
+    headlines: [] as string[],
+    primary_texts: [] as string[],
+    descriptions: [] as string[],
+    ctas: [] as string[],
+  });
+  const [picked, setPicked] = useState({
+    headline: 0,
+    primaryText: 0,
+    description: 0,
+    cta: 0,
+  });
+
+  // Reset local state every time the modal opens. Otherwise a previous
+  // edit/attach can leak across creatives.
+  useEffect(() => {
+    if (open) {
+      setEditing(startInEditMode);
+      setName(creative.name);
+      setFile(null);
+      setSaving(false);
+      // Snapshot the copy arrays from rawContent. If a field is missing or
+      // malformed we fall back to [] so the section just renders empty.
+      const c =
+        rawContent && typeof rawContent === "object"
+          ? (rawContent as Record<string, unknown>)
+          : {};
+      const asStringArr = (v: unknown): string[] =>
+        Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
+      setEdited({
+        headlines: asStringArr(c.headlines),
+        primary_texts: asStringArr(c.primary_texts),
+        descriptions: asStringArr(c.descriptions),
+        ctas: asStringArr(c.ctas),
+      });
+      setPicked({ headline: 0, primaryText: 0, description: 0, cta: 0 });
+    }
+  }, [open, startInEditMode, creative.name, rawContent]);
+
+  // Object-URL lifecycle for the local file preview.
+  useEffect(() => {
+    if (!file) {
+      setFilePreviewUrl(null);
+      return;
+    }
+    const objUrl = URL.createObjectURL(file);
+    setFilePreviewUrl(objUrl);
+    return () => URL.revokeObjectURL(objUrl);
+  }, [file]);
+
+  function handlePickFile(picked: File | null) {
+    if (!picked) {
+      setFile(null);
+      return;
+    }
+    if (!picked.type.startsWith("image/")) {
+      toast.error("Pick an image file (JPEG, PNG, WebP, GIF)");
+      return;
+    }
+    if (picked.size > MAX_IMAGE_BYTES) {
+      toast.error(
+        `Image is ${(picked.size / 1024 / 1024).toFixed(1)} MB — Meta caps uploads at 8 MB`
+      );
+      return;
+    }
+    setFile(picked);
+  }
+
+  async function handleSave() {
+    if (saving) return;
+    const trimmed = name.trim();
+    if (!trimmed) {
+      toast.error("Name can't be empty");
+      return;
+    }
+    // Strip empty lines after edit (a user can blank a chip to delete it).
+    const cleaned = {
+      headlines: edited.headlines.map((s) => s.trim()).filter(Boolean),
+      primary_texts: edited.primary_texts.map((s) => s.trim()).filter(Boolean),
+      descriptions: edited.descriptions.map((s) => s.trim()).filter(Boolean),
+      ctas: edited.ctas.map((s) => s.trim()).filter(Boolean),
+    };
+    setSaving(true);
+    try {
+      // Build the new content payload. If the user attached an image,
+      // upload it via Meta first and merge the resulting URL into whatever
+      // copy fields the creative already has (so AI variants survive).
+      const baseContent =
+        rawContent && typeof rawContent === "object"
+          ? (rawContent as Record<string, unknown>)
+          : {};
+      let nextContent: Record<string, unknown> = { ...baseContent };
+      if (file) {
+        const result = await api.uploadMetaImage(file);
+        nextContent.url = result.url;
+      }
+      // Reorder each array so the picked variant lands at index [0] —
+      // this is what makes "picking a default" actually take effect when
+      // the creative is used in the publish wizard later.
+      if (cleaned.headlines.length)
+        nextContent.headlines = pickFirst(cleaned.headlines, picked.headline);
+      if (cleaned.primary_texts.length)
+        nextContent.primary_texts = pickFirst(
+          cleaned.primary_texts,
+          picked.primaryText
+        );
+      if (cleaned.descriptions.length)
+        nextContent.descriptions = pickFirst(
+          cleaned.descriptions,
+          picked.description
+        );
+      if (cleaned.ctas.length)
+        nextContent.ctas = pickFirst(cleaned.ctas, picked.cta);
+
+      await api.updateCreative(creative.id, {
+        name: trimmed,
+        content: nextContent,
+      });
+      toast.success("Creative updated");
+      onSaved?.();
+      setEditing(false);
+      onClose();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Update failed";
+      if (
+        msg.toLowerCase().includes("no meta") ||
+        msg.toLowerCase().includes("ad account")
+      ) {
+        toast.error(
+          "Connect a Meta ad account first (Settings → Integrations) to attach an image"
+        );
+      } else {
+        toast.error(msg);
+      }
+      setSaving(false);
+    }
+  }
+
   // Pluck the AI-generated copy arrays. If this isn't an AI creative, these
   // will all be undefined and the modal falls back to whatever it has.
   const copy =
@@ -1163,32 +1355,73 @@ function CreativeDetailModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} size="lg" ariaLabel={creative.name}>
+    <Modal
+      open={open}
+      onClose={saving ? () => {} : onClose}
+      size="lg"
+      ariaLabel={creative.name}
+      closeOnBackdrop={!saving}
+      closeOnEscape={!saving}
+    >
       <ModalHeader>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h2 className="truncate text-base font-bold text-slate-900">
-              {creative.name}
-            </h2>
-            {creative.aiGenerated && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary ring-1 ring-primary/20">
-                <Sparkles className="h-2.5 w-2.5" />
-                AI
-              </span>
-            )}
-          </div>
-          <p className="mt-0.5 text-[11px] font-medium text-slate-500">
-            {creative.type} · created {creative.createdAt}
-          </p>
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Name
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Creative name"
+                maxLength={120}
+                disabled={saving}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60"
+              />
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h2 className="truncate text-base font-bold text-slate-900">
+                {creative.name}
+              </h2>
+              {creative.aiGenerated && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary ring-1 ring-primary/20">
+                  <Sparkles className="h-2.5 w-2.5" />
+                  AI
+                </span>
+              )}
+            </div>
+          )}
+          {!editing && (
+            <p className="mt-0.5 text-[11px] font-medium text-slate-500">
+              {creative.type} · created {creative.createdAt}
+            </p>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {!editing && (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              aria-label="Edit"
+              title="Edit"
+              className="flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-primary/40 hover:text-primary"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            disabled={saving}
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </ModalHeader>
 
       <ModalBody className="space-y-5">
@@ -1214,46 +1447,183 @@ function CreativeDetailModal({
             </div>
           )}
 
-          {/* Needs-an-image hint when AI copy creative has no upload yet */}
-          {!creative.url && creative.aiGenerated && hasCopy && (
-            <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3 text-[12px] text-amber-900">
-              <strong>Next step:</strong> upload an image for this ad via{" "}
-              <strong>Upload Creative</strong> on the main page. The copy below
-              is ready to use when you launch the campaign.
+          {/* Attach-image picker — shown in edit mode when no media exists. */}
+          {editing && !creative.url && (
+            <div>
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-600">
+                Attach image
+              </label>
+              {filePreviewUrl ? (
+                <div className="relative overflow-hidden rounded-xl border border-slate-200">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={filePreviewUrl}
+                    alt="New image preview"
+                    className="aspect-video w-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setFile(null)}
+                    disabled={saving}
+                    aria-label="Remove image"
+                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-lg bg-white/95 text-rose-600 shadow-sm ring-1 ring-rose-200 backdrop-blur transition hover:bg-rose-50 disabled:opacity-60"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <label
+                  className={clsx(
+                    "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center transition hover:border-primary/40 hover:bg-slate-100",
+                    saving && "pointer-events-none opacity-60"
+                  )}
+                >
+                  <input
+                    type="file"
+                    accept={ACCEPTED_IMAGE_TYPES}
+                    onChange={(e) => handlePickFile(e.target.files?.[0] ?? null)}
+                    className="hidden"
+                    disabled={saving}
+                  />
+                  <Upload className="h-5 w-5 text-slate-500" />
+                  <p className="text-xs font-semibold text-slate-700">
+                    Click to pick an image
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    JPEG / PNG / WebP / GIF · up to 8 MB
+                  </p>
+                </label>
+              )}
+              <p className="mt-2 text-[11px] text-slate-500">
+                The image is uploaded to your Meta ad account and attached to
+                this creative so it can be used in a campaign.
+              </p>
             </div>
           )}
 
-          {/* AI-generated copy sections */}
-          {headlines.length > 0 && (
+          {/* Needs-an-image hint when AI copy creative has no upload yet
+              and the user isn't already in edit mode. */}
+          {!editing && !creative.url && creative.aiGenerated && hasCopy && (
+            <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3 text-[12px] text-amber-900">
+              <strong>Next step:</strong> click <strong>Edit</strong> above
+              and attach an image. The copy below is ready to use when you
+              launch the campaign.
+            </div>
+          )}
+
+          {/* Helper banner when editing copy variants — keep users oriented. */}
+          {editing && hasCopy && (
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+              <div className="flex items-start gap-2 text-[11px] leading-relaxed text-indigo-900">
+                <Check
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-600"
+                  strokeWidth={3}
+                />
+                <p>
+                  <strong>Tap a row to pick it as the default.</strong> Tap
+                  the pencil to edit the text. The picked variant becomes
+                  the default that pre-fills your next campaign — the rest
+                  stay as swap options.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* AI-generated copy sections — flip to editable arrays in edit mode. */}
+          {(editing ? edited.headlines : headlines).length > 0 && (
             <CopySection
               title="Headlines"
               hint="≤ 40 chars · pick the strongest"
-              items={headlines}
+              items={editing ? edited.headlines : headlines}
               onCopy={copyToClipboard}
+              selectedIndex={editing ? picked.headline : undefined}
+              onSelect={
+                editing
+                  ? (i) => setPicked((p) => ({ ...p, headline: i }))
+                  : undefined
+              }
+              onEdit={
+                editing
+                  ? (i, next) =>
+                      setEdited((e) => {
+                        const arr = [...e.headlines];
+                        arr[i] = next;
+                        return { ...e, headlines: arr };
+                      })
+                  : undefined
+              }
             />
           )}
-          {primaryTexts.length > 0 && (
+          {(editing ? edited.primary_texts : primaryTexts).length > 0 && (
             <CopySection
               title="Primary text"
               hint="≤ 125 chars · the body of the ad"
-              items={primaryTexts}
+              items={editing ? edited.primary_texts : primaryTexts}
               onCopy={copyToClipboard}
+              selectedIndex={editing ? picked.primaryText : undefined}
+              onSelect={
+                editing
+                  ? (i) => setPicked((p) => ({ ...p, primaryText: i }))
+                  : undefined
+              }
+              onEdit={
+                editing
+                  ? (i, next) =>
+                      setEdited((e) => {
+                        const arr = [...e.primary_texts];
+                        arr[i] = next;
+                        return { ...e, primary_texts: arr };
+                      })
+                  : undefined
+              }
             />
           )}
-          {descriptions.length > 0 && (
+          {(editing ? edited.descriptions : descriptions).length > 0 && (
             <CopySection
               title="Descriptions"
               hint="Sub-headline shown under the headline"
-              items={descriptions}
+              items={editing ? edited.descriptions : descriptions}
               onCopy={copyToClipboard}
+              selectedIndex={editing ? picked.description : undefined}
+              onSelect={
+                editing
+                  ? (i) => setPicked((p) => ({ ...p, description: i }))
+                  : undefined
+              }
+              onEdit={
+                editing
+                  ? (i, next) =>
+                      setEdited((e) => {
+                        const arr = [...e.descriptions];
+                        arr[i] = next;
+                        return { ...e, descriptions: arr };
+                      })
+                  : undefined
+              }
             />
           )}
-          {ctas.length > 0 && (
+          {(editing ? edited.ctas : ctas).length > 0 && (
             <CopySection
               title="Call-to-action"
               hint="Button label shown on the ad"
-              items={ctas}
+              items={editing ? edited.ctas : ctas}
               onCopy={copyToClipboard}
+              selectedIndex={editing ? picked.cta : undefined}
+              onSelect={
+                editing
+                  ? (i) => setPicked((p) => ({ ...p, cta: i }))
+                  : undefined
+              }
+              onEdit={
+                editing
+                  ? (i, next) =>
+                      setEdited((e) => {
+                        const arr = [...e.ctas];
+                        arr[i] = next;
+                        return { ...e, ctas: arr };
+                      })
+                  : undefined
+              }
             />
           )}
 
@@ -1268,6 +1638,41 @@ function CreativeDetailModal({
             </div>
           )}
       </ModalBody>
+
+      {editing && (
+        <ModalFooter>
+          <button
+            type="button"
+            onClick={() => {
+              setEditing(false);
+              setName(creative.name);
+              setFile(null);
+            }}
+            disabled={saving}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="btn-brand"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4" strokeWidth={2.5} />
+                Save changes
+              </>
+            )}
+          </button>
+        </ModalFooter>
+      )}
     </Modal>
   );
 }
@@ -1277,38 +1682,173 @@ function CopySection({
   hint,
   items,
   onCopy,
+  selectedIndex,
+  onSelect,
+  onEdit,
 }: {
   title: string;
   hint: string;
   items: string[];
   onCopy: (text: string) => void;
+  /** When provided, the section renders in "edit / pick" mode: rows are
+   *  clickable to set the default, and a pencil reveals an inline editor. */
+  selectedIndex?: number;
+  onSelect?: (index: number) => void;
+  onEdit?: (index: number, next: string) => void;
 }) {
+  const isEditMode = onSelect !== undefined && onEdit !== undefined;
+  // Only one row at a time can be open for inline editing. Tracked locally
+  // so the parent doesn't have to know about transient draft state.
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+
+  function commitEdit(i: number) {
+    if (!onEdit) return;
+    onEdit(i, draft);
+    setEditingIdx(null);
+  }
+  function cancelEdit() {
+    setEditingIdx(null);
+    setDraft("");
+  }
+
   return (
     <div>
       <div className="mb-2 flex items-baseline justify-between">
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
           {title}
+          {isEditMode && items.length > 0 && (
+            <span className="ml-1.5 text-[10px] font-medium text-slate-400">
+              · {items.length} options
+            </span>
+          )}
         </h3>
         <span className="text-[10px] font-medium text-slate-400">{hint}</span>
       </div>
       <ul className="space-y-1.5">
-        {items.map((line, i) => (
-          <li
-            key={i}
-            className="group flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 transition hover:border-slate-300 hover:bg-slate-50"
-          >
-            <p className="flex-1 text-sm leading-snug text-slate-800">{line}</p>
-            <button
-              type="button"
-              onClick={() => onCopy(line)}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-white hover:text-slate-700"
-              aria-label={`Copy "${line}"`}
-              title="Copy"
+        {items.map((line, i) => {
+          const isSelected = isEditMode && selectedIndex === i;
+          const isInlineEditing = editingIdx === i;
+          return (
+            <li
+              key={i}
+              onClick={
+                isEditMode && !isInlineEditing
+                  ? () => onSelect?.(i)
+                  : undefined
+              }
+              className={clsx(
+                "group flex items-start justify-between gap-3 rounded-xl border px-3 py-2 transition",
+                isEditMode && !isInlineEditing && "cursor-pointer",
+                isSelected
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                  : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+              )}
             >
-              <Copy className="h-3.5 w-3.5" />
-            </button>
-          </li>
-        ))}
+              {isInlineEditing ? (
+                <input
+                  type="text"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitEdit(i);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelEdit();
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  autoFocus
+                  className="flex-1 rounded-md border border-primary/40 bg-white px-2 py-1 text-sm leading-snug text-slate-900 outline-none ring-2 ring-primary/15"
+                />
+              ) : (
+                <div className="flex flex-1 items-start gap-2">
+                  {isEditMode && (
+                    <span
+                      className={clsx(
+                        "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition",
+                        isSelected
+                          ? "border-primary bg-primary text-white"
+                          : "border-slate-300 bg-white"
+                      )}
+                      aria-hidden
+                    >
+                      {isSelected && (
+                        <Check className="h-2.5 w-2.5" strokeWidth={4} />
+                      )}
+                    </span>
+                  )}
+                  <p className="flex-1 text-sm leading-snug text-slate-800">
+                    {line}
+                  </p>
+                </div>
+              )}
+
+              <div className="flex shrink-0 items-center gap-1">
+                {isInlineEditing ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        commitEdit(i);
+                      }}
+                      title="Save"
+                      aria-label="Save edit"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-emerald-600 hover:bg-emerald-50"
+                    >
+                      <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cancelEdit();
+                      }}
+                      title="Cancel"
+                      aria-label="Cancel edit"
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {isEditMode && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingIdx(i);
+                          setDraft(line);
+                        }}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-white hover:text-primary"
+                        aria-label={`Edit "${line}"`}
+                        title="Edit"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onCopy(line);
+                      }}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-white hover:text-slate-700"
+                      aria-label={`Copy "${line}"`}
+                      title="Copy"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -1509,6 +2049,16 @@ function AIGenerateModal({
   const [tone, setTone] = useState<Tone>("professional");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CopyResult | null>(null);
+  // Index of the user's chosen variant within each result array. Defaults
+  // to 0 (the AI is prompted to put the strongest variant first), but the
+  // user can pick a different one before saving. The picked variant is then
+  // moved to index 0 when saving so the publish wizard auto-fills with it.
+  const [picked, setPicked] = useState({
+    headline: 0,
+    primaryText: 0,
+    description: 0,
+    cta: 0,
+  });
 
   useEffect(() => {
     if (!open) {
@@ -1516,10 +2066,18 @@ function AIGenerateModal({
         setBrief("");
         setResult(null);
         setLoading(false);
+        setPicked({ headline: 0, primaryText: 0, description: 0, cta: 0 });
       }, 250);
       return () => clearTimeout(t);
     }
   }, [open]);
+
+  // Reset picks whenever a fresh result lands.
+  useEffect(() => {
+    if (result) {
+      setPicked({ headline: 0, primaryText: 0, description: 0, cta: 0 });
+    }
+  }, [result]);
 
   useEffect(() => {
     if (!open) return;
@@ -1733,20 +2291,42 @@ function AIGenerateModal({
           {/* Results */}
           {result && (
             <div className="space-y-4 pt-2 animate-in">
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                <div className="flex items-start gap-2 text-[11px] leading-relaxed text-indigo-900">
+                  <Check
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-600"
+                    strokeWidth={3}
+                  />
+                  <p>
+                    <strong>Tap any variant to pick it.</strong> The picked
+                    one becomes the default when this creative is used in a
+                    campaign — the rest are kept as swap options.
+                  </p>
+                </div>
+              </div>
+
               <div className="border-t border-slate-100 pt-4">
                 <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Headlines
+                  Headlines · {result.headlines?.length ?? 0} options
                 </h3>
                 <ul className="space-y-1.5">
                   {result.headlines?.map((h, i) => (
-                    <CopyItem key={`h-${i}`} text={h} onCopy={copyToClipboard} />
+                    <CopyItem
+                      key={`h-${i}`}
+                      text={h}
+                      onCopy={copyToClipboard}
+                      selected={picked.headline === i}
+                      onSelect={() =>
+                        setPicked((p) => ({ ...p, headline: i }))
+                      }
+                    />
                   ))}
                 </ul>
               </div>
 
               <div>
                 <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Primary Texts
+                  Primary Texts · {result.primary_texts?.length ?? 0} options
                 </h3>
                 <ul className="space-y-1.5">
                   {result.primary_texts?.map((p, i) => (
@@ -1755,6 +2335,10 @@ function AIGenerateModal({
                       text={p}
                       onCopy={copyToClipboard}
                       multiline
+                      selected={picked.primaryText === i}
+                      onSelect={() =>
+                        setPicked((pp) => ({ ...pp, primaryText: i }))
+                      }
                     />
                   ))}
                 </ul>
@@ -1763,7 +2347,7 @@ function AIGenerateModal({
               {result.descriptions && result.descriptions.length > 0 && (
                 <div>
                   <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Descriptions
+                    Descriptions · {result.descriptions.length} options
                   </h3>
                   <ul className="space-y-1.5">
                     {result.descriptions.map((d, i) => (
@@ -1771,6 +2355,10 @@ function AIGenerateModal({
                         key={`d-${i}`}
                         text={d}
                         onCopy={copyToClipboard}
+                        selected={picked.description === i}
+                        onSelect={() =>
+                          setPicked((p) => ({ ...p, description: i }))
+                        }
                       />
                     ))}
                   </ul>
@@ -1779,19 +2367,32 @@ function AIGenerateModal({
 
               <div>
                 <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                  CTAs
+                  CTAs · {result.ctas?.length ?? 0} options
                 </h3>
                 <div className="flex flex-wrap gap-2">
-                  {result.ctas?.map((c, i) => (
-                    <button
-                      key={`c-${i}`}
-                      type="button"
-                      onClick={() => copyToClipboard(c)}
-                      className="rounded-full bg-primary px-3.5 py-1.5 text-xs font-bold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-glow"
-                    >
-                      {c}
-                    </button>
-                  ))}
+                  {result.ctas?.map((c, i) => {
+                    const isPicked = picked.cta === i;
+                    return (
+                      <button
+                        key={`c-${i}`}
+                        type="button"
+                        onClick={() =>
+                          setPicked((p) => ({ ...p, cta: i }))
+                        }
+                        className={clsx(
+                          "inline-flex items-center gap-1.5 rounded-full border-2 px-3.5 py-1.5 text-xs font-bold transition",
+                          isPicked
+                            ? "border-primary bg-primary text-white shadow-sm"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-primary/40 hover:text-primary"
+                        )}
+                      >
+                        {isPicked && (
+                          <Check className="h-3 w-3" strokeWidth={3} />
+                        )}
+                        {c}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1806,11 +2407,27 @@ function AIGenerateModal({
                       carousel: "CAROUSEL",
                       text: "TEXT",
                     };
+                    // Reorder each array so the user's picked variant lands
+                    // at index [0]. The publish wizard auto-fills from [0],
+                    // so this is what makes "pick a variant" actually stick
+                    // when the creative gets used later.
+                    const reordered = {
+                      headlines: pickFirst(result.headlines, picked.headline),
+                      primary_texts: pickFirst(
+                        result.primary_texts,
+                        picked.primaryText
+                      ),
+                      descriptions: pickFirst(
+                        result.descriptions,
+                        picked.description
+                      ),
+                      ctas: pickFirst(result.ctas, picked.cta),
+                    };
                     await onSave({
                       type: typeMap[kind],
                       platform,
                       objective,
-                      content: { ...result, brief, tone },
+                      content: { ...reordered, brief, tone },
                     });
                     onClose();
                   }}
@@ -1836,27 +2453,75 @@ function AIGenerateModal({
   );
 }
 
+/**
+ * Return a copy of `arr` with the item at `idx` moved to position 0. Used
+ * when saving an AI creative — the wizard auto-fills from index [0], so
+ * putting the user's pick first makes the chosen variant the default.
+ */
+function pickFirst<T>(arr: T[] | undefined, idx: number): T[] {
+  if (!arr || arr.length === 0) return [];
+  if (idx <= 0 || idx >= arr.length) return arr;
+  const out = [...arr];
+  const [picked] = out.splice(idx, 1);
+  out.unshift(picked);
+  return out;
+}
+
 function CopyItem({
   text,
   onCopy,
   multiline,
+  selected = false,
+  onSelect,
 }: {
   text: string;
   onCopy: (t: string) => void;
   multiline?: boolean;
+  /** When true, this variant is the user's pick — gets a clear visual
+   *  highlight + a checkmark icon. */
+  selected?: boolean;
+  /** Click the row (not the copy icon) to select. Stop-propagation on the
+   *  copy icon keeps the two interactions cleanly separated. */
+  onSelect?: () => void;
 }) {
   return (
     <li
       className={clsx(
-        "group flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 transition hover:border-primary/30 hover:bg-primary/[0.04]",
+        "group flex cursor-pointer items-start gap-2 rounded-lg border-2 px-3 py-2 transition",
+        selected
+          ? "border-primary bg-primary/10 shadow-sm"
+          : "border-slate-200 bg-slate-50/50 hover:border-primary/40 hover:bg-primary/[0.04]",
         multiline ? "items-start" : "items-center"
       )}
+      onClick={onSelect}
     >
-      <p className="flex-1 text-xs leading-relaxed text-slate-700">{text}</p>
+      <div
+        className={clsx(
+          "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition",
+          selected
+            ? "border-primary bg-primary text-white"
+            : "border-slate-300 bg-white text-transparent group-hover:border-primary/60"
+        )}
+        aria-hidden
+      >
+        <Check className="h-2.5 w-2.5" strokeWidth={4} />
+      </div>
+      <p
+        className={clsx(
+          "flex-1 text-xs leading-relaxed",
+          selected ? "font-semibold text-slate-900" : "text-slate-700"
+        )}
+      >
+        {text}
+      </p>
       <button
         type="button"
-        onClick={() => onCopy(text)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onCopy(text);
+        }}
         aria-label="Copy"
+        title="Copy to clipboard"
         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white hover:text-primary"
       >
         <Copy className="h-3.5 w-3.5" />

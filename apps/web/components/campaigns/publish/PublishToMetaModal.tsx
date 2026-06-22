@@ -28,6 +28,7 @@ import {
 import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
+import { MetaAdPreview } from "./MetaAdPreview";
 import type {
   Campaign,
   MetaPage,
@@ -84,6 +85,16 @@ interface WizardState {
   headline: string;
   message: string;
   description: string;
+  // When the user picks a library creative that came from AI Generate, we
+  // populate all the alternate variants here so they can swap between them
+  // via inline chips below each field. Empty arrays = no variants to pick.
+  headlineVariants: string[];
+  messageVariants: string[];
+  descriptionVariants: string[];
+  // CTA variants come from the AI as free text ("Shop now", "Learn more")
+  // but Meta's CTA field is a fixed enum. We store the enum-mapped variants
+  // so the chips can directly patch `callToAction`.
+  ctaVariants: MetaCallToAction[];
   linkUrl: string;
   callToAction: MetaCallToAction;
   uploading: boolean;
@@ -483,6 +494,10 @@ function initialState(c: Campaign): WizardState {
     headline: c.name,
     message: "",
     description: "",
+    headlineVariants: [],
+    messageVariants: [],
+    descriptionVariants: [],
+    ctaVariants: [],
     linkUrl: "https://",
     callToAction: "LEARN_MORE",
     uploading: false,
@@ -888,6 +903,14 @@ function Step5Creative({
                   imageUrl: null,
                   libraryCreativeId: null,
                   libraryCreativeName: null,
+                  // Don't reset the copy fields — the user might want to keep
+                  // the AI-generated headline/body while switching the image
+                  // source. We only reset the *variant chips* because they're
+                  // tied to a specific library creative.
+                  headlineVariants: [],
+                  messageVariants: [],
+                  descriptionVariants: [],
+                  ctaVariants: [],
                 })
               }
               className={clsx(
@@ -923,6 +946,13 @@ function Step5Creative({
               {creativesQ.data.creatives.map((c) => {
                 const selected = state.libraryCreativeId === c.id;
                 const img = extractImageUrl(c);
+                // Auto-populate copy fields from the library creative's AI-
+                // generated content. Previously we only pulled the image and
+                // left headline/body/CTA whatever the user had typed — making
+                // the library effectively useless for any creative that had
+                // copy attached. Now picking a library creative behaves like
+                // a single-click "fill the form from this preset".
+                const copyPatch = extractCopyFields(c);
                 return (
                   <button
                     key={c.id}
@@ -933,6 +963,7 @@ function Step5Creative({
                         libraryCreativeName: c.name,
                         imageUrl: img,
                         imageHash: null,
+                        ...copyPatch,
                       })
                     }
                     className={clsx(
@@ -960,6 +991,39 @@ function Step5Creative({
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {/* Library creative is selected but has no image — guide the user
+              to add one. Switching tabs preserves headline/body/description
+              so the AI copy survives the source switch. */}
+          {state.libraryCreativeId && !state.imageUrl && (
+            <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+              <ImageIcon
+                className="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
+                strokeWidth={2.25}
+              />
+              <div className="flex-1 text-xs leading-relaxed text-amber-900">
+                <strong>This creative has copy but no image.</strong> Switch to{" "}
+                <strong>Upload new</strong> or <strong>Paste URL</strong> above
+                to add one — your headline, body, and CTA will stay filled in.
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  patch({
+                    creativeSource: "upload",
+                    imageHash: null,
+                    imageUrl: null,
+                    libraryCreativeId: null,
+                    libraryCreativeName: null,
+                    // Keep variants so user can still swap copy after upload.
+                  })
+                }
+                className="shrink-0 rounded-lg bg-amber-900 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-sm transition hover:bg-amber-800"
+              >
+                Upload now
+              </button>
             </div>
           )}
         </div>
@@ -1074,6 +1138,11 @@ function Step5Creative({
           <div className="mt-1 text-right text-[11px] text-slate-400">
             {state.message.length}/2200
           </div>
+          <VariantChips
+            variants={state.messageVariants}
+            currentValue={state.message}
+            onPick={(v) => patch({ message: v })}
+          />
         </div>
 
         <div>
@@ -1091,6 +1160,11 @@ function Step5Creative({
           <div className="mt-1 text-right text-[11px] text-slate-400">
             {state.headline.length}/40
           </div>
+          <VariantChips
+            variants={state.headlineVariants}
+            currentValue={state.headline}
+            onPick={(v) => patch({ headline: v })}
+          />
         </div>
 
         <div>
@@ -1104,6 +1178,11 @@ function Step5Creative({
             maxLength={120}
             placeholder="Subtitle below headline"
             className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
+          />
+          <VariantChips
+            variants={state.descriptionVariants}
+            currentValue={state.description}
+            onPick={(v) => patch({ description: v })}
           />
         </div>
 
@@ -1139,6 +1218,22 @@ function Step5Creative({
             </select>
           </div>
         </div>
+        {state.ctaVariants.length > 1 && (
+          <VariantChips
+            label="AI suggested CTAs"
+            variants={state.ctaVariants.map(
+              (v) => CTA_OPTIONS.find((o) => o.value === v)?.label ?? v
+            )}
+            currentValue={
+              CTA_OPTIONS.find((o) => o.value === state.callToAction)?.label ??
+              state.callToAction
+            }
+            onPick={(label) => {
+              const opt = CTA_OPTIONS.find((o) => o.label === label);
+              if (opt) patch({ callToAction: opt.value });
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -1264,19 +1359,18 @@ function Step6Review({
         </div>
       </div>
 
-      {state.imageUrl && (
-        <div>
-          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
-            Image preview
-          </label>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={state.imageUrl}
-            alt="Creative preview"
-            className="max-h-60 rounded-xl border border-slate-200 object-contain"
-          />
-        </div>
-      )}
+      <MetaAdPreview
+        pageName={state.pageName || "Your Page"}
+        imageUrl={state.imageUrl}
+        message={state.message}
+        headline={state.headline}
+        description={state.description}
+        linkUrl={state.linkUrl}
+        callToAction={
+          CTA_OPTIONS.find((c) => c.value === state.callToAction)?.label ??
+          state.callToAction
+        }
+      />
     </div>
   );
 }
@@ -1737,6 +1831,139 @@ function extractImageUrl(c: Creative): string | null {
   if (typeof obj.url === "string") return obj.url;
   if (typeof obj.image === "string") return obj.image;
   return null;
+}
+
+/**
+ * When the user picks a library creative whose content includes AI-generated
+ * copy (headlines, primary_texts, descriptions, ctas — the shape produced by
+ * our /api/ai/generate-copy endpoint), pull out the first variant of each
+ * field so the publish wizard form auto-populates. Returns a partial patch
+ * for the wizard state.
+ *
+ * We pick item [0] from each array because the AI is prompted to put the
+ * "pick the strongest" variant first. The remaining variants come back via
+ * the *Variants arrays so the wizard can render swap chips below each field.
+ */
+function extractCopyFields(c: Creative): {
+  headline?: string;
+  message?: string;
+  description?: string;
+  callToAction?: MetaCallToAction;
+  headlineVariants?: string[];
+  messageVariants?: string[];
+  descriptionVariants?: string[];
+  ctaVariants?: MetaCallToAction[];
+} {
+  if (!c.content || typeof c.content !== "object") return {};
+  const obj = c.content as {
+    headlines?: unknown;
+    primary_texts?: unknown;
+    descriptions?: unknown;
+    ctas?: unknown;
+  };
+
+  const headlines = sanitizeStringArray(obj.headlines).map((s) => s.slice(0, 40));
+  const messages = sanitizeStringArray(obj.primary_texts).map((s) => s.slice(0, 125));
+  const descs = sanitizeStringArray(obj.descriptions).map((s) => s.slice(0, 30));
+  // Map AI's free-text CTAs ("Shop now", "Learn more") onto Meta's enum.
+  // De-dupe by enum so we don't show three different chips that all map to
+  // LEARN_MORE.
+  const ctas = sanitizeStringArray(obj.ctas)
+    .map(mapAiCtaToEnum)
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+
+  const out: ReturnType<typeof extractCopyFields> = {};
+  if (headlines.length) {
+    out.headline = headlines[0];
+    out.headlineVariants = headlines;
+  }
+  if (messages.length) {
+    out.message = messages[0];
+    out.messageVariants = messages;
+  }
+  if (descs.length) {
+    out.description = descs[0];
+    out.descriptionVariants = descs;
+  }
+  if (ctas.length) {
+    out.callToAction = ctas[0];
+    out.ctaVariants = ctas;
+  }
+  return out;
+}
+
+/**
+ * Renders a row of AI-generated variant suggestions under a copy field. The
+ * currently-selected variant is highlighted; clicking another swaps it in.
+ * Doesn't render anything when there's only one (or zero) variant — no point
+ * showing a "swap" UI when there's nothing to swap to.
+ */
+function VariantChips({
+  variants,
+  currentValue,
+  onPick,
+  label = "AI variants",
+}: {
+  variants: string[];
+  currentValue: string;
+  onPick: (variant: string) => void;
+  label?: string;
+}) {
+  if (!variants || variants.length < 2) return null;
+  return (
+    <div className="mt-2 space-y-1">
+      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+        <Sparkles className="h-3 w-3" strokeWidth={2.5} />
+        {label}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {variants.map((v, i) => {
+          const isActive = v === currentValue;
+          return (
+            <button
+              key={`${i}-${v}`}
+              type="button"
+              onClick={() => onPick(v)}
+              className={clsx(
+                "max-w-full truncate rounded-full border px-2.5 py-1 text-[11px] font-medium transition",
+                isActive
+                  ? "border-primary bg-primary text-white shadow-sm"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+              )}
+              title={v}
+            >
+              {v}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function sanitizeStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+}
+
+/**
+ * Fuzzy-map an AI-generated CTA string to the closest Meta enum value.
+ * Falls back to LEARN_MORE because it's the safest default — works for
+ * almost any campaign type and never flags Meta's review.
+ */
+function mapAiCtaToEnum(text: string): MetaCallToAction {
+  const t = text.toLowerCase().trim();
+  if (/shop|buy|cart/.test(t)) return "SHOP_NOW";
+  if (/sign[- ]?up|join|register/.test(t)) return "SIGN_UP";
+  if (/download|install/.test(t)) return "DOWNLOAD";
+  if (/quote|estimate|pricing/.test(t)) return "GET_QUOTE";
+  if (/subscribe/.test(t)) return "SUBSCRIBE";
+  if (/contact|reach/.test(t)) return "CONTACT_US";
+  if (/apply/.test(t)) return "APPLY_NOW";
+  if (/book|reserve|schedule/.test(t)) return "BOOK_TRAVEL";
+  if (/watch|view/.test(t)) return "WATCH_MORE";
+  if (/order/.test(t)) return "ORDER_NOW";
+  return "LEARN_MORE";
 }
 
 function formatBig(n: number): string {
