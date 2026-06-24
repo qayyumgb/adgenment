@@ -26,6 +26,17 @@ export function errorHandler(
     return res.status(404).json({ error: "Resource not found" });
   }
 
+  // multer upload errors (oversized file, too many files, etc.) are client
+  // errors, not 500s. LIMIT_FILE_SIZE is the common one — the 10MB cap on
+  // image uploads (Meta /upload-image, AI reference images).
+  if (err.name === "MulterError") {
+    const msg =
+      err.code === "LIMIT_FILE_SIZE"
+        ? "File is too large (max 10MB)."
+        : "File upload failed. Check the file and try again.";
+    return res.status(400).json({ error: msg });
+  }
+
   // Custom domain errors
   if (err.message === "NO_WORKSPACE") {
     return res.status(404).json({

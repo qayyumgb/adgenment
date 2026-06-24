@@ -106,6 +106,106 @@ These patterns are FREE to borrow. They don't require image generation infrastru
 
 ---
 
+## ✍️ Separate raw image-prompt field (power-user mode)
+
+**Status:** Deferred
+**Earliest start:** When a user asks for finer control over the generated image, OR when we ship reference-image upload (natural time to rework the generate flow)
+**Inspired by:** User request 2026-06-24 (wanting a full photographer/CGI-style prompt that controls the image directly)
+
+### What it is
+
+Today the AI Generate modal has ONE input — the `brief`. It feeds **both** the copy generator (headlines / primary text / descriptions / CTAs) **and** the image generator (wrapped by `buildAdImagePrompt`). That's great for "describe your ad idea, get everything" but it means a user can't write a detailed, image-only prompt (lighting, lens, composition, "place the product on a marble counter in morning light…") without that text also polluting copy generation and producing odd headlines.
+
+This feature adds an **optional second field**: a raw image prompt that goes *straight to the image model untouched*, bypassing `buildAdImagePrompt`. When filled, it overrides the brief-derived image prompt; the brief still drives copy. When empty, behaviour is exactly as today (one brief → both).
+
+UI sketch:
+- A collapsible "Advanced: image prompt" section under the main brief (collapsed by default — keep the simple path simple).
+- Textarea pre-fillable from a photographer-style template (the verbatim reference the user shared: "You are a professional product photographer and CGI artist…").
+- Small note: "Overrides the auto-generated image prompt. Copy still comes from the brief above."
+
+### Why we want it
+
+- **Power users / agencies** want deterministic control over the visual, not an AI's interpretation of a marketing brief.
+- Pairs naturally with **reference-image upload** (deferred) — a product-placement prompt only makes sense once you can attach the product photo.
+- Cheap to build relative to its perceived value (it's a field + a branch in the generate flow, not new infra).
+
+### Why we are NOT building it yet
+
+| Constraint | Reality |
+|---|---|
+| **Demand unproven** | One user mentioned it once. The single-brief flow covers the 90% case. Don't add a second input (and the "which prompt wins?" mental model) until someone actually hits the ceiling. |
+| **Better with image upload** | The most compelling use (place *my* product into a scene) needs reference-image upload, which is itself deferred. Building the raw-prompt field first ships a half-feature. |
+| **Pipeline change** | `buildAdImagePrompt` currently owns the anti-text / no-logo / aspect rules that keep Meta from rejecting creatives. A raw override has to re-assert those guardrails (or risk text-in-image rejections), so it's not a pure passthrough. |
+
+### Prerequisite gates
+
+- [ ] A real user hits the limit of the single-brief flow and asks for image-only control, OR
+- [x] Reference-image upload (+ icon in the prompt bar) is being built — do both together *(shipped 2026-06-24: image-guided generation via OpenAI `/v1/images/edits`. This companion gate has cleared — the raw-prompt field can now be picked up whenever; it stays deferred until a user asks for image-only control.)*
+- [ ] Decide the guardrail story: does the raw prompt still get the anti-text / no-logo / size rules appended, or is the user fully on their own?
+
+### When the gate clears — how we'd approach it
+
+1. Add optional `imagePrompt` state in `AIGenerateModal`; collapsible "Advanced" section.
+2. In `generate()`, if `imagePrompt` is non-empty, send it to `/ai/generate-image` as a new `rawPrompt` field; route uses it verbatim (still appending the Meta-safety suffix unless we decide otherwise) instead of calling `buildAdImagePrompt`.
+3. Seed the field from a photographer/CGI template (the user's reference).
+4. Brief continues to drive copy generation untouched.
+5. When reference-image upload lands, add a product-placement template that references the uploaded image.
+
+---
+
+## 🖼️ Multi-provider image generation (FLUX schnell + OpenAI)
+
+**Status:** Deferred (decided 2026-06-24, build later)
+**Earliest start:** When we next iterate on image quality — likely right after App Review / first beta feedback, when weak `gpt-image-1-mini` output becomes a real complaint.
+**Inspired by:** Founder observation that `gpt-image-1-mini` quality is too low for shippable ad creatives.
+
+### What it is
+
+Run **two** image providers side by side instead of OpenAI alone, and route by
+the **outputs** count (the 1–3 chip in AI Generate):
+
+| Outputs requested | Provider split |
+|---|---|
+| **1** | **FLUX first** (FLUX.1 [schnell] on Fal) |
+| **2** | **1 from FLUX + 1 from OpenAI** (`gpt-image-1-mini`) — give the user a choice of styles |
+| **3** | TBD — likely 2 FLUX + 1 OpenAI (decide when building) |
+
+Rationale: FLUX.1 [schnell] is **better quality AND cheaper** than mini (~$0.003
+vs $0.005/img) and **Apache 2.0** (fully clear for commercial use, no
+self-hosting — runs serverless on Fal). Keeping OpenAI in the mix at outputs≥2
+gives stylistic variety (the two models have different "looks") and a built-in
+fallback if one provider is down.
+
+### Why we want it
+
+- **Quality** — the immediate driver. mini's output isn't good enough for ads.
+- **Cost** — FLUX schnell is cheaper per image, so leading with it at outputs=1 is a win on both axes.
+- **Variety + resilience** — two providers = two visual styles to pick from, and one degrades gracefully if the other fails (same best-effort pattern `generate()` already uses).
+
+### Why we are NOT building it yet
+
+| Constraint | Reality |
+|---|---|
+| **Not the current priority** | App Review + beta come first. Provider-swapping is polish, not a blocker. |
+| **New dependency + key** | Adds a Fal account, `FAL_KEY` env, and a second failure mode to monitor. Worth it, but not mid-App-Review. |
+| **Reference-image path needs porting** | The `+` reference feature currently uses OpenAI `/images/edits`. FLUX's equivalent is **FLUX.1 Kontext / img2img** on Fal — needs wiring before reference + FLUX work together. |
+
+### Prerequisite gates
+
+- [ ] Current OpenAI-only flow is stable in beta (no point adding a provider mid-instability)
+- [ ] Decide the outputs=3 split
+- [ ] Confirm Fal pricing + that FLUX schnell quality holds for *ad* imagery (not just demo prompts)
+
+### When the gate clears — how we'd approach it
+
+1. **Abstract the provider seam.** Today [openai-image.service.ts](apps/api/src/services/openai-image.service.ts) is OpenAI-specific. Introduce a small `ImageProvider` interface (`generateImage(prompt, aspect, reference?)`) with `OpenAIImageProvider` + `FalFluxProvider` implementations. This is the same seam we used for the Gemini→OpenAI swap.
+2. **Add `FalFluxProvider`** — Fal API, model `fal-ai/flux/schnell`; for the reference path use **FLUX.1 Kontext** (`fal-ai/flux-pro/kontext` or img2img variant) instead of `/images/edits`. New env: `FAL_KEY`.
+3. **Routing lives in the route, not the providers.** In `POST /ai/generate-image` (or a new batch endpoint), pick the provider per the outputs-count table above. Simplest: frontend keeps firing N parallel calls (as it does now) but tags each call with a `provider` hint, OR the backend owns the split. Backend-owned split is cleaner — one call with `outputs`, route fans out.
+4. **Keep OpenAI as fallback** — if FLUX errors, fall back to OpenAI for that slot rather than returning an empty image (mirror the existing `firstImageError` graceful-degrade logic in `generate()`).
+5. **Guardrails carry over** — `buildAdImagePrompt`'s anti-text/no-logo rules apply to FLUX too (FLUX also tends to render text); reuse the same prompt builder.
+
+---
+
 ## (Add more deferred features below this line as they come up)
 
 <!--

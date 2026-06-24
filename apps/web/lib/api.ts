@@ -559,6 +559,54 @@ export function useApiClient() {
         `/campaigns/${id}/launch`,
         { method: "POST", body: JSON.stringify({ status }) }
       ),
+    generateAdImage: async (params: {
+      brief?: string;
+      headline?: string;
+      description?: string;
+      /** Aspect ratio hint that selects the OpenAI image `size`. Defaults
+       *  to square (1:1 Feed) when omitted. */
+      aspect?: "square" | "portrait" | "landscape";
+      /** Optional reference product image. When present, generation routes
+       *  to OpenAI's /images/edits (image-guided) instead of text-to-image,
+       *  and we must send multipart FormData (apiFetch is JSON-only). */
+      image?: File | null;
+    }): Promise<{ url: string; hash: string; dataUrl: string }> => {
+      // `dataUrl` is a base64 data URI for browser preview; `url`/`hash`
+      // are the Meta /adimages handles used at publish time.
+      if (params.image) {
+        // Multipart path — mirror uploadMetaImage: Authorization header
+        // only, never set Content-Type (the browser fills the boundary).
+        const token = await getToken();
+        const form = new FormData();
+        if (params.brief) form.append("brief", params.brief);
+        if (params.headline) form.append("headline", params.headline);
+        if (params.description) form.append("description", params.description);
+        if (params.aspect) form.append("aspect", params.aspect);
+        form.append("image", params.image);
+        const res = await fetch(`${API_BASE}/api/ai/generate-image`, {
+          method: "POST",
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: form,
+        });
+        if (!res.ok) {
+          const err = await res
+            .json()
+            .catch(() => ({ error: `Image generation failed (${res.status})` }));
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        return res.json();
+      }
+      const { image: _omit, ...jsonParams } = params;
+      return apiFetch<{ url: string; hash: string; dataUrl: string }>(
+        "/ai/generate-image",
+        {
+          method: "POST",
+          body: JSON.stringify(jsonParams),
+        }
+      );
+    },
     };
   }, [getToken]);
 }

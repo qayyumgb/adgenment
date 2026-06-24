@@ -27,6 +27,7 @@ export function Modal({
   open,
   onClose,
   size = "md",
+  position = "center",
   closeOnBackdrop = true,
   closeOnEscape = true,
   ariaLabel,
@@ -35,6 +36,10 @@ export function Modal({
   open: boolean;
   onClose: () => void;
   size?: "sm" | "md" | "lg" | "xl";
+  /** "center" → traditional centered dialog (default).
+   *  "right" → right-side slide-in panel covering 90vw, used for the AI
+   *  Generate workspace where users want a roomier canvas-style surface. */
+  position?: "center" | "right";
   closeOnBackdrop?: boolean;
   closeOnEscape?: boolean;
   ariaLabel?: string;
@@ -83,6 +88,37 @@ export function Modal({
     lg: "max-w-2xl",
     xl: "max-w-4xl",
   }[size];
+
+  // Right-side slide-in panel — 90vw wide, full height, slides in from the
+  // right via the global `slide-in-right` keyframe + animate-* class. Center
+  // mode keeps the original capped-height centered dialog.
+  if (position === "right") {
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[100] flex animate-in"
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel}
+      >
+        <button
+          type="button"
+          aria-label="Close"
+          onClick={closeOnBackdrop ? onClose : undefined}
+          className="absolute inset-0 cursor-default bg-slate-900/70 backdrop-blur-sm"
+          tabIndex={-1}
+        />
+        <div
+          ref={dialogRef}
+          tabIndex={-1}
+          onClick={(e) => e.stopPropagation()}
+          className="relative z-10 ml-auto flex h-full w-[90vw] flex-col overflow-hidden bg-white shadow-2xl outline-none animate-slide-in-right"
+        >
+          {children}
+        </div>
+      </div>,
+      document.body
+    );
+  }
 
   return createPortal(
     <div

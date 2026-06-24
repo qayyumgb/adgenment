@@ -472,6 +472,189 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-24 — AI Generate: reference-image upload (+ icon, image-guided generation)
+
+Added an optional **reference product image** to AI Generate. A "Reference image" (`+`/`ImagePlus`) control sits in the prompt bar control row for the **image** and **carousel** kinds; picking a PNG/JPEG/WebP (≤10MB) shows a thumbnail chip with an `×` to remove. When a reference is attached, generation routes to OpenAI's **`/v1/images/edits`** (image-guided) instead of `/v1/images/generations` (text-to-image), so the product is featured as the hero subject. The same image guides **all N image outputs** and **every carousel card** (re-sent per parallel call). Model stays **`gpt-image-1-mini`** / quality `low` — no cost-tier change; `input_fidelity` is intentionally not sent (unsupported on `-mini`), so the product is *guided*, not pixel-perfect.
+
+- **Backend** — `generateImage(prompt, aspect, reference?)` adds a multipart `/images/edits` branch (native `FormData` + `Blob`, same `fetch`); `buildAdImagePrompt({ …, hasReference })` swaps in product-placement wording while keeping the anti-text/no-logo guardrails. `POST /ai/generate-image` gains `multer` `upload.single("image")` (10MB memory storage, no-op for JSON callers) + mimetype validation. `errorHandler` now maps `MulterError` (e.g. `LIMIT_FILE_SIZE`) to a friendly 400 instead of a 500.
+- **Frontend** — `api.generateAdImage` takes optional `image?: File`; when present it bypasses JSON `apiFetch` for a raw-`fetch` + `FormData` POST (mirrors `uploadMetaImage`). `AIGenerateModal` holds `refImage`/`refPreview` state (object URL revoked on replace/clear/close).
+
+**Files**: [apps/api/src/services/openai-image.service.ts](apps/api/src/services/openai-image.service.ts), [apps/api/src/routes/ai.ts](apps/api/src/routes/ai.ts), [apps/api/src/middleware/errorHandler.ts](apps/api/src/middleware/errorHandler.ts), [apps/web/lib/api.ts](apps/web/lib/api.ts), [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx). `tsc --noEmit` clean on `apps/api` + `apps/web`.
+
+---
+
+### 2026-06-24 — Richer, editable prompt templates
+
+The five `PROMPT_TEMPLATES` were one-line briefs — too thin to produce strong copy or imagery. Replaced with six detailed, structured templates (E-commerce + sale, SaaS trial, DTC launch, Local service, Food/café, Webinar) written for the user to **pick → fill the `[BRACKETED PLACEHOLDERS]` → send**. Each is multi-line with explicit Goal / Key benefit / Offer / Tone fields (drive copy generation) plus a **Visual direction:** block (becomes the image context). Written for text-to-image — they describe a scene to render, not an uploaded product to composite (reference-image upload still deferred; add a product-placement template when it ships). Prompt textarea bumped to `rows={3}` + `resize-y` + `max-h-[40vh]` so the longer templates are comfortable to edit; popover label now reads "Pick one, fill the [brackets], then send".
+
+**Files**: [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) (`PROMPT_TEMPLATES`, brief textarea, templates popover). `tsc --noEmit` clean on `apps/web`.
+
+---
+
+### 2026-06-24 — AI Generate: per-section eye toggle + description wrap fix
+
+Two changes to the AI Generate modal's right-side variant pane:
+
+1. **Per-section visibility (eye toggle).** Each section header — Headlines, Primary Texts, Descriptions, CTAs — now has an eye/eye-off button. Toggling "eye-off" excludes that section from the saved creative **and** drops it from the live preview card (hidden values resolve to `""`, which the card already renders conditionally). New `hidden` state (`{ headline, primaryText, description, cta }`, keyed to match `picked`) in `AIGenerateModal`, reset on open/close and on each new result. Hidden sections are dimmed + non-interactive (`opacity-40 pointer-events-none`) with a struck-through title so the user still sees what they're leaving out. `handleSaveCreative` omits hidden sections from `content` in both the single and carousel paths. If the headline is hidden, the creative falls back to the generic `AI {type} · {platform} · {date}` name (no headline to derive from).
+
+2. **Description text wraps instead of clipping.** Single-line variant rows (`EditableVariantList`, `multiline={false}` — Headlines, Descriptions) used `truncate`, so longer descriptions ran past the box edge. Switched to `break-words` + `min-w-0` so they wrap to additional lines.
+
+**Files**: [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) (`EditableVariantList` eye toggle + wrap, `AIGenerateResults` hidden wiring, `AIGenerateModal` hidden state + save filtering). `tsc --noEmit` clean on `apps/web`.
+
+---
+
+### 2026-06-24 — AI preview card redesign + creative named from AI headline
+
+Two follow-up polish changes:
+
+1. **Card redesign (matches shared reference).** The in-modal AI-generated preview is now a floating image with all corners rounded (`rounded-2xl`, no outer card box), centered above its copy. Width is applied to the **image only** (portrait `w-[240px]`, landscape `w-[440px]`, square `w-[300px]`); the text block below is wider (`w-[420px] max-w-full`, centered) — headline (bold), body (`line-clamp-3`), description (`line-clamp-2`), CTA button. Carousel + thumbnail strip read `dataUrl`.
+
+2. **Library card title = AI headline.** `handleSaveAiCreative` now derives the creative `name` from the generated headline (`content.headlines[0]`, or `content.cards[0].headline` for carousel), strips wrapping quotes, caps at 80 chars, and only falls back to the old `AI {type} · {platform} · {date}` label when no headline exists. `CreativeCard` renders `c.name` (truncated). **Applies to newly-saved creatives only** — existing library rows keep their old generic names.
+
+**Files**: [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) (`handleSaveAiCreative` name derivation, `AIGenerateImagePreview` card JSX). `tsc --noEmit` clean on `apps/web`.
+
+---
+
+### 2026-06-24 — AI Generate: true 9:16/16:9 crop, data-URL live preview (not persisted), frozen aspect
+
+Four related fixes to AI image generation + preview:
+
+1. **True placement ratios via server-side crop.** OpenAI `gpt-image-1-mini` only outputs 1:1, 2:3, 3:2 — but ad placements want 1:1 (Feed), **9:16** (Reels/Stories), **16:9** (Video/Display). So we now generate the nearest size and **center-crop** to the exact ratio with `sharp`: portrait 2:3→9:16 (trims ~80px off each side), landscape 3:2→16:9 (trims ~80px off top & bottom), square untouched. Crop is ~10% and centered, so faces stay intact. Full-res crop (no downscale); falls back to the uncropped image if `sharp` throws. New dep: `sharp` in `apps/api`.
+
+2. **Live preview uses a base64 data URL — but it's NEVER persisted.** Meta's `/adimages` `url` (`scontent.fbcdn.net`) didn't render reliably as an `<img>` src, so the in-modal preview (center card, thumbnail strip, carousel) reads a `dataUrl` returned by `POST /ai/generate-image`. The `dataUrl` lives ONLY in in-memory React state. **On save we persist the Meta `url`** (small string, same as the device-upload flow) + `imageHash` — never the base64. This fixes the `PayloadTooLargeError: request entity too large` (a base64 PNG is 1–2MB and blew the 2mb body limit, multiplied for carousels) and keeps DB rows small.
+
+3. **Aspect frozen at generation time.** Each generated image captures its `aspect` (`capturedAspect = aspect` when `generate()` fires) into `{ url, hash, dataUrl, aspect }`. The preview reads `image.aspect`, not the live chip — flipping the chip after generating no longer reshapes an existing card; it only affects the *next* generation.
+
+4. **Card sizing matches the real cropped ratios** (no letterbox): square `aspect-square` @ 300px, portrait `aspect-[9/16]` @ 240px, landscape `aspect-[16/9]` @ 440px. Replaces the old `inline-flex w-fit` that left gray space beside portrait. The chip labels ("9:16 · Reels / Stories", "16:9 · Video / Display") are now accurate.
+
+**Files**: [apps/api/src/services/openai-image.service.ts](apps/api/src/services/openai-image.service.ts) (`cropToRatio` + `targetRatioForAspect`, crop in `generateImage`), [apps/api/src/routes/ai.ts](apps/api/src/routes/ai.ts) (`generate-image` returns `dataUrl`), [apps/web/lib/api.ts](apps/web/lib/api.ts) (`generateAdImage` return type), [apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) (state shapes, `generate()`, `handleSaveCreative()` persists Meta url not dataUrl, `AIGenerateImagePreview`, `AIGenerateCarouselPreview`).
+
+`tsc --noEmit` clean on `apps/web` and `apps/api`.
+
+---
+
+### 2026-06-23 â€” Image gen provider swap: Gemini â†’ OpenAI GPT Image 1 Mini
+
+Gemini Flash Image's "free tier" turned out to be geo-gated to `limit: 0` for our region (Pakistan), even on a fresh API key. Burned a day diagnosing 404s (model name changed `-preview` â†’ stable), then 429s ("Quota exceeded ... limit: 0"). Confirmed via the error response that the issue wasn't our code â€" it was Google's regional rollout policy for image-gen on the free tier.
+
+Switched to OpenAI GPT Image 1 Mini instead:
+- **$0.005/image at Low quality 1024Ã—1024** â€" cheapest pay-as-you-go option from any major provider, and significantly easier billing UX than Google Cloud.
+- $5 of OpenAI credit â‰ˆ 1,000 images â€" covers the entire beta with massive headroom.
+- No regional restrictions; same quota everywhere.
+- Same API contract upstream, so the route + web client + UI stayed identical â€" only the service implementation swapped.
+
+**Files**:
+- [apps/api/src/services/openai-image.service.ts](apps/api/src/services/openai-image.service.ts) â€" new. `OpenAIImageService.generateImage(prompt, aspect)` calls `POST /v1/images/generations` with `gpt-image-1-mini`, `quality: "low"`, and a size mapped from our aspect enum (`1024x1024` / `1024x1536` / `1536x1024`). Returns the same `{ base64, mimeType, buffer }` shape as the old Gemini service so nothing downstream changed.
+- [apps/api/src/services/gemini.service.ts](apps/api/src/services/gemini.service.ts) â€" **deleted**. No dead code; if we ever want Gemini back, git history has it.
+- [apps/api/src/routes/ai.ts](apps/api/src/routes/ai.ts) â€" import swapped, error codes renamed (`GEMINI_NO_KEY` â†’ `OPENAI_NO_KEY`, etc.) so the route can map provider errors to friendly toasts. Error messages mention OpenAI by name so operators know what's actually being called.
+- [apps/api/.env.example](apps/api/.env.example) â€" `GEMINI_API_KEY` removed, `OPENAI_API_KEY` added with a comment pointing to the pricing/setup flow.
+
+**Why OpenAI specifically (not Stability AI / Replicate / Pollinations)**:
+- Simplest billing flow â€" add card â†’ create key â†’ done. No Google Cloud project gymnastics.
+- Quality on the Low tier is still ad-grade â€" tested side-by-side with Gemini's free output and OpenAI is at least as good for product/lifestyle ads.
+- API shape is familiar (DALL-E descended), no SDK dependency needed â€" native fetch keeps us consistent with `ai.service.ts`.
+- Free providers (Pollinations) have worse quality and uptime; not worth the savings at $0.005/image.
+
+The aspect-ratio chip in the UI (`square` / `portrait` / `landscape`) now maps to OpenAI's three accepted sizes via `sizeForAspect()`. Quality stays hardcoded to Low until paid customers ask for sharper images â€" then we'll surface a UI knob.
+
+`tsc --noEmit` clean on `apps/api`.
+
+---
+
+### 2026-06-23 â€” AI Generate v2: 2-column preview/variants, inline editing, image gen wired to the main prompt
+
+Continuation of the same-day redesign. The first version shipped the right-side panel + prompt input but left image generation only accessible from the per-card carousel button â€" the main prompt still produced copy-only. This pass closes that gap and restructures the results panel.
+
+**Image generation wired to the main prompt** ([apps/web/app/(dashboard)/creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx))
+- `generate()` now fires copy + N image generations in parallel:
+  - **Image kind:** N = `outputs` chip value (1/2/3). All calls share the same brief + aspect.
+  - **Carousel kind:** after copy returns, one image call per card runs in parallel (so a 4-card carousel = 4 Gemini calls).
+  - **Video / Text:** no image generation.
+- Each image call uses the new `aspect` param (`square` / `portrait` / `landscape`) propagated from the prompt-bar chip. Failures degrade gracefully â€" copy still lands, image slots stay empty, a friendly toast suggests retry-per-card.
+- Backend support: `geminiService.buildAdImagePrompt` now accepts `aspect` and rewrites the framing line accordingly ("Portrait 9:16 vertical aspect ratio â€" compose for vertical mobile viewing..."). `POST /ai/generate-image` accepts an `aspect` body field and forwards it to the prompt builder.
+
+**Results panel: 2-column preview/variants** (replaces the old stacked list)
+- **Left column â€" preview card:**
+  - Image kind: square preview of the picked Gemini image with an "AI" badge top-right; below the image, a faux ad caption that mirrors the picked headline + body + description + CTA in real time. When `outputs > 1`, a thumbnail row appears below the card for picking which image to use.
+  - Carousel kind: a horizontal paginated carousel (prev/next chevrons + dot indicator) with one card visible at a time. Each card shows its image (or loading spinner while images generate) + per-card headline + description. Ad-level body copy + CTA appear below the carousel.
+  - Video / Text kind: copy-on-gradient placeholder card (no image).
+- **Right column â€" variant pickers:**
+  - **Headlines** (5 options), **Primary Texts** (3), **Descriptions** (3), **CTAs** (4). For carousel, only Primary Texts + CTAs appear (per-card headlines live on the card itself).
+  - Every row is now **clickable + inline-editable** via the new `EditableVariantList` component. Click a row to pick it; click the pencil to swap into an inline `<input>` / `<textarea>`. Enter (or green check) commits; Escape (or X) cancels.
+  - Edited text propagates to the preview card immediately so the user can iterate on copy with the picked variant visible.
+  - State separation: a new `edited` working copy hydrates from `result` on every fresh generation so AI output stays intact while user edits accumulate. Save uses `edited`, not the raw AI response.
+
+**Save handler updates**
+- Saving now bundles: picked image (`url`, `imageHash`), reordered + edited copy arrays (picked variant moved to index `[0]` so the publish wizard auto-fills with it), brief + tone + aspect for downstream display, and â€" for carousel â€" per-card images merged into each card object (`cards[i].url`, `cards[i].imageHash`).
+- Carousels save with a top-level `url` (= first card's image) so the library card preview thumbnail renders without an extra lookup.
+
+**Prompt input changes**
+- Added a small **Regenerate icon button** (ghost style, `<RefreshCw>`) next to the gradient send arrow â€" only visible once a result exists. Re-running the same brief produces fresh copy + images. The old in-results "Use This Creative" + "Regenerate" button pair is gone.
+- Save button moved into the right column as a **sticky bottom action**: single `<Save>` icon + "Save" label, no longer crowded by a redundant Regenerate.
+
+**Body layout**
+- Hero + loading states stay at `max-w-4xl` (centered, narrow). Results expand to `max-w-6xl` so the 2-column grid has room. Grid template: `minmax(0, 1fr) minmax(0, 1.1fr)` â€" right column is slightly wider since it has 4 variant sections to display.
+
+**Three new internal components** in [creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx):
+- `AIGenerateImagePreview` â€" left-column card for image/video/text kinds.
+- `AIGenerateCarouselPreview` â€" left-column paginated carousel for carousel kind.
+- `EditableVariantList` â€" right-column clickable + editable variant section. Shared between Headlines, Primary Texts, Descriptions.
+
+`tsc --noEmit` clean on both `apps/api` and `apps/web`. `next lint` reports `âœ" No ESLint warnings or errors`.
+
+---
+
+### 2026-06-23 â€” AI Generate modal redesign + Gemini image generation
+
+Two big changes in one entry because they shipped together as the same UX story: "users can describe an ad in plain English and get publishable copy + images out the other end."
+
+#### AI Generate modal: Madgicx-style right-side workspace
+
+Replaced the centered AI Generate modal with a right-side slide-in panel (90vw, full height). Goals: roomier canvas, prompt-first interaction, settings stay visible while you iterate.
+
+- **Modal primitive** ([apps/web/components/ui/Modal.tsx](apps/web/components/ui/Modal.tsx)) gained a `position?: "center" | "right"` prop. Center is the existing dialog; `"right"` renders an `inset-y-0 right-0 w-[90vw]` panel that slides in via a new `slide-in-right` keyframe + `animate-slide-in-right` utility in [globals.css](apps/web/app/globals.css). 10% scrim on the left, click-to-close, ESC-to-close, body scroll-lock â€” all the existing modal primitive behavior carries over.
+- **AI Generate modal** ([creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx)) restructured around 4 vertical sections:
+  1. **Header bar** â€” compact title + close.
+  2. **Settings strip** â€” horizontal pills for Platform, Objective, Type, Tone (and Cards count when type=carousel). Each pill uses a new `<SettingsPill>` wrapper around the existing `<FilterSelect>`.
+  3. **Body** â€” swaps between three states: a centered **hero** (3 floating angled example cards + headline + subtitle) when no result yet; a **loading panel** (glowing Sparkles + phase-aware copy) during generation; a **results panel** with the existing variant pickers + sticky save/regenerate footer.
+  4. **Bottom prompt input** (sticky) â€” big rounded `<textarea>` with chips: **Aspect** (Square 1:1 / Portrait 9:16 / Landscape 16:9), **Prompt Templates** (5 curated starter briefs: SaaS free-trial, DTC launch, local lead-gen, e-commerce sale, webinar signup), **Outputs** (1/2/3 parallel generations), and a gradient send button. â‚Ä/Ctrl+Enter shortcut also triggers generate.
+- **New constants** in [creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx): `ASPECT_OPTIONS`, `OUTPUT_OPTIONS`, `PROMPT_TEMPLATES`. Aspect ratio is persisted into the saved creative's `content` so downstream wizards / image generation can pick it up.
+- **New helper components** colocated with the modal: `aspectIcon()` (small shaped rectangle), `SettingsPill` (label + value pill for the strip), `ChipDropdown` (generic chip-with-popover for aspect + outputs), `AIGenerateHero` (the empty-state with the 3 angled cards + sparkle accents), `AIGenerateResults` (the variant picker + sticky action row, extracted so the main modal JSX stays readable).
+- **Aspect ratio + outputs are state-only for now** â€” they're persisted on save and shown in the prompt bar UI but not yet wired into a single-shot image generation flow. The per-card "AI image" button below uses square 1:1 as Gemini's default; the wiring of Aspect â†’ Gemini and Outputs â†’ N parallel generations is intentionally deferred until we see how beta users actually use the panel.
+
+#### Gemini image generation (per-card)
+
+This is the narrow slice of the deferred "Madgicx-style AI image generation" feature ([FUTURE_FEATURES.md](FUTURE_FEATURES.md), [memory: future-ai-image-generation.md](C:/Users/Shahr/.claude/projects/c--Users-Shahr-OneDrive-Desktop-review-test-adgenius-ai/memory/future-ai-image-generation.md)). The original gate was "wait for paid customers" because we assumed image gen would be expensive; Gemini's free tier (500/day Flash Image) removes that constraint at MVP scale. Shipped just enough to close the obvious gap â€” AI Carousel produced text-only cards that the user then had to upload 5 images for.
+
+- **`apps/api/src/services/gemini.service.ts`** â€” thin wrapper around Google's Gemini `v1beta/models/gemini-2.5-flash-image-preview:generateContent`. Native `fetch`, no SDK dep. Methods:
+  - `buildAdImagePrompt({ brief, headline, description })` â€” composes a prompt with explicit anti-text rules ("DO NOT include any text, captions, logos, or typography in the image â€” copy is overlaid separately by Meta"). Catches the most common Gemini output failure for ad images.
+  - `generateImage(prompt)` â†’ `{ base64, mimeType, buffer }`. Throws `GEMINI_BLOCKED` (safety filter), `GEMINI_API_ERROR` (network / non-2xx), `GEMINI_NO_IMAGE` (200 with no image part).
+- **`apps/api/src/routes/ai.ts`** â€” new `POST /api/ai/generate-image`. Pipeline:
+  1. `requireAuth` + workspace resolution.
+  2. **Rate limit** â€” in-memory per-workspace, **20 generations/hour**, sliding window. Slot is only consumed after the full pipeline succeeds so a safety-blocked prompt or a Meta upload failure doesn't burn a quota. 429 with a `resetSeconds` hint when exceeded. NB: in-memory, resets on server restart; move to Redis when we scale horizontally.
+  3. Resolve the workspace's active Meta ad account (image upload to `/adimages` is account-scoped). Returns 400 with a "Connect a Meta ad account first" message if missing.
+  4. Build prompt via `buildAdImagePrompt`, call Gemini.
+  5. Forward Gemini bytes to `metaService.uploadImageFromBytes` â†’ get `{ url, hash }`.
+  6. Return `{ url, hash }` â€” same shape as `/meta/upload-image` so callers can swap in.
+- **`apps/web/lib/api.ts`** â€” `generateAdImage({ brief, headline, description })` typed client method.
+- **`CarouselCardsEditor`** ([creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx)) â€” each empty card image slot now has a small "âœ¨ AI image" button below the "Pick image" dropzone. Available whenever ANY of `brief / card.headline / card.description` is set (the backend only needs one). While generating, the dropzone swaps for a spinner with "Generatingâ€¦" label, and other cards' AI buttons gray out so users don't fire 5 parallel calls into the rate limit. Result populates the card's `savedImageUrl` + `savedImageHash`, identical to a successful manual upload â€” so the carousel save path treats AI-generated and manually-uploaded images the same way.
+- Detail Modal carousel editor passes `brief={creative.name}` so existing library carousels can re-roll images. Upload Creative modal carousel editor now passes `brief={name}` so users building a fresh carousel can also AI-generate per-card images.
+
+#### What's explicitly NOT shipped (deferred polish)
+
+- Standalone "describe an image, get an image" mode in the AI Generate modal â€” the modal's hero + prompt input is built for it (and the redesign anticipates it), but the wiring to a full image-generation flow (parallel N outputs, aspect ratio selection feeding Gemini, gallery of results) is deferred. Today's image gen path is per-card inside CarouselCardsEditor.
+- Imagen 4 quality tier â€” we're on Flash Image free tier.
+- Workspace usage dashboard / quota visibility â€” users only see the rate-limit error when they hit it.
+- Persistent rate-limit (Redis) â€” fine for single Railway dyno.
+
+#### Update to deferred-feature memory
+
+The [future-ai-image-generation.md](C:/Users/Shahr/.claude/projects/c--Users-Shahr-OneDrive-Desktop-review-test-adgenius-ai/memory/future-ai-image-generation.md) memory's "wait for paid customers" gate is now **partially lifted**: per-card carousel image generation is shipped under the Gemini free tier. The remaining deferred work is the standalone Madgicx-style generation surface (text prompt â†’ N images in a gallery, browse-the-feed, save-and-iterate). Update the memory body when we ship that.
+
+`tsc --noEmit` clean on both `apps/api` and `apps/web`. `next lint` reports `âœ" No ESLint warnings or errors`.
+
+---
+
 ### 2026-06-22 â€” AI Carousel: per-card copy generation
 
 Before this change, the "Carousel" type in the AI Generate modal was scaffolding â€” it returned the same flat `{ headlines, primary_texts, descriptions, ctas }` shape as image/video creatives. Saving it didn't produce a publishable carousel (no `cards` array, so the publish wizard rejected it). Users could only build carousels by uploading 2-10 images manually with the Upload Creative flow.
