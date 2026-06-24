@@ -100,8 +100,11 @@ export default function AudiencesPage() {
   const [typeFilter, setTypeFilter] = useState<"ALL" | AudienceType>("ALL");
   const [sort, setSort] = useState<"NEWEST" | "NAME" | "LARGEST">("NEWEST");
   const [reloadKey, setReloadKey] = useState(0);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Audience | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [manual, setManual] = useState<{ open: boolean; editing: Audience | null }>({
+    open: false,
+    editing: null,
+  });
   const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -136,13 +139,11 @@ export default function AudiencesPage() {
     };
   }, [minesQ.data]);
 
-  function openCreate() {
-    setEditing(null);
-    setModalOpen(true);
+  function openManualCreate() {
+    setManual({ open: true, editing: null });
   }
   function openEdit(a: Audience) {
-    setEditing(a);
-    setModalOpen(true);
+    setManual({ open: true, editing: a });
   }
 
   async function handleDuplicate(a: Audience) {
@@ -184,14 +185,24 @@ export default function AudiencesPage() {
             Build reusable targeting once — apply it to any campaign.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 px-4 py-2.5 text-sm font-bold text-white shadow-glow transition hover:-translate-y-0.5 hover:shadow-xl"
-        >
-          <Sparkles className="h-4 w-4" strokeWidth={2.5} />
-          Build Audience
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAiOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 px-4 py-2.5 text-sm font-bold text-white shadow-glow transition hover:-translate-y-0.5 hover:shadow-xl"
+          >
+            <Sparkles className="h-4 w-4" strokeWidth={2.5} />
+            Build with AI
+          </button>
+          <button
+            type="button"
+            onClick={openManualCreate}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            <Plus className="h-4 w-4" strokeWidth={2.5} />
+            Create Audience
+          </button>
+        </div>
       </header>
 
       {/* ── Tabs ── */}
@@ -271,10 +282,10 @@ export default function AudiencesPage() {
               {!debounced && typeFilter === "ALL" && (
                 <button
                   type="button"
-                  onClick={openCreate}
+                  onClick={() => setAiOpen(true)}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white transition hover:bg-primary/90"
                 >
-                  <Plus className="h-4 w-4" strokeWidth={2.5} />
+                  <Sparkles className="h-4 w-4" strokeWidth={2.5} />
                   Build your first audience
                 </button>
               )}
@@ -298,10 +309,16 @@ export default function AudiencesPage() {
         <MetaAudiencesTab />
       )}
 
-      {modalOpen && (
-        <BuildAudienceModal
-          editing={editing}
-          onClose={() => setModalOpen(false)}
+      {aiOpen && (
+        <AiAudienceModal
+          onClose={() => setAiOpen(false)}
+          onSaved={() => setReloadKey((k) => k + 1)}
+        />
+      )}
+      {manual.open && (
+        <ManualAudienceModal
+          editing={manual.editing}
+          onClose={() => setManual({ open: false, editing: null })}
           onSaved={() => setReloadKey((k) => k + 1)}
         />
       )}
@@ -525,9 +542,218 @@ function MetaAudienceCard({
   );
 }
 
-/* ───────────────────────── Build / edit modal ───────────────────────── */
+/* ───────────────────────── audience form (shared) ───────────────────────── */
 
-function BuildAudienceModal({
+type AudienceFormState = {
+  name: string;
+  type: AudienceType;
+  ageMin: number;
+  ageMax: number;
+  genders: number[];
+  countries: string[];
+  cities: SelectedCity[];
+  interests: SelectedInterest[];
+  customAudiences: SelectedAudience[];
+  approxSize: number | null;
+  aiBuilt: boolean;
+};
+
+function initFormState(editing: Audience | null): AudienceFormState {
+  const t = editing?.targeting;
+  return {
+    name: editing?.name ?? "",
+    type: editing?.type ?? "INTEREST",
+    ageMin: t?.age_min ?? 18,
+    ageMax: t?.age_max ?? 65,
+    genders: t?.genders ?? [],
+    countries: t?.geo_locations?.countries ?? [],
+    cities: (t?.geo_locations?.cities ?? []).map((c) => ({ key: c.key, name: c.key })),
+    interests: (t?.interests ?? []).map((i) => ({ id: i.id, name: i.name ?? i.id })),
+    customAudiences: (t?.custom_audiences ?? []).map((a) => ({ id: a.id, name: a.id })),
+    approxSize: editing?.approxSize ?? null,
+    aiBuilt: editing?.aiGenerated ?? false,
+  };
+}
+
+function buildSpecFrom(v: AudienceFormState): MetaTargetingSpec {
+  const spec: MetaTargetingSpec = { age_min: v.ageMin, age_max: v.ageMax };
+  if (v.genders.length) spec.genders = v.genders;
+  const geo: NonNullable<MetaTargetingSpec["geo_locations"]> = {};
+  if (v.countries.length) geo.countries = v.countries;
+  if (v.cities.length) geo.cities = v.cities.map((c) => ({ key: c.key }));
+  if (geo.countries || geo.cities) spec.geo_locations = geo;
+  if (v.interests.length) spec.interests = v.interests.map((i) => ({ id: i.id, name: i.name }));
+  if (v.customAudiences.length) spec.custom_audiences = v.customAudiences.map((a) => ({ id: a.id }));
+  return spec;
+}
+
+function hasCriteria(v: AudienceFormState): boolean {
+  return (
+    v.interests.length > 0 ||
+    v.countries.length > 0 ||
+    v.cities.length > 0 ||
+    v.customAudiences.length > 0
+  );
+}
+
+/** Shared targeting controls used by both the AI and the manual modals. */
+function AudienceFields({
+  v,
+  patch,
+}: {
+  v: AudienceFormState;
+  patch: (u: Partial<AudienceFormState>) => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <SectionLabel>Audience name</SectionLabel>
+          <input
+            type="text"
+            value={v.name}
+            onChange={(e) => patch({ name: e.target.value })}
+            placeholder="e.g. Skincare buyers · US"
+            className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-900 focus:border-primary focus:outline-none"
+          />
+        </div>
+        <div>
+          <SectionLabel>Type</SectionLabel>
+          <Select
+            value={v.type}
+            onChange={(val) => patch({ type: val as AudienceType })}
+            options={AUDIENCE_TYPE_OPTIONS}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <SectionLabel>Age range</SectionLabel>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={13}
+              max={65}
+              value={v.ageMin}
+              onChange={(e) => patch({ ageMin: Math.max(13, Math.min(65, Number(e.target.value) || 13)) })}
+              className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm focus:border-primary focus:outline-none"
+            />
+            <span className="text-slate-400">–</span>
+            <input
+              type="number"
+              min={13}
+              max={65}
+              value={v.ageMax}
+              onChange={(e) => patch({ ageMax: Math.max(13, Math.min(65, Number(e.target.value) || 65)) })}
+              className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm focus:border-primary focus:outline-none"
+            />
+          </div>
+        </div>
+        <div>
+          <SectionLabel>Gender</SectionLabel>
+          <div className="flex gap-1.5">
+            {[
+              { label: "All", g: [] as number[] },
+              { label: "Men", g: [1] },
+              { label: "Women", g: [2] },
+            ].map((opt) => {
+              const active = JSON.stringify(v.genders) === JSON.stringify(opt.g);
+              return (
+                <button
+                  key={opt.label}
+                  type="button"
+                  onClick={() => patch({ genders: opt.g })}
+                  className={clsx(
+                    "h-10 flex-1 rounded-xl border text-xs font-semibold transition",
+                    active
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <CountryPicker values={v.countries} onChange={(c) => patch({ countries: c })} />
+      <CityPicker label="Cities" values={v.cities} onChange={(c) => patch({ cities: c })} />
+
+      <div>
+        <SectionLabel>Interests</SectionLabel>
+        <InterestPicker
+          values={v.interests}
+          onChange={(i) => {
+            // Derive an approx size from the largest interest's reach (Meta
+            // OR's interests, so the true union is ≥ this — a conservative
+            // signal). Keeps the manual flow consistent with the AI flow.
+            const sizes = i
+              .map((x) => x.audienceSize)
+              .filter((n): n is number => typeof n === "number");
+            patch({
+              interests: i,
+              approxSize: sizes.length ? Math.max(...sizes) : v.approxSize,
+            });
+          }}
+        />
+      </div>
+
+      {(v.type === "RETARGETING" || v.type === "CUSTOM" || v.type === "LOOKALIKE") && (
+        <CustomAudiencePicker
+          label="Custom & lookalike audiences"
+          values={v.customAudiences}
+          onChange={(c) => patch({ customAudiences: c })}
+        />
+      )}
+
+      <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-2.5">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Approx. size</span>
+        <span className="text-sm font-bold text-slate-900">
+          {v.approxSize ? `~${formatBig(v.approxSize)} people` : "Unknown"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Save (create or update) a built audience. Shared by both modals. */
+async function persistAudience(
+  api: ReturnType<typeof useApiClient>,
+  editing: Audience | null,
+  v: AudienceFormState
+): Promise<boolean> {
+  if (!v.name.trim()) {
+    toast.error("Name your audience.");
+    return false;
+  }
+  if (!hasCriteria(v)) {
+    toast.error("Add at least one interest, location, or custom audience.");
+    return false;
+  }
+  const targeting = buildSpecFrom(v);
+  if (editing) {
+    await api.updateAudience(editing.id, { name: v.name.trim(), type: v.type, targeting, approxSize: v.approxSize });
+    toast.success("Audience updated");
+  } else {
+    await api.createAudience({
+      name: v.name.trim(),
+      type: v.type,
+      platforms: ["META"],
+      targeting,
+      aiGenerated: v.aiBuilt,
+      approxSize: v.approxSize,
+    });
+    toast.success("Audience saved");
+  }
+  return true;
+}
+
+/* ───────────────────────── Manual create / edit modal ───────────────────────── */
+
+function ManualAudienceModal({
   editing,
   onClose,
   onSaved,
@@ -537,29 +763,9 @@ function BuildAudienceModal({
   onSaved: () => void;
 }) {
   const api = useApiClient();
-  const [mode, setMode] = useState<"AI" | "MANUAL">(editing ? "MANUAL" : "AI");
-  const [description, setDescription] = useState("");
-  const [hasGenerated, setHasGenerated] = useState(!!editing);
-  const [generating, setGenerating] = useState(false);
+  const [v, setV] = useState<AudienceFormState>(() => initFormState(editing));
+  const patch = (u: Partial<AudienceFormState>) => setV((p) => ({ ...p, ...u }));
   const [saving, setSaving] = useState(false);
-
-  const [name, setName] = useState(editing?.name ?? "");
-  const [type, setType] = useState<AudienceType>(editing?.type ?? "INTEREST");
-  const [ageMin, setAgeMin] = useState(editing?.targeting.age_min ?? 18);
-  const [ageMax, setAgeMax] = useState(editing?.targeting.age_max ?? 65);
-  const [genders, setGenders] = useState<number[]>(editing?.targeting.genders ?? []);
-  const [countries, setCountries] = useState<string[]>(editing?.targeting.geo_locations?.countries ?? []);
-  const [cities, setCities] = useState<SelectedCity[]>(
-    (editing?.targeting.geo_locations?.cities ?? []).map((c) => ({ key: c.key, name: c.key }))
-  );
-  const [interests, setInterests] = useState<SelectedInterest[]>(
-    (editing?.targeting.interests ?? []).map((i) => ({ id: i.id, name: i.name ?? i.id }))
-  );
-  const [customAudiences, setCustomAudiences] = useState<SelectedAudience[]>(
-    (editing?.targeting.custom_audiences ?? []).map((a) => ({ id: a.id, name: a.id }))
-  );
-  const [approxSize, setApproxSize] = useState<number | null>(editing?.approxSize ?? null);
-  const [aiBuilt, setAiBuilt] = useState(editing?.aiGenerated ?? false);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -569,86 +775,19 @@ function BuildAudienceModal({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  function buildSpec(): MetaTargetingSpec {
-    const spec: MetaTargetingSpec = { age_min: ageMin, age_max: ageMax };
-    if (genders.length) spec.genders = genders;
-    const geo: NonNullable<MetaTargetingSpec["geo_locations"]> = {};
-    if (countries.length) geo.countries = countries;
-    if (cities.length) geo.cities = cities.map((c) => ({ key: c.key }));
-    if (geo.countries || geo.cities) spec.geo_locations = geo;
-    if (interests.length) spec.interests = interests.map((i) => ({ id: i.id, name: i.name }));
-    if (customAudiences.length) spec.custom_audiences = customAudiences.map((a) => ({ id: a.id }));
-    return spec;
-  }
-
-  async function runAi() {
-    if (description.trim().length < 10) {
-      toast.error("Describe the audience in at least 10 characters.");
-      return;
-    }
-    setGenerating(true);
-    try {
-      const r = await api.generateAudienceTargeting(description.trim());
-      setName((n) => n || r.name);
-      setType(r.type);
-      setAgeMin(r.targeting.age_min ?? 18);
-      setAgeMax(r.targeting.age_max ?? 65);
-      setGenders(r.targeting.genders ?? []);
-      setCountries(r.targeting.geo_locations?.countries ?? []);
-      setCities(r.resolved.cities.map((c) => ({ key: c.key, name: c.name })));
-      setInterests(r.resolved.interests.map((i) => ({ id: i.id, name: i.name })));
-      setApproxSize(r.approxSize);
-      setAiBuilt(true);
-      setHasGenerated(true);
-      toast.success("Targeting drafted — review and tweak below.");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "AI build failed");
-    } finally {
-      setGenerating(false);
-    }
-  }
-
   async function save() {
-    if (!name.trim()) {
-      toast.error("Name your audience.");
-      return;
-    }
-    const targeting = buildSpec();
-    const hasCriteria =
-      (targeting.interests?.length ?? 0) > 0 ||
-      (targeting.geo_locations?.countries?.length ?? 0) > 0 ||
-      (targeting.geo_locations?.cities?.length ?? 0) > 0 ||
-      (targeting.custom_audiences?.length ?? 0) > 0;
-    if (!hasCriteria) {
-      toast.error("Add at least one interest, location, or custom audience.");
-      return;
-    }
     setSaving(true);
     try {
-      if (editing) {
-        await api.updateAudience(editing.id, { name: name.trim(), type, targeting, approxSize });
-        toast.success("Audience updated");
-      } else {
-        await api.createAudience({
-          name: name.trim(),
-          type,
-          platforms: ["META"],
-          targeting,
-          aiGenerated: aiBuilt,
-          approxSize,
-        });
-        toast.success("Audience saved");
+      if (await persistAudience(api, editing, v)) {
+        onSaved();
+        onClose();
       }
-      onSaved();
-      onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
     }
   }
-
-  const showControls = mode === "MANUAL" || hasGenerated;
 
   return (
     <div
@@ -659,18 +798,17 @@ function BuildAudienceModal({
     >
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
       <div className="relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 shadow-glow">
-              <Bot className="h-5 w-5 text-white" strokeWidth={2.25} />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900">
+              <Users className="h-5 w-5 text-white" strokeWidth={2.25} />
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                {editing ? "Edit audience" : "Build audience"}
+                {editing ? "Edit audience" : "Create audience"}
               </h2>
               <p className="text-[11px] font-medium text-slate-500">
-                Reusable Meta targeting — apply it to any campaign.
+                Build reusable Meta targeting by hand.
               </p>
             </div>
           </div>
@@ -684,182 +822,315 @@ function BuildAudienceModal({
           </button>
         </div>
 
-        {/* Mode toggle */}
-        {!editing && (
-          <div className="flex gap-1 border-b border-slate-100 px-6 py-2.5">
-            <ModeBtn active={mode === "AI"} onClick={() => setMode("AI")} icon={Sparkles}>
-              Build with AI
-            </ModeBtn>
-            <ModeBtn active={mode === "MANUAL"} onClick={() => setMode("MANUAL")} icon={Pencil}>
-              Build manually
-            </ModeBtn>
-          </div>
-        )}
-
-        {/* Body */}
-        <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-          {mode === "AI" && (
-            <div>
-              <SectionLabel>Describe your ideal customer</SectionLabel>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-                placeholder="e.g. Eco-conscious millennials in the US who buy skincare and follow wellness brands on Instagram"
-                className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-primary focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={runAi}
-                disabled={generating || description.trim().length < 10}
-                className={clsx(
-                  "mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 px-4 py-2.5 text-sm font-bold text-white shadow-glow transition",
-                  generating || description.trim().length < 10 ? "opacity-60" : "hover:-translate-y-0.5 hover:shadow-xl"
-                )}
-              >
-                {generating ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Drafting targeting…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4" strokeWidth={2.5} /> {hasGenerated ? "Regenerate" : "Generate targeting"}
-                  </>
-                )}
-              </button>
-              {hasGenerated && (
-                <p className="mt-2 text-center text-[11px] font-medium text-emerald-600">
-                  Drafted — review &amp; edit the targeting below, then save.
-                </p>
-              )}
-            </div>
-          )}
-
-          {showControls && (
-            <>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <SectionLabel>Audience name</SectionLabel>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Skincare buyers · US"
-                    className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-900 focus:border-primary focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <SectionLabel>Type</SectionLabel>
-                  <Select
-                    value={type}
-                    onChange={(v) => setType(v as AudienceType)}
-                    options={AUDIENCE_TYPE_OPTIONS}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <SectionLabel>Age range</SectionLabel>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={13}
-                      max={65}
-                      value={ageMin}
-                      onChange={(e) => setAgeMin(Math.max(13, Math.min(65, Number(e.target.value) || 13)))}
-                      className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm focus:border-primary focus:outline-none"
-                    />
-                    <span className="text-slate-400">–</span>
-                    <input
-                      type="number"
-                      min={13}
-                      max={65}
-                      value={ageMax}
-                      onChange={(e) => setAgeMax(Math.max(13, Math.min(65, Number(e.target.value) || 65)))}
-                      className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm focus:border-primary focus:outline-none"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <SectionLabel>Gender</SectionLabel>
-                  <div className="flex gap-1.5">
-                    {[
-                      { label: "All", v: [] as number[] },
-                      { label: "Men", v: [1] },
-                      { label: "Women", v: [2] },
-                    ].map((opt) => {
-                      const active = JSON.stringify(genders) === JSON.stringify(opt.v);
-                      return (
-                        <button
-                          key={opt.label}
-                          type="button"
-                          onClick={() => setGenders(opt.v)}
-                          className={clsx(
-                            "h-10 flex-1 rounded-xl border text-xs font-semibold transition",
-                            active
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-                          )}
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              <CountryPicker values={countries} onChange={setCountries} />
-              <CityPicker label="Cities" values={cities} onChange={setCities} />
-
-              <div>
-                <SectionLabel>Interests</SectionLabel>
-                <InterestPicker values={interests} onChange={setInterests} />
-              </div>
-
-              {(type === "RETARGETING" || type === "CUSTOM" || type === "LOOKALIKE") && (
-                <CustomAudiencePicker
-                  label="Custom & lookalike audiences"
-                  values={customAudiences}
-                  onChange={setCustomAudiences}
-                />
-              )}
-
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-2.5">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Approx. size</span>
-                <span className="text-sm font-bold text-slate-900">
-                  {approxSize ? `~${formatBig(approxSize)} people` : "Unknown"}
-                </span>
-              </div>
-            </>
-          )}
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <AudienceFields v={v} patch={patch} />
         </div>
 
-        {/* Footer */}
-        {showControls && (
-          <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className={clsx(
+              "inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition",
+              saving ? "opacity-60" : "hover:-translate-y-0.5 hover:bg-emerald-600"
+            )}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" strokeWidth={2.5} />}
+            {editing ? "Save changes" : "Save audience"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── AI build modal (Creatives-style) ───────────────────────── */
+
+const AUDIENCE_TEMPLATES: { label: string; body: string }[] = [
+  {
+    label: "E-commerce buyers",
+    body: [
+      "Online shoppers aged [25–45] in [United States] who buy [sustainable fashion] online.",
+      "Interested in [organic cotton, slow fashion, ethical brands] and follow [eco-friendly clothing labels].",
+      "Likely to have purchased [apparel or accessories] in the last [30 days].",
+    ].join("\n"),
+  },
+  {
+    label: "SaaS decision-makers",
+    body: [
+      "[Founders, marketing leads, and operations managers] aged [28–50] in [the US and UK].",
+      "Work at [small-to-mid B2B software companies], interested in [productivity tools, automation, CRM, analytics].",
+      "Actively evaluating [marketing or sales software].",
+    ].join("\n"),
+  },
+  {
+    label: "Local service customers",
+    body: [
+      "Homeowners aged [30–60] within [25 miles of [your city]].",
+      "Interested in [home improvement, interior design, gardening] and likely to hire [local contractors/services].",
+      "Household income [middle to upper].",
+    ].join("\n"),
+  },
+  {
+    label: "Fitness & wellness",
+    body: [
+      "[Health-conscious adults] aged [22–40] in [United States].",
+      "Interested in [fitness, nutrition, yoga, supplements, activewear] and follow [wellness influencers and gym brands].",
+      "Likely to buy [workout gear or health products] online.",
+    ].join("\n"),
+  },
+  {
+    label: "Warm retargeting",
+    body: [
+      "People who recently [visited my website or added to cart] but didn't purchase.",
+      "Aged [25–50] in [United States], interested in [your product category].",
+      "Re-engage with a [limited-time offer].",
+    ].join("\n"),
+  },
+];
+
+function AiAudienceModal({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const api = useApiClient();
+  const [prompt, setPrompt] = useState("");
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [hasResult, setHasResult] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [v, setV] = useState<AudienceFormState>(() => initFormState(null));
+  const patch = (u: Partial<AudienceFormState>) => setV((p) => ({ ...p, ...u }));
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    function onClick(e: MouseEvent) {
+      if (!(e.target as HTMLElement).closest("[data-templates-popover]")) {
+        setTemplatesOpen(false);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+    };
+  }, [onClose]);
+
+  async function generate() {
+    if (prompt.trim().length < 10) {
+      toast.error("Describe the audience in at least 10 characters.");
+      return;
+    }
+    setGenerating(true);
+    try {
+      const r = await api.generateAudienceTargeting(prompt.trim());
+      setV({
+        name: r.name,
+        type: r.type,
+        ageMin: r.targeting.age_min ?? 18,
+        ageMax: r.targeting.age_max ?? 65,
+        genders: r.targeting.genders ?? [],
+        countries: r.targeting.geo_locations?.countries ?? [],
+        cities: r.resolved.cities.map((c) => ({ key: c.key, name: c.name })),
+        interests: r.resolved.interests.map((i) => ({ id: i.id, name: i.name })),
+        customAudiences: [],
+        approxSize: r.approxSize,
+        aiBuilt: true,
+      });
+      setHasResult(true);
+      toast.success("Targeting drafted — review & save.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "AI build failed");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      if (await persistAudience(api, null, v)) {
+        onSaved();
+        onClose();
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in">
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onMouseDown={onClose} />
+      <div className="relative z-10 flex h-full max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 shadow-glow">
+              <Bot className="h-5 w-5 text-white" strokeWidth={2.25} />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-slate-900">Build audience with AI</h2>
+              <p className="text-[11px] font-medium text-slate-500">
+                Describe your ideal customer — we draft real Meta targeting.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {hasResult && (
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving}
+                className={clsx(
+                  "inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-white shadow-sm transition",
+                  saving ? "opacity-60" : "hover:-translate-y-0.5 hover:bg-emerald-600"
+                )}
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" strokeWidth={2.5} />}
+                Save audience
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              aria-label="Close"
+              className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
             >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={save}
-              disabled={saving}
-              className={clsx(
-                "inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition",
-                saving ? "opacity-60" : "hover:-translate-y-0.5 hover:bg-emerald-600"
-              )}
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" strokeWidth={2.5} />}
-              {editing ? "Save changes" : "Save audience"}
+              <X className="h-4 w-4" />
             </button>
           </div>
-        )}
+        </div>
+
+        {/* Work area */}
+        <div className="flex-1 overflow-y-auto px-6 py-6">
+          {generating ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-500">
+              <div className="relative">
+                <div className="absolute inset-0 animate-pulse rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 opacity-30 blur-2xl" />
+                <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 shadow-glow">
+                  <Sparkles className="h-7 w-7 animate-pulse text-white" strokeWidth={2.5} />
+                </div>
+              </div>
+              <p className="mt-4 text-sm font-semibold text-slate-700">Drafting your targeting…</p>
+              <p className="text-xs text-slate-500">Resolving interests and locations against Meta</p>
+            </div>
+          ) : hasResult ? (
+            <div className="mx-auto max-w-2xl">
+              <AudienceFields v={v} patch={patch} />
+            </div>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+                <Bot className="h-7 w-7 text-primary" strokeWidth={2} />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Describe your ideal customer</h3>
+              <p className="max-w-md text-sm text-slate-500">
+                Tell the AI who you want to reach. Pick a template below, fill in the
+                [brackets], and hit Generate — we&apos;ll turn it into real, editable
+                Meta targeting.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Bottom prompt bar */}
+        <div className="border-t border-slate-100 bg-white px-6 py-4">
+          <div className="mx-auto max-w-3xl">
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-md transition focus-within:border-primary/40 focus-within:shadow-glow">
+              <div className="flex items-start gap-2 px-4 pt-3">
+                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" strokeWidth={2.5} />
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !generating && prompt.trim().length >= 10) {
+                      e.preventDefault();
+                      void generate();
+                    }
+                  }}
+                  rows={3}
+                  placeholder="Describe your ideal customer — age, location, interests, behaviors…  (⌘/Ctrl + Enter to generate)"
+                  className="max-h-[30vh] min-h-[40px] w-full resize-y overflow-y-auto bg-transparent text-sm leading-relaxed text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-3 py-2.5">
+                {/* Templates popover */}
+                <div className="relative" data-templates-popover>
+                  <button
+                    type="button"
+                    onClick={() => setTemplatesOpen((p) => !p)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-primary/40 hover:text-primary"
+                  >
+                    <Sparkles className="h-3 w-3" strokeWidth={2.5} />
+                    Audience Templates
+                    <ChevronDown className="h-3 w-3" strokeWidth={2.5} />
+                  </button>
+                  {templatesOpen && (
+                    <div className="absolute bottom-full left-0 mb-2 w-80 rounded-xl border border-slate-200 bg-white p-2 shadow-2xl">
+                      <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        Pick one, fill the [brackets], then generate
+                      </div>
+                      <ul className="space-y-0.5">
+                        {AUDIENCE_TEMPLATES.map((t) => (
+                          <li key={t.label}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPrompt(t.body);
+                                setTemplatesOpen(false);
+                              }}
+                              className="w-full rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-slate-700 transition hover:bg-primary/5 hover:text-primary"
+                            >
+                              {t.label}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                <div className="ml-auto">
+                  <button
+                    type="button"
+                    onClick={() => void generate()}
+                    disabled={generating || prompt.trim().length < 10}
+                    className={clsx(
+                      "inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 px-4 py-2 text-sm font-bold text-white shadow-glow transition",
+                      generating || prompt.trim().length < 10 ? "opacity-60" : "hover:-translate-y-0.5 hover:shadow-xl"
+                    )}
+                  >
+                    {generating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" /> Generating…
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4" strokeWidth={2.5} /> {hasResult ? "Regenerate" : "Generate"}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -890,32 +1161,6 @@ function TabBtn({
       )}
     >
       <Icon className="h-4 w-4" strokeWidth={2.25} />
-      {children}
-    </button>
-  );
-}
-
-function ModeBtn({
-  active,
-  onClick,
-  icon: Icon,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: typeof Sparkles;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={clsx(
-        "inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition",
-        active ? "bg-primary/10 text-primary" : "text-slate-500 hover:bg-slate-50"
-      )}
-    >
-      <Icon className="h-3.5 w-3.5" strokeWidth={2.5} />
       {children}
     </button>
   );

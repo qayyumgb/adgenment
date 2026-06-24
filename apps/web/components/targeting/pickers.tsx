@@ -22,7 +22,10 @@ import type {
 } from "@/lib/api";
 
 export type SelectedCity = { key: string; name: string };
-export type SelectedInterest = { id: string; name: string };
+/** `audienceSize` is Meta's reach estimate for the interest, captured at
+ *  selection time so callers can show an approximate audience size without a
+ *  second lookup. Optional — older callers (e.g. the publish wizard) ignore it. */
+export type SelectedInterest = { id: string; name: string; audienceSize?: number | null };
 export type SelectedAudience = { id: string; name: string; isLookalike?: boolean };
 
 /** Format a large count compactly (1.2M, 14.0K). */
@@ -257,7 +260,10 @@ export function InterestPicker({
                 type="button"
                 onClick={() => {
                   if (!values.find((v) => v.id === r.id)) {
-                    onChange([...values, { id: r.id, name: r.name }]);
+                    onChange([
+                      ...values,
+                      { id: r.id, name: r.name, audienceSize: r.audienceSize },
+                    ]);
                   }
                   setQ("");
                   setResults([]);
