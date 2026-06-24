@@ -49,6 +49,20 @@ function parseDate(value: unknown): Date | null {
 }
 
 /**
+ * Safe ad-account fields to embed in client-facing campaign responses. NEVER
+ * include accessToken/refreshToken — those must not leave the server. Use this
+ * everywhere a campaign is returned to the browser with its adAccount.
+ */
+const AD_ACCOUNT_PUBLIC_SELECT = {
+  platform: true,
+  accountName: true,
+  accountId: true,
+  currency: true,
+  timezone: true,
+  minDailyBudget: true,
+} as const;
+
+/**
  * GET /campaigns
  */
 router.get("/", async (req: Request, res: Response, next: NextFunction) => {
@@ -76,14 +90,7 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       prisma.campaign.findMany({
         where,
         include: {
-          adAccount: {
-            select: {
-              platform: true,
-              accountName: true,
-              currency: true,
-              timezone: true,
-            },
-          },
+          adAccount: { select: AD_ACCOUNT_PUBLIC_SELECT },
           _count: { select: { metrics: true } },
           ...(includeLatestMetrics
             ? {
@@ -247,7 +254,9 @@ router.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
     const campaign = await prisma.campaign.findFirst({
       where: { id: req.params.id, workspaceId: workspace.id },
       include: {
-        adAccount: true,
+        // Restricted select — the previous `adAccount: true` leaked the
+        // encrypted accessToken/refreshToken to the browser.
+        adAccount: { select: AD_ACCOUNT_PUBLIC_SELECT },
         metrics: { orderBy: { date: "desc" }, take: 30 },
       },
     });
@@ -467,6 +476,9 @@ router.post(
     const workspace = await requireWorkspace(req.dbUserId!);
     const campaign = await prisma.campaign.findFirst({
       where: { id: req.params.id, workspaceId: workspace.id },
+      // Full record (incl. encrypted accessToken) needed server-side to call
+      // Meta. NEVER return this object to the client — the response uses a
+      // separate `updated` query without adAccount.
       include: { adAccount: true },
     });
     if (!campaign) {
@@ -892,6 +904,9 @@ router.post(
       const workspace = await requireWorkspace(req.dbUserId!);
       const campaign = await prisma.campaign.findFirst({
         where: { id: req.params.id, workspaceId: workspace.id },
+        // Full record (incl. encrypted accessToken) needed server-side to call
+        // Meta. NEVER return this object to the client — the response uses a
+        // separate `updated` query without adAccount.
         include: { adAccount: true },
       });
       if (!campaign) {

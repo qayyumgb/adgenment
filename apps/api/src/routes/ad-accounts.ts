@@ -21,11 +21,17 @@ function isPlatform(v: unknown): v is Platform {
   return typeof v === "string" && PLATFORMS.includes(v as Platform);
 }
 
+// NB: never include accessToken/refreshToken here. currency/timezone/
+// minDailyBudget are safe display metadata the UI needs (budget input symbol,
+// timestamps, grounded budget recommendation).
 const PUBLIC_AD_ACCOUNT_SELECT = {
   id: true,
   platform: true,
   accountId: true,
   accountName: true,
+  currency: true,
+  timezone: true,
+  minDailyBudget: true,
   isActive: true,
   createdAt: true,
 } as const;

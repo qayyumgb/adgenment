@@ -11,13 +11,13 @@ import {
   Rocket,
   Sparkles,
   Calendar,
-  DollarSign,
   AlertCircle,
   Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
+import { currencySymbol } from "@/lib/money";
 import type { AdAccount, Platform as ApiPlatform } from "@/lib/api";
 
 type PlatformUI = {
@@ -133,6 +133,19 @@ export default function CreateCampaignModal({
     return map;
   }, [accounts.data]);
 
+  // The ad account the budget applies to — the first selected platform's
+  // account (the budget number is in THIS account's currency, sent to Meta
+  // as-is). Falls back to the first connected active account.
+  const budgetAccount = useMemo(() => {
+    for (const p of selectedPlatforms) {
+      const a = accountsByPlatform.get(p)?.[0];
+      if (a) return a;
+    }
+    return (accounts.data ?? []).find((a) => a.isActive) ?? null;
+  }, [selectedPlatforms, accountsByPlatform, accounts.data]);
+  const budgetCurrency = budgetAccount?.currency ?? null;
+  const minDailyBudget = budgetAccount?.minDailyBudget ?? null;
+
   // Reset on close
   useEffect(() => {
     if (!open) {
@@ -208,12 +221,22 @@ export default function CreateCampaignModal({
     }
   }, [step, selectedPlatforms, objective, campaignName]);
 
+  // A daily budget below the account's real minimum will be rejected by Meta
+  // at publish ("budget too low"). Block it up front. Only enforced for daily
+  // budgets (Meta's min is a daily figure) and only when the minimum is known.
+  const belowMinBudget =
+    budgetType === "daily" &&
+    !!minDailyBudget &&
+    minDailyBudget > 0 &&
+    budgetAmount < minDailyBudget;
+
   const canAdvance = useMemo(() => {
     if (step === 1) return selectedPlatforms.length > 0;
     if (step === 2) return objective !== null;
-    if (step === 3) return budgetAmount > 0 && startDate !== "";
+    if (step === 3)
+      return budgetAmount > 0 && startDate !== "" && !belowMinBudget;
     return true;
-  }, [step, selectedPlatforms, objective, budgetAmount, startDate]);
+  }, [step, selectedPlatforms, objective, budgetAmount, startDate, belowMinBudget]);
 
   if (!open) return null;
 
@@ -390,6 +413,8 @@ export default function CreateCampaignModal({
               reachLow={reachLow}
               reachHigh={reachHigh}
               objective={objective}
+              currency={budgetCurrency}
+              minDailyBudget={minDailyBudget}
             />
           )}
           {step === 4 && (
@@ -406,6 +431,7 @@ export default function CreateCampaignModal({
               reachLow={reachLow}
               reachHigh={reachHigh}
               accountsByPlatform={accountsByPlatform}
+              currency={budgetCurrency}
             />
           )}
         </div>
@@ -661,6 +687,8 @@ function StepBudget({
   reachLow,
   reachHigh,
   objective,
+  currency,
+  minDailyBudget,
 }: {
   budgetType: "daily" | "lifetime";
   setBudgetType: (v: "daily" | "lifetime") => void;
@@ -675,13 +703,25 @@ function StepBudget({
   reachLow: number;
   reachHigh: number;
   objective: Objective["id"] | null;
+  currency: string | null;
+  minDailyBudget: number | null;
 }) {
+  const sym = currencySymbol(currency);
+  const belowMin =
+    budgetType === "daily" &&
+    !!minDailyBudget &&
+    minDailyBudget > 0 &&
+    budgetAmount < minDailyBudget;
+  // Recommendation is anchored on Meta's REAL minimum daily budget for this
+  // account (already in the account currency, kept current by Meta — no FX).
+  // We suggest a sensible multiple of that floor, varied by objective. When the
+  // minimum isn't known yet (account not synced), fall back to plain guidance.
+  const [loMul, hiMul] =
+    objective === "leads" ? [10, 30] : objective === "awareness" ? [5, 15] : [8, 20];
   const recommendation =
-    objective === "leads"
-      ? "$80–$150/day"
-      : objective === "awareness"
-        ? "$30–$80/day"
-        : "$50–$150/day";
+    minDailyBudget && minDailyBudget > 0
+      ? `${sym}${Math.round(minDailyBudget * loMul).toLocaleString()}–${sym}${Math.round(minDailyBudget * hiMul).toLocaleString()}/day`
+      : null;
 
   return (
     <div className="space-y-5">
@@ -717,22 +757,37 @@ function StepBudget({
           {budgetType === "daily" ? "Daily budget" : "Total budget"}
         </label>
         <div className="relative">
-          <DollarSign className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+          <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-base font-bold text-slate-400">
+            {sym}
+          </span>
           <input
             type="number"
-            min={1}
+            min={budgetType === "daily" && minDailyBudget ? minDailyBudget : 1}
             value={budgetAmount}
             onChange={(e) => setBudgetAmount(Number(e.target.value) || 0)}
-            className="h-14 w-full rounded-xl border-2 border-slate-200 pl-11 pr-4 text-2xl font-bold tracking-tight text-slate-900 transition focus:border-primary focus:outline-none"
+            className={clsx(
+              "h-14 w-full rounded-xl border-2 pl-14 pr-4 text-2xl font-bold tracking-tight text-slate-900 transition focus:outline-none",
+              belowMin
+                ? "border-rose-300 focus:border-rose-400"
+                : "border-slate-200 focus:border-primary"
+            )}
           />
         </div>
-        <p className="mt-2 text-xs text-slate-500">
-          Estimated daily reach:{" "}
-          <span className="font-bold text-slate-900">
-            {reachLow.toLocaleString()}–{reachHigh.toLocaleString()}
-          </span>{" "}
-          people
-        </p>
+        {belowMin ? (
+          <p className="mt-2 text-xs font-semibold text-rose-600">
+            Below this account&apos;s minimum of {sym}
+            {(minDailyBudget ?? 0).toLocaleString()}/day — increase the budget to
+            continue.
+          </p>
+        ) : (
+          <p className="mt-2 text-xs text-slate-500">
+            Estimated daily reach:{" "}
+            <span className="font-bold text-slate-900">
+              {reachLow.toLocaleString()}–{reachHigh.toLocaleString()}
+            </span>{" "}
+            people
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -789,9 +844,32 @@ function StepBudget({
               AI Recommendation
             </div>
             <p className="mt-0.5 text-sm font-medium text-slate-700">
-              Based on your objective and platform, we suggest{" "}
-              <span className="font-bold text-slate-900">{recommendation}</span>{" "}
-              for optimal results.
+              {recommendation ? (
+                <>
+                  Based on your objective, we suggest{" "}
+                  <span className="font-bold text-slate-900">{recommendation}</span>{" "}
+                  for meaningful results
+                  {minDailyBudget && minDailyBudget > 0 ? (
+                    <>
+                      {" "}
+                      (this account&apos;s minimum is{" "}
+                      <span className="font-semibold">
+                        {sym}
+                        {minDailyBudget.toLocaleString()}/day
+                      </span>
+                      ).
+                    </>
+                  ) : (
+                    "."
+                  )}
+                </>
+              ) : (
+                <>
+                  Start with a daily budget that fits your goal and scale what
+                  works. (Connect &amp; sync your ad account to see Meta&apos;s
+                  minimum for it.)
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -816,6 +894,7 @@ function StepReview({
   reachLow,
   reachHigh,
   accountsByPlatform,
+  currency,
 }: {
   selectedPlatforms: ApiPlatform[];
   objective: Objective["id"] | null;
@@ -829,6 +908,7 @@ function StepReview({
   reachLow: number;
   reachHigh: number;
   accountsByPlatform: Map<ApiPlatform, AdAccount[]>;
+  currency: string | null;
 }) {
   const platforms = PLATFORMS_UI.filter((p) =>
     selectedPlatforms.includes(p.id)
@@ -883,7 +963,8 @@ function StepReview({
 
           <Row label="Budget">
             <span className="text-sm font-bold text-slate-900">
-              ${budgetAmount.toLocaleString()}
+              {currencySymbol(currency)}
+              {budgetAmount.toLocaleString()}
               <span className="font-medium text-slate-500">
                 {" "}
                 / {budgetType === "daily" ? "day" : "total"}

@@ -31,6 +31,9 @@ export interface MetaAdAccount {
   currency: string;
   timezone: string;
   accountStatus: number;
+  /** Minimum daily budget in the account currency (e.g. 1.00 = PKR 1.00).
+   *  Meta returns it in minor units; we divide by 100. Null if absent. */
+  minDailyBudget: number | null;
 }
 
 export interface MetaCampaign {
@@ -80,6 +83,11 @@ interface MetaErrorResponse {
     type?: string;
     code?: number;
     error_subcode?: number;
+    /** Human-readable specifics — for code 100 ("Invalid parameter") these
+     *  name the exact field/reason. We were dropping them, which made publish
+     *  failures undebuggable. */
+    error_user_title?: string;
+    error_user_msg?: string;
     fbtrace_id?: string;
   };
 }
@@ -290,7 +298,7 @@ class MetaAdsService {
 
   async getAdAccounts(accessToken: string): Promise<MetaAdAccount[]> {
     const params = new URLSearchParams({
-      fields: "id,name,currency,timezone_name,account_status",
+      fields: "id,name,currency,timezone_name,account_status,min_daily_budget",
       access_token: accessToken,
     });
     const data = await this.graphFetch<{
@@ -300,6 +308,7 @@ class MetaAdsService {
         currency: string;
         timezone_name: string;
         account_status: number;
+        min_daily_budget?: string;
       }>;
     }>(`${GRAPH_BASE}/me/adaccounts?${params.toString()}`);
 
@@ -309,6 +318,12 @@ class MetaAdsService {
       currency: a.currency,
       timezone: a.timezone_name,
       accountStatus: a.account_status,
+      // Meta returns min_daily_budget in the currency's minor units (×100),
+      // matching how we send budgets elsewhere. Divide to get the display value.
+      minDailyBudget:
+        a.min_daily_budget !== undefined && a.min_daily_budget !== ""
+          ? (parseInt(a.min_daily_budget, 10) || 0) / 100
+          : null,
     }));
   }
 
@@ -414,6 +429,13 @@ class MetaAdsService {
     }
     if (data.lifetime_budget !== undefined) {
       body.set("lifetime_budget", String(Math.round(data.lifetime_budget * 100)));
+    }
+    // When a campaign carries NO budget (we put budget at the ad-set level for
+    // OUTCOME_* objectives), recent Meta API versions REQUIRE an explicit
+    // is_adset_budget_sharing_enabled flag — omitting it is code 100/4834011.
+    // We send `false`: ad sets keep their own budgets, no auto 20% sharing.
+    if (data.daily_budget === undefined && data.lifetime_budget === undefined) {
+      body.set("is_adset_budget_sharing_enabled", "false");
     }
     if (data.start_time) body.set("start_time", data.start_time);
     if (data.stop_time) body.set("stop_time", data.stop_time);
@@ -892,9 +914,17 @@ class MetaAdsService {
     }
     if (params.startTime) body.set("start_time", params.startTime);
     if (params.endTime) body.set("end_time", params.endTime);
-    // promoted_object is needed for OUTCOME_TRAFFIC + OUTCOME_ENGAGEMENT
-    // when targeting a Page; supplying it for awareness too doesn't hurt.
-    if (params.promotedPageId) {
+    // `promoted_object: { page_id }` is ONLY valid for optimization goals that
+    // promote a Page. For REACH (awareness), LINK_CLICKS (traffic), and
+    // OFFSITE_CONVERSIONS (sales) Meta REJECTS an unexpected page promoted_object
+    // with "Invalid parameter (code 100)" — which broke publishing for those
+    // objectives. Only attach it for the goals that require/accept it.
+    const PAGE_PROMOTED_GOALS = new Set([
+      "PAGE_LIKES",
+      "POST_ENGAGEMENT",
+      "LEAD_GENERATION",
+    ]);
+    if (params.promotedPageId && PAGE_PROMOTED_GOALS.has(opt.optimizationGoal)) {
       body.set(
         "promoted_object",
         JSON.stringify({ page_id: params.promotedPageId })
@@ -1216,9 +1246,18 @@ class MetaAdsService {
 
     const errResp = parsed as MetaErrorResponse;
     if (errResp.error) {
-      const message = errResp.error.message ?? "Unknown error";
-      const code = errResp.error.code ?? "unknown";
-      throw new Error(`Meta API: ${message} (code: ${code})`);
+      const e = errResp.error;
+      const code = e.code ?? "unknown";
+      // Prefer Meta's human-readable specifics. For code 100 ("Invalid
+      // parameter") the bare message is useless — `error_user_msg` names the
+      // actual field/reason (e.g. "Your daily budget is too low"). Build the
+      // richest message we have so publish failures are debuggable.
+      const detail = [e.error_user_title, e.error_user_msg]
+        .filter(Boolean)
+        .join(": ");
+      const base = detail || e.message || "Unknown error";
+      const subcode = e.error_subcode ? `/${e.error_subcode}` : "";
+      throw new Error(`Meta API: ${base} (code: ${code}${subcode})`);
     }
     if (!res.ok) {
       throw new Error(`Meta API: HTTP ${res.status}`);

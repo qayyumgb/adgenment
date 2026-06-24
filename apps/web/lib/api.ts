@@ -61,6 +61,9 @@ export interface AdAccount {
   currency?: string | null;
   /** IANA tz name. Null until first sync. */
   timezone?: string | null;
+  /** Platform minimum daily budget in the account currency (e.g. 1.00).
+   *  Null until first sync. Grounds budget recommendations without FX. */
+  minDailyBudget?: number | null;
   isActive: boolean;
   createdAt: string;
 }
@@ -95,6 +98,7 @@ export interface Campaign {
     accountName: string;
     currency?: string | null;
     timezone?: string | null;
+    minDailyBudget?: number | null;
   };
   _count?: { metrics: number };
   /** Populated when `includeLatestMetrics=true` was passed to /campaigns. */

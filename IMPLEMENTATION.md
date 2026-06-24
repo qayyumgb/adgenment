@@ -472,6 +472,43 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-24 — Security: stop leaking ad-account access tokens to the client
+
+`GET /campaigns/:id` used `include: { adAccount: true }` and spread the result into the response, shipping the **encrypted `accessToken`/`refreshToken`** to the browser. Added a shared `AD_ACCOUNT_PUBLIC_SELECT` (platform, accountName, accountId, currency, timezone, minDailyBudget — **no tokens**) and applied it to the detail route and the list route. The publish/launch routes still fetch the full record (they need the token to call Meta) but return a separate `updated` query with no `adAccount` — annotated with comments so a future edit doesn't re-introduce the leak.
+
+**Files**: [campaigns.ts](apps/api/src/routes/campaigns.ts). `tsc --noEmit` clean on apps/api.
+
+---
+
+### 2026-06-24 — Block below-minimum daily budgets before publish
+
+A daily budget below the account's real Meta minimum (e.g. PKR 279.56) is rejected at publish. Now caught up front: the create wizard's **Next** (step 3) and the campaign settings **Save Changes** are **disabled** with an inline red hint ("Below this account's minimum of PKR X/day") when a **daily** budget is under the account minimum. Only enforced for daily budgets (Meta's `min_daily_budget` is a daily figure) and only when the minimum is known. `minDailyBudget` added to `Campaign.adAccount` select/type so the edit tab has it.
+
+**Files**: [CreateCampaignModal.tsx](apps/web/components/campaigns/CreateCampaignModal.tsx), [campaigns/[id]/page.tsx](apps/web/app/(dashboard)/campaigns/[id]/page.tsx), [lib/api.ts](apps/web/lib/api.ts). `tsc --noEmit` clean on apps/web.
+
+---
+
+### 2026-06-24 — Budget inputs use the ad-account currency; recommendation anchored on Meta's real minimum
+
+The campaign create wizard and the campaign settings/edit page hardcoded a `$` on the budget input. But the number entered is sent to Meta **in the ad account's own currency** (e.g. PKR) — so a `$` label made users type "75" thinking dollars when Meta read it as 75 PKR (~$0.27), directly causing "budget too low" publish failures. Now the budget input prefix and the wizard review row use the **account currency symbol** (`currencySymbol(adAccount.currency)`), derived from the selected platform's ad account.
+
+For the AI budget *recommendation* (which needs actual numbers), instead of a stale hardcoded USD→currency factor table, we now **anchor on Meta's real per-account minimum daily budget** — `min_daily_budget` is fetched in `getAdAccounts`, stored on `AdAccount.minDailyBudget` (account currency, captured each sync), and the recommendation suggests a sensible multiple of it. This is grounded in live Meta data, currency-correct, and self-updating (no FX). Falls back to plain guidance when the account hasn't synced yet. Dashboard/Analytics USD aggregates are unchanged (per workspace-currency note).
+
+**Files**: [schema.prisma](apps/api/prisma/schema.prisma) (`AdAccount.minDailyBudget`, `db push`), [meta.service.ts](apps/api/src/services/meta.service.ts), [sync.service.ts](apps/api/src/services/sync.service.ts), [lib/api.ts](apps/web/lib/api.ts), [money.ts](apps/web/lib/money.ts), [CreateCampaignModal.tsx](apps/web/components/campaigns/CreateCampaignModal.tsx), [campaigns/[id]/page.tsx](apps/web/app/(dashboard)/campaigns/[id]/page.tsx). `tsc --noEmit` clean on both apps.
+
+---
+
+### 2026-06-24 — Publish-to-Meta fix: invalid `promoted_object` (code 100) + richer Meta errors
+
+Publishing failed (pause/resume worked) — the stored `publishError` was `Meta API: Invalid parameter (code: 100)`. Root cause: [createAdSet](apps/api/src/services/meta.service.ts) attached `promoted_object: { page_id }` for **every** objective, but Meta only accepts a page-based `promoted_object` for page-promoting optimization goals (`PAGE_LIKES`/`POST_ENGAGEMENT`/`LEAD_GENERATION`). For **Awareness** (`REACH`) and **Traffic** (`LINK_CLICKS`) it's rejected as invalid — breaking publish for those objectives. Confirmed it's not a permissions issue: pause/resume use the same `ads_management` write scope and succeed (code 100 ≠ permission codes 200/10/3). Fixes:
+- Gate `promoted_object` to only the goals that require it.
+- **`graphFetch` now surfaces Meta's `error_user_title`/`error_user_msg`/`error_subcode`** instead of the bare "Invalid parameter" — publish failures are now self-explanatory in `publishError` and the API response.
+- With the richer error visible, the next failure was `is_adset_budget_sharing_enabled` (code 100/4834011): recent Meta API versions require this flag on a campaign with **no** campaign-level budget (we budget at ad-set level). `createCampaign` now sends `is_adset_budget_sharing_enabled=false` in that case.
+
+**Files**: [meta.service.ts](apps/api/src/services/meta.service.ts). `tsc --noEmit` clean on apps/api.
+
+---
+
 ### 2026-06-24 — Meta data fidelity: sync freshness, exact money, reach, real revenue
 
 Fixed a cluster of "app doesn't match Ads Manager" bugs reported against a live boosted-post campaign.

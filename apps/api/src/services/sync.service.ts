@@ -184,6 +184,7 @@ class SyncService {
           data: {
             currency: match.currency || null,
             timezone: match.timezone || null,
+            minDailyBudget: match.minDailyBudget ?? null,
           },
         });
       }

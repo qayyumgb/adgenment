@@ -97,7 +97,7 @@ const STATUS_META: Record<
   ENDED: { label: "Ended", cls: "text-rose-700", dot: "ended" },
 };
 
-import { fmtMoney as fmtMoneyShared } from "@/lib/money";
+import { fmtMoney as fmtMoneyShared, currencySymbol } from "@/lib/money";
 function fmtMoney(n: number, currency?: string | null) {
   return fmtMoneyShared(n, currency);
 }
@@ -893,9 +893,14 @@ function SettingsTab({
   const [busy, setBusy] = useState(false);
 
   const dirty = name !== c.name || budget !== Number(c.budget);
+  // Block daily budgets below the account's real Meta minimum (publish would
+  // be rejected otherwise). Only when the minimum is known.
+  const minDaily = c.adAccount?.minDailyBudget ?? null;
+  const belowMin =
+    c.budgetType === "DAILY" && !!minDaily && minDaily > 0 && budget < minDaily;
 
   async function save() {
-    if (busy || !dirty) return;
+    if (busy || !dirty || belowMin) return;
     setBusy(true);
     try {
       await api.updateCampaign(c.id, { name: name.trim(), budget });
@@ -949,21 +954,35 @@ function SettingsTab({
               Daily budget
             </label>
             <div className="relative">
-              <DollarSign className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                {currencySymbol(c.adAccount?.currency)}
+              </span>
               <input
                 type="number"
                 value={budget}
-                min={1}
+                min={c.budgetType === "DAILY" && minDaily ? minDaily : 1}
                 onChange={(e) => setBudget(Number(e.target.value) || 0)}
-                className="h-11 w-full rounded-xl border border-slate-200 pl-9 pr-3 text-sm font-medium text-slate-900 transition focus:border-primary focus:outline-none"
+                className={clsx(
+                  "h-11 w-full rounded-xl border pl-12 pr-3 text-sm font-medium text-slate-900 transition focus:outline-none",
+                  belowMin
+                    ? "border-rose-300 focus:border-rose-400"
+                    : "border-slate-200 focus:border-primary"
+                )}
               />
             </div>
+            {belowMin && (
+              <p className="mt-1.5 text-xs font-semibold text-rose-600">
+                Below this account&apos;s minimum of{" "}
+                {currencySymbol(c.adAccount?.currency)}
+                {(minDaily ?? 0).toLocaleString()}/day.
+              </p>
+            )}
           </div>
           <button
             type="button"
             onClick={save}
-            disabled={!dirty || busy}
-            className={clsx("btn-brand", (!dirty || busy) && "opacity-60")}
+            disabled={!dirty || busy || belowMin}
+            className={clsx("btn-brand", (!dirty || busy || belowMin) && "opacity-60")}
           >
             {busy ? (
               <Loader2 className="h-4 w-4 animate-spin" />

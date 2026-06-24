@@ -136,6 +136,11 @@ model AdAccount {
   // IANA tz name (e.g. "Asia/Karachi") for displaying campaign timestamps
   // in the account's local time. Display-only today.
   timezone     String?
+  /// The platform's minimum daily budget for this account, in the account's
+  /// own currency (e.g. 1.00 = PKR 1.00). Captured from Meta on each sync and
+  /// used to ground budget recommendations without any FX conversion. Null
+  /// until first sync.
+  minDailyBudget Float?
   accessToken  String
   refreshToken String?
   isActive     Boolean  @default(true)
