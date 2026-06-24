@@ -15,6 +15,7 @@ import {
   Palette,
   BarChart3,
   TrendingUp,
+  Wallet,
   CreditCard,
   Settings,
   Bell,
@@ -97,6 +98,13 @@ const NAV_GROUPS: NavGroup[] = [
         href: "/ai-planner",
         icon: Bot,
         badge: { text: "NEW", variant: "new" },
+      },
+      {
+        kind: "link",
+        label: "Budget Optimizer",
+        href: "/budget-optimizer",
+        icon: Wallet,
+        badge: { text: "AI", variant: "new" },
       },
       {
         kind: "link",

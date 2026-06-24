@@ -129,6 +129,54 @@ Rules:
 - Default genders to [] (all) unless the description clearly specifies one.
 - If no geography is implied, leave countries/cities empty.`;
 
+/** Budget-optimizer prompt. The model receives a portfolio summary + per-
+ *  campaign performance and returns a reallocation plan as strict JSON. The
+ *  caller (budgetOptimizerService) only invokes this when there is real
+ *  revenue/ROAS signal. All money figures are in the account currency the
+ *  user message states — the model must NOT assume USD. */
+const BUDGET_SYSTEM_PROMPT = `You are an expert media buyer optimizing ad budgets across platforms.
+
+You will receive a portfolio summary and per-campaign performance (last 14 days vs the previous 14 days). Recommend how to reallocate budget.
+
+RULES:
+1. Never cut budget on campaigns with ROAS > 3x unless their spend is minimal.
+2. Flag campaigns with ROAS < 1x for PAUSE or a major DECREASE.
+3. INCREASE budget on campaigns with ROAS > 2.5x AND an upward trend.
+4. Keep total recommended budget within 20% of the current total.
+5. Don't concentrate all budget on one platform — keep a sensible mix.
+6. Be specific with amounts and percentages, in the SAME currency as the input (do NOT convert to USD or add "$").
+7. Every recommendedBudget must be a positive number. Use action "MAINTAIN" when no change is warranted.
+
+Return ONLY a valid JSON object (no markdown) with EXACTLY this structure:
+{
+  "summary": "2-3 sentence executive summary of the portfolio",
+  "totalCurrentBudget": number,
+  "totalRecommendedBudget": number,
+  "estimatedRoasImprovement": number,        // percentage
+  "estimatedRevenueIncrease": number,        // per month, account currency
+  "topOpportunity": "one sentence",
+  "biggestRisk": "one sentence",
+  "insights": ["insight 1", "insight 2", "insight 3"],
+  "recommendations": [
+    {
+      "campaignId": "string",
+      "campaignName": "string",
+      "platform": "string",
+      "currentBudget": number,
+      "recommendedBudget": number,
+      "budgetChange": number,                // signed
+      "budgetChangePercent": number,
+      "action": "INCREASE" | "DECREASE" | "PAUSE" | "MAINTAIN",
+      "reason": "specific reason",
+      "expectedImpact": "expected outcome if applied",
+      "confidence": "HIGH" | "MEDIUM" | "LOW",
+      "priority": number                     // 1 = highest priority
+    }
+  ]
+}
+
+Use the EXACT campaignId values from the input. Include every campaign in recommendations.`;
+
 class AIService {
   private async callAnthropic(
     system: string,
@@ -273,6 +321,25 @@ class AIService {
       AUDIENCE_SYSTEM_PROMPT,
       `Audience description: ${description}`,
       700
+    );
+    const json = this.extractJson(text);
+    return { json, tokensUsed };
+  }
+
+  /**
+   * Budget optimization. The caller builds `userMessage` from real campaign
+   * performance (portfolio summary + per-campaign metrics). We return a parsed
+   * reallocation plan. Only called when there is genuine revenue/ROAS signal —
+   * the optimizer service short-circuits on zero-revenue data so we never ask
+   * the model to "optimize" zeros.
+   */
+  async optimizeBudget(
+    userMessage: string
+  ): Promise<{ json: string; tokensUsed: number }> {
+    const { text, tokensUsed } = await this.callAnthropic(
+      BUDGET_SYSTEM_PROMPT,
+      userMessage,
+      2000
     );
     const json = this.extractJson(text);
     return { json, tokensUsed };

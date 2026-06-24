@@ -241,6 +241,120 @@ reach for the targeting spec, recomputed as they edit.
 
 ---
 
+## 🗓️ Scheduled publishing (app-side deferred publish)
+
+**Status:** Deferred
+**Earliest start:** **After Meta App Review approves → Standard Access.** Publishing doesn't work at all below Standard Access (code 3), so a scheduler that publishes would just hit the same wall when the date arrives. Build only once single publish works end-to-end.
+**Inspired by:** Founder request 2026-06-25.
+
+### What it is
+
+In-app, a user creates a campaign and picks a **future date to publish**. The campaign is held in our DB as `SCHEDULED`; a backend cron publishes it to Meta when the date arrives — *we* own the timing. This is distinct from Meta's native `start_time` (which schedules when an already-published ad starts *delivering*). Deferred publish lets the user keep editing in-app until the date, and keeps the ad off Meta until then.
+
+### Why we want it
+
+- Lets users line up campaigns in advance without babysitting them.
+- Natural fit with the existing scheduler infra (the 6-hour sync cron is the same pattern).
+- Common expectation for an ad-management tool.
+
+### Why we are NOT building it yet
+
+| Constraint | Reality |
+|---|---|
+| **Publish is tier-blocked** | Code 3 until Standard Access — a scheduled publish would fail at fire time. Hard prerequisite. |
+| **Single publish must be solid first** | No point scheduling an unreliable publish. Validate the happy path end-to-end first. |
+
+### Prerequisite gates
+
+- [ ] Meta App Review approved → Standard Access (single publish works end-to-end)
+- [ ] Publish logic extracted into a reusable service (see approach)
+
+### When the gates clear — how we'd approach it
+
+1. **Schema:** add `Campaign.scheduledPublishAt DateTime?` + a `SCHEDULED` status.
+2. **Refactor (key prerequisite):** extract the publish steps out of the `/:id/publish` route handler into `publishService.publishCampaign(campaignId, payload)` so both the route AND a cron can call it (a cron can't make an HTTP request to itself).
+3. **Wizard:** "Publish now" vs "Schedule for [date]" → save as `SCHEDULED` with the date **and the full publish payload** (page, targeting, creative).
+4. **Cron:** reuse the sync-scheduler pattern — every few minutes, find `SCHEDULED` campaigns where `scheduledPublishAt <= now` and publish them. `<= now` makes it robust to brief downtime (next tick catches missed ones).
+5. **Failure handling:** store `publishError`, retry, optionally notify the user.
+
+### Watch-outs (decided up front)
+
+- **Creative must be Meta-ready at schedule time** — the job runs with no user present, so the image must already be uploaded to Meta (`image_hash`); you can't hold a base64 preview and upload later.
+- **Token expiry** — Meta tokens expire (~60 days). Far-future schedules may outlive the token → handle refresh/failure gracefully.
+
+---
+
+## 📦 Bulk ad publishing
+
+**Status:** Deferred
+**Earliest start:** When (a) Standard Access is live AND single publish is solid, AND (b) real users are creating many ads and asking for it.
+**Inspired by:** Founder request 2026-06-25.
+
+### What it is
+
+Create many ads/variations and publish them to Meta in one action (e.g. one creative × many audiences, or many creatives at once), with per-item progress and partial-failure handling.
+
+### Why we want it
+
+- Real time-saver for power users / agencies running lots of ads.
+- A differentiator once the core flow is proven.
+
+### Why we are NOT building it yet
+
+| Constraint | Reality |
+|---|---|
+| **Premature** | Single publish doesn't work yet (Standard Access). Bulk on top of a broken/unproven publish is the wrong order. |
+| **No demand signal** | Beta is 5–6 friends — nobody will publish dozens of ads. Wait for someone to hit the single-publish ceiling and ask. |
+| **High complexity** | Partial failures, per-item rollback, Meta rate limits, progress UI — meaningful build cost for an unvalidated need. |
+
+### Prerequisite gates
+
+- [ ] Standard Access live + single publish rock-solid end-to-end
+- [ ] A real user is creating many ads and explicitly asks for bulk
+- [ ] Decide scope: which "bulk" (1 creative × N audiences? N creatives? CSV import?)
+
+### When the gates clear — how we'd approach it
+
+1. Reuse the same `publishService.publishCampaign` seam (built for scheduled publish) per item.
+2. Run items through a concurrency-limited queue (respect Meta rate limits).
+3. Per-item status + rollback; surface a progress UI; don't fail the whole batch on one item.
+
+---
+
+## 🤖 Budget Optimizer — apply-to-Meta + auto-mode
+
+**Status:** Deferred (the Budget Optimizer scaffold shipped 2026-06-25 as a DB-only planning tool — see IMPLEMENTATION.md)
+**Earliest start:** After (a) Standard Access (so budget/pause writes reach Meta) AND (b) real revenue-tracked campaigns exist (so recommendations are meaningful).
+**Inspired by:** Founder spec 2026-06-25.
+
+### What's deferred
+
+The optimizer currently **analyzes** and lets the user **apply changes to our DB only** (planning). Two pieces were intentionally NOT built:
+
+1. **Apply-to-Meta.** Make "Apply" actually change the live ad — call Meta to update the ad set's `daily_budget` and `updateCampaignStatus` for PAUSE. Needs published campaigns (`externalId`) + Standard Access write capability.
+2. **Auto-Optimize mode.** A daily cron that auto-applies "safe" budget changes without review. This is the riskiest part — it auto-spends real money from raw AI output.
+
+### Why deferred
+
+| Constraint | Reality |
+|---|---|
+| **No data** | Current campaigns have ROAS 0 (no purchase tracking) — the optimizer can't produce meaningful output until revenue-tracked campaigns exist. |
+| **Writes blocked** | Budget/pause-to-Meta needs Standard Access (publishing is code-3 blocked today). |
+| **Auto-mode safety** | Auto-applying AI budget changes / auto-pausing campaigns with real money is dangerous without hard, code-side guardrails. |
+
+### Prerequisite gates
+
+- [ ] Standard Access live (writes reach Meta) + at least one published campaign
+- [ ] Revenue-tracked campaigns with ~14+ days of data (real ROAS signal)
+- [ ] For auto-mode: code-side guardrails defined (budget-change caps, positive-value validation, enforced `autoOptimizeThreshold`, default human-in-loop)
+
+### When the gates clear — how we'd approach it
+
+1. **Apply-to-Meta:** add `metaService.updateAdSetBudget(...)`; in `applyRecommendations`, for published campaigns call Meta (ad-set budget / pause) in addition to the DB update; surface partial failures per item. Reuse the same publish-service seam noted in the scheduled-publish entry.
+2. **Auto-mode:** a daily cron (sync-scheduler pattern) that runs `analyzeAndOptimize` and auto-applies only changes that pass hard validation: within the per-run cap, ROAS below `autoOptimizeThreshold` for pauses, positive finite budgets. Use the dormant `Workspace.autoOptimize`/`autoOptimizeThreshold` fields. Default to "notify before applying."
+
+---
+
 ## (Add more deferred features below this line as they come up)
 
 <!--

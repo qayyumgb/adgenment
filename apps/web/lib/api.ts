@@ -230,6 +230,62 @@ export interface CreateAudienceInput {
   approxSize?: number | null;
 }
 
+/* ───────────────────────────── */
+/* Budget optimizer               */
+/* ───────────────────────────── */
+
+export interface BudgetRecommendationItem {
+  campaignId: string;
+  campaignName: string;
+  platform: string;
+  currentBudget: number;
+  recommendedBudget: number;
+  budgetChange: number;
+  budgetChangePercent: number;
+  action: "INCREASE" | "DECREASE" | "PAUSE" | "MAINTAIN";
+  reason: string;
+  expectedImpact: string;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  priority: number;
+}
+
+export interface OptimizationAnalysis {
+  /** True + non-actionable when there isn't enough revenue data to optimize. */
+  insufficientData?: boolean;
+  /** Saved recommendation id (absent when insufficientData). */
+  recommendationId?: string;
+  currency: string;
+  summary: string;
+  totalCurrentBudget: number;
+  totalRecommendedBudget: number;
+  estimatedRoasImprovement: number;
+  estimatedRevenueIncrease: number;
+  topOpportunity: string;
+  biggestRisk: string;
+  insights: string[];
+  recommendations: BudgetRecommendationItem[];
+}
+
+export type BudgetRecommendationStatus =
+  | "PENDING"
+  | "APPLIED"
+  | "PARTIAL"
+  | "DISMISSED";
+
+export interface BudgetRecommendationRow {
+  id: string;
+  workspaceId: string;
+  status: BudgetRecommendationStatus;
+  totalBudget: string | number;
+  currency: string;
+  analysisData: unknown;
+  recommendations: BudgetRecommendationItem[];
+  appliedAt: string | null;
+  dismissedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Response from POST /ai/generate-audience — AI proposal with names already
  *  resolved to real Meta IDs, ready to render as editable chips. */
 export interface GeneratedAudience {
@@ -517,6 +573,32 @@ export function useApiClient() {
         method: "POST",
         body: JSON.stringify({ description }),
       }),
+
+    /* Budget optimizer (DB-only planning in v1; no auto-mode) */
+    analyzeBudget: () =>
+      apiFetch<OptimizationAnalysis>("/budget-optimizer/analyze", {
+        method: "POST",
+      }),
+    applyBudgetRecommendations: (
+      recommendationId: string,
+      campaignIds?: string[]
+    ) =>
+      apiFetch<{ applied: number; skipped: number }>(
+        "/budget-optimizer/apply",
+        {
+          method: "POST",
+          body: JSON.stringify({ recommendationId, campaignIds }),
+        }
+      ),
+    dismissBudgetRecommendation: (recommendationId: string) =>
+      apiFetch<BudgetRecommendationRow>("/budget-optimizer/dismiss", {
+        method: "POST",
+        body: JSON.stringify({ recommendationId }),
+      }),
+    getBudgetHistory: () =>
+      apiFetch<BudgetRecommendationRow[]>("/budget-optimizer/history"),
+    getLatestRecommendation: () =>
+      apiFetch<BudgetRecommendationRow | null>("/budget-optimizer/latest"),
 
     /* ───────────────────────────────── */
     /* Phase 1A — Meta publish wizard    */

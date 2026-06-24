@@ -98,13 +98,19 @@ model Workspace {
   plan        PlanType @default(FREE)
   createdAt   DateTime @default(now())
 
-  owner       User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
-  members     WorkspaceMember[]
-  adAccounts  AdAccount[]
-  campaigns   Campaign[]
-  creatives   Creative[]
-  aiSessions  AiSession[]
-  audiences   Audience[]
+  /// Reserved for the deferred auto-optimize mode (auto-applying budget
+  /// recommendations). Dormant for now — no cron consumes these yet.
+  autoOptimize          Boolean @default(false)
+  autoOptimizeThreshold Decimal @default(2.0) @db.Decimal(6, 2)
+
+  owner                 User                   @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  members               WorkspaceMember[]
+  adAccounts            AdAccount[]
+  campaigns             Campaign[]
+  creatives             Creative[]
+  aiSessions            AiSession[]
+  audiences             Audience[]
+  budgetRecommendations BudgetRecommendation[]
 
   @@index([ownerId])
 }
@@ -295,4 +301,34 @@ model Audience {
 
   @@index([workspaceId])
   @@index([workspaceId, type])
+}
+
+enum BudgetRecommendationStatus {
+  PENDING // generated, not acted on
+  APPLIED // user applied all
+  PARTIAL // user applied some
+  DISMISSED // user dismissed
+}
+
+/// A single AI budget-optimization run for a workspace. `analysisData` is the
+/// per-campaign performance snapshot we fed the model; `recommendations` is the
+/// model's per-campaign output. v1 "apply" updates our DB only (planning) — it
+/// does NOT push budget changes to the ad platform yet (see FUTURE_FEATURES).
+model BudgetRecommendation {
+  id              String                     @id @default(cuid())
+  workspaceId     String
+  status          BudgetRecommendationStatus @default(PENDING)
+  totalBudget     Decimal                    @db.Decimal(14, 2)
+  currency        String                     @default("USD")
+  analysisData    Json
+  recommendations Json
+  appliedAt       DateTime?
+  dismissedAt     DateTime?
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
 }

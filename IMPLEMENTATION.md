@@ -472,6 +472,20 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-25 — AI Budget Optimizer (honest scaffold, DB-only apply, no auto-mode)
+
+Built the AI Budget Optimizer: analyzes campaign ROAS (last 14d vs previous 14d) and recommends budget reallocations, with per-card or "apply all". Built deliberately as a **scaffold that's honest about data and scope** (per founder decision):
+- **Insufficient-data gate** — if the workspace has no revenue/ROAS signal (the current reality: traffic/awareness campaigns, revenue 0), `analyze` short-circuits with a clear "need revenue-tracked campaigns" state instead of asking the model to optimize zeros (and doesn't burn an AI call or a rate-limit slot).
+- **Apply = DB-only (planning).** Updates `Campaign.budget` / `status` in our DB; does NOT push to Meta yet. The page shows a "Planning mode" banner. Real Meta push deferred (see FUTURE_FEATURES).
+- **No auto-mode** — the spec's auto-apply cron/toggle was deferred (riskiest part; auto-spending real money from raw AI). Schema keeps dormant `Workspace.autoOptimize`/`autoOptimizeThreshold` for later.
+- **Corrections to the spec:** reused `aiService` (native `fetch`, **`claude-opus-4-8`**) instead of the `@anthropic-ai/sdk` + the **retired** `claude-sonnet-4-20250514`; currency-aware (no hardcoded `$`); skipped the redundant Next proxy routes (auth calls go direct via `apiFetch`).
+
+Backend: `BudgetRecommendation` model + `BudgetRecommendationStatus` enum (`db push`); `budgetOptimizerService` (analyze/apply/dismiss/history/latest); `aiService.optimizeBudget` + `BUDGET_SYSTEM_PROMPT`; `routes/budget-optimizer.ts` (analyze rate-limited 10/hr, apply, dismiss, history, latest). Frontend: `/budget-optimizer` page (analyze → summary + insight cards → priority-sorted recommendation cards with per-card Apply/Skip → history; insufficient/empty/initial states), api-client types + methods, sidebar "Budget Optimizer" item (Intelligence group, AI badge), dashboard preview widget.
+
+**Files**: [schema.prisma](apps/api/prisma/schema.prisma), [budget-optimizer.service.ts](apps/api/src/services/budget-optimizer.service.ts), [ai.service.ts](apps/api/src/services/ai.service.ts), [routes/budget-optimizer.ts](apps/api/src/routes/budget-optimizer.ts), [routes/index.ts](apps/api/src/routes/index.ts), [lib/api.ts](apps/web/lib/api.ts), [budget-optimizer/page.tsx](apps/web/app/(dashboard)/budget-optimizer/page.tsx), [Sidebar.tsx](apps/web/components/layout/Sidebar.tsx), [dashboard/page.tsx](apps/web/app/(dashboard)/dashboard/page.tsx). `tsc --noEmit` clean on both apps.
+
+---
+
 ### 2026-06-24 — Security: stop leaking ad-account access tokens to the client
 
 `GET /campaigns/:id` used `include: { adAccount: true }` and spread the result into the response, shipping the **encrypted `accessToken`/`refreshToken`** to the browser. Added a shared `AD_ACCOUNT_PUBLIC_SELECT` (platform, accountName, accountId, currency, timezone, minDailyBudget — **no tokens**) and applied it to the detail route and the list route. The publish/launch routes still fetch the full record (they need the token to call Meta) but return a separate `updated` query with no `adAccount` — annotated with comments so a future edit doesn't re-introduce the leak.

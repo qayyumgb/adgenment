@@ -573,6 +573,10 @@ router.post(
       }
     }
 
+    // Tracks which Meta call we're on so a failure names the exact step
+    // (e.g. "[create ad creative] Meta API: …") instead of a bare error.
+    let publishStep = "preparing";
+
     try {
       // ── 1. Resolve asset → image_hash | video_id | child_attachments ──
       // The publish payload can carry an image (imageHash/imageUrl), a
@@ -783,6 +787,7 @@ router.post(
       const lifetimeBudget =
         campaign.budgetType === "LIFETIME" ? budgetNumber : undefined;
 
+      publishStep = "create campaign";
       const metaCampaign = await metaService.createCampaign(
         token,
         adAccountId,
@@ -798,6 +803,7 @@ router.post(
       created.metaCampaignId = metaCampaign.id;
 
       // ── 3. Create Ad Set ────────────────────────────────────────────
+      publishStep = "create ad set";
       const adSet = await metaService.createAdSet(token, adAccountId, {
         name: `${campaign.name} — Ad Set`,
         campaignId: metaCampaign.id,
@@ -813,6 +819,7 @@ router.post(
       created.adSetId = adSet.id;
 
       // ── 4. Create Ad Creative ────────────────────────────────────────
+      publishStep = "create ad creative";
       const adCreative = await metaService.createAdCreative(
         token,
         adAccountId,
@@ -833,6 +840,7 @@ router.post(
       created.creativeId = adCreative.id;
 
       // ── 5. Create Ad ─────────────────────────────────────────────────
+      publishStep = "create ad";
       const ad = await metaService.createAd(token, adAccountId, {
         name: `${campaign.name} — Ad`,
         adSetId: adSet.id,
@@ -868,8 +876,11 @@ router.post(
         },
       });
     } catch (err) {
-      const message =
+      const raw =
         err instanceof Error ? err.message : "Publish to Meta failed";
+      // Prefix with the step that failed so the UI/log pinpoints the exact
+      // Meta call (campaign vs ad set vs creative vs ad).
+      const message = `[${publishStep}] ${raw}`;
       // Roll back any Meta-side objects we already created
       await rollback();
       // Record the failure on the campaign so the UI can surface it
