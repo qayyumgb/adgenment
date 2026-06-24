@@ -100,6 +100,35 @@ Constraints:
 - Coherent across all cards. The story should make sense if a reader swipes through cards 1..${cardCount} in order.
 - Conversion-focused, no markdown, no explanations.`;
 
+/** Audience-builder prompt. The model proposes a Meta-shaped targeting
+ *  definition from a plain-English description. It returns NAMES (not Meta
+ *  IDs) — the route resolves interest/location names to real Meta IDs via the
+ *  /search endpoints afterwards. We keep the model's job to "interpret intent
+ *  into structured targeting" and leave ID resolution to the platform. */
+const AUDIENCE_SYSTEM_PROMPT = `You are a Meta Ads targeting expert. Convert a plain-English audience description into a structured targeting definition.
+
+Return ONLY valid JSON (no markdown, no prose) in this exact shape:
+{
+  "name": string,                       // a short, descriptive audience name (max 60 chars)
+  "type": "INTEREST" | "RETARGETING" | "LOOKALIKE" | "CUSTOM" | "BEHAVIORAL" | "SAVED",
+  "age_min": number,                    // 13-65
+  "age_max": number,                    // 13-65, >= age_min
+  "genders": ("male" | "female")[],     // empty array = all genders
+  "geo": {
+    "countries": string[],              // country NAMES, e.g. ["United States", "Canada"]
+    "cities": string[]                  // city NAMES, e.g. ["New York", "Los Angeles"]
+  },
+  "interests": string[],                // real Meta interest NAMES, e.g. ["Organic food", "Skincare"]
+  "rationale": string                   // one sentence on why this targeting fits
+}
+
+Rules:
+- Pick interest names that actually exist as Meta ad interests (common, well-known topics).
+- 3-8 interests is ideal. Don't invent obscure interests.
+- If the description implies retargeting/custom data ("cart abandoners", "past purchasers"), set type accordingly and keep interests minimal.
+- Default genders to [] (all) unless the description clearly specifies one.
+- If no geography is implied, leave countries/cities empty.`;
+
 class AIService {
   private async callAnthropic(
     system: string,
@@ -227,6 +256,23 @@ class AIService {
       CAROUSEL_COPY_SYSTEM_PROMPT(cardCount),
       userMessage,
       1200 // ~200 tokens of headroom per card * ~5 cards
+    );
+    const json = this.extractJson(text);
+    return { json, tokensUsed };
+  }
+
+  /**
+   * Propose a structured Meta targeting definition from a plain-English
+   * audience description. Returns interest/location NAMES (not IDs) — the
+   * caller resolves those to real Meta IDs via the /search endpoints.
+   */
+  async generateAudienceTargeting(
+    description: string
+  ): Promise<{ json: string; tokensUsed: number }> {
+    const { text, tokensUsed } = await this.callAnthropic(
+      AUDIENCE_SYSTEM_PROMPT,
+      `Audience description: ${description}`,
+      700
     );
     const json = this.extractJson(text);
     return { json, tokensUsed };

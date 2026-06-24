@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import multer from "multer";
 import { aiService } from "../services/ai.service";
 import { openaiImageService } from "../services/openai-image.service";
-import { metaService } from "../services/meta.service";
+import { metaService, type MetaTargeting } from "../services/meta.service";
 import { requireAuth } from "../middleware/auth";
 import { requireWorkspace } from "../lib/workspace";
 import { prisma } from "../lib/prisma";
@@ -149,6 +149,200 @@ router.post("/generate-copy", async (req: Request, res: Response) => {
     });
   }
 });
+
+/** Map the AI's gender strings to Meta's numeric codes. Empty (or both) = all
+ *  genders, which Meta represents by OMITTING the field. */
+function mapGenders(v: unknown): number[] {
+  if (!Array.isArray(v)) return [];
+  const set = new Set<number>();
+  for (const g of v) {
+    if (g === "male") set.add(1);
+    if (g === "female") set.add(2);
+  }
+  // Both selected = no restriction → omit (return []).
+  return set.size === 1 ? [...set] : [];
+}
+
+/** Clamp an age to Meta's allowed 13-65 range, falling back when invalid. */
+function clampAge(v: unknown, fallback: number): number {
+  if (typeof v === "number" && Number.isFinite(v)) {
+    return Math.min(65, Math.max(13, Math.round(v)));
+  }
+  return fallback;
+}
+
+const AUDIENCE_TYPE_VALUES = [
+  "LOOKALIKE",
+  "INTEREST",
+  "RETARGETING",
+  "CUSTOM",
+  "BEHAVIORAL",
+  "SAVED",
+] as const;
+type AudienceTypeValue = (typeof AUDIENCE_TYPE_VALUES)[number];
+function normalizeAudienceType(v: unknown): AudienceTypeValue {
+  return typeof v === "string" &&
+    (AUDIENCE_TYPE_VALUES as readonly string[]).includes(v)
+    ? (v as AudienceTypeValue)
+    : "INTEREST";
+}
+
+/**
+ * POST /ai/generate-audience — turn a plain-English description into a real,
+ * editable Meta targeting spec. The LLM proposes targeting by NAME; we then
+ * resolve interest + location names to real Meta IDs via the /search
+ * endpoints so the result is publish-ready (not just suggestions).
+ *
+ * Requires a connected Meta ad account (needed to resolve names → IDs).
+ * Body: `{ description }`. Returns `{ name, type, description, targeting,
+ * resolved, approxSize }`.
+ */
+router.post(
+  "/generate-audience",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const workspace = await requireWorkspace(req.dbUserId!);
+      const { description } = (req.body ?? {}) as { description?: unknown };
+      if (typeof description !== "string" || description.trim().length < 10) {
+        return res.status(400).json({
+          error: "Describe the audience in at least 10 characters.",
+        });
+      }
+
+      const adAccount = await prisma.adAccount.findFirst({
+        where: { workspaceId: workspace.id, platform: "META", isActive: true },
+        orderBy: { createdAt: "desc" },
+      });
+      if (!adAccount) {
+        return res.status(400).json({
+          error:
+            "Connect a Meta ad account first (Settings → Integrations) — we resolve interests and locations against Meta to build a real audience.",
+        });
+      }
+      const token = metaService.decryptToken(adAccount.accessToken);
+
+      // 1. LLM proposes a structured targeting definition (names, not IDs).
+      let proposal: {
+        name?: unknown;
+        type?: unknown;
+        age_min?: unknown;
+        age_max?: unknown;
+        genders?: unknown;
+        geo?: { countries?: unknown; cities?: unknown };
+        interests?: unknown;
+        rationale?: unknown;
+      };
+      try {
+        const { json } = await aiService.generateAudienceTargeting(
+          description.trim()
+        );
+        proposal = JSON.parse(json);
+      } catch (err) {
+        const code = err instanceof Error ? err.message : "AI_API_ERROR";
+        if (code === "AI_PARSE_ERROR") {
+          return res.status(502).json({
+            error: "AI returned malformed targeting. Try rephrasing.",
+          });
+        }
+        return res.status(503).json({
+          error: "AI service is temporarily unavailable. Try again.",
+        });
+      }
+
+      // 2. Resolve names → real Meta IDs (parallel, best-effort: a name that
+      //    doesn't match anything on Meta is simply dropped).
+      const asStrings = (v: unknown, cap: number): string[] =>
+        Array.isArray(v)
+          ? v.filter((s): s is string => typeof s === "string" && s.trim() !== "").slice(0, cap)
+          : [];
+      const interestNames = asStrings(proposal.interests, 8);
+      const countryNames = asStrings(proposal.geo?.countries, 10);
+      const cityNames = asStrings(proposal.geo?.cities, 10);
+
+      const [interestRes, countryRes, cityRes] = await Promise.all([
+        Promise.all(
+          interestNames.map((n) =>
+            metaService.searchInterests(token, n).then((r) => r[0] ?? null).catch(() => null)
+          )
+        ),
+        Promise.all(
+          countryNames.map((n) =>
+            metaService.searchLocations(token, n, ["country"]).then((r) => r[0] ?? null).catch(() => null)
+          )
+        ),
+        Promise.all(
+          cityNames.map((n) =>
+            metaService.searchLocations(token, n, ["city"]).then((r) => r[0] ?? null).catch(() => null)
+          )
+        ),
+      ]);
+
+      const interests = interestRes
+        .filter((i): i is NonNullable<typeof i> => i !== null)
+        .map((i) => ({ id: i.id, name: i.name }));
+      const countries = countryRes
+        .filter((c): c is NonNullable<typeof c> => c !== null)
+        .map((c) => c.countryCode)
+        .filter((c): c is string => typeof c === "string");
+      const cities = cityRes
+        .filter((c): c is NonNullable<typeof c> => c !== null)
+        .map((c) => ({ key: c.key }));
+
+      // 3. Assemble the MetaTargeting spec.
+      const ageMin = clampAge(proposal.age_min, 18);
+      const ageMax = Math.max(ageMin, clampAge(proposal.age_max, 65));
+      const genders = mapGenders(proposal.genders);
+      const hasGeo = countries.length > 0 || cities.length > 0;
+      const targeting: MetaTargeting = {
+        age_min: ageMin,
+        age_max: ageMax,
+        ...(genders.length ? { genders } : {}),
+        ...(hasGeo
+          ? {
+              geo_locations: {
+                ...(countries.length ? { countries } : {}),
+                ...(cities.length ? { cities } : {}),
+              },
+            }
+          : {}),
+        ...(interests.length ? { interests } : {}),
+      };
+
+      // Approx size: the broadest single interest. Meta OR's interests, so the
+      // true union is >= this — a conservative, honest lower-bound signal.
+      const approxSize =
+        interestRes.reduce(
+          (m, i) =>
+            i && typeof i.audienceSize === "number"
+              ? Math.max(m, i.audienceSize)
+              : m,
+          0
+        ) || null;
+
+      return res.json({
+        name:
+          typeof proposal.name === "string" && proposal.name.trim()
+            ? proposal.name.trim().slice(0, 80)
+            : "AI audience",
+        type: normalizeAudienceType(proposal.type),
+        description:
+          typeof proposal.rationale === "string" && proposal.rationale.trim()
+            ? proposal.rationale.trim()
+            : description.trim(),
+        targeting,
+        resolved: {
+          interests,
+          countries: countryRes.filter((c) => c !== null),
+          cities: cityRes.filter((c) => c !== null),
+        },
+        approxSize,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /**
  * POST /ai/generate-image — generate an ad image with Gemini, then upload

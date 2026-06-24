@@ -206,6 +206,41 @@ fallback if one provider is down.
 
 ---
 
+## 📊 Real Meta reach estimate for Audiences
+
+**Status:** Deferred
+**Earliest start:** After Meta App Review approved (Standard Access)
+**Inspired by:** Audiences feature shipped 2026-06-24 with honest "approx size" only — see [AUDIENCES.md](AUDIENCES.md).
+
+### What it is
+
+Replace the best-effort "approx size" on audience cards + in the builder with a
+**real reach range** from Meta's `delivery_estimate` API. When a user builds or
+edits an audience (or loads one in the publish wizard), show the true estimated
+reach for the targeting spec, recomputed as they edit.
+
+### Why we are NOT building it yet
+
+| Constraint | Reality |
+|---|---|
+| **Access tier** | Delivery/reach estimates are most reliable at Standard Access — which we only get once App Review is approved. Building against Dev Access risks inconsistent numbers. |
+| **Async + flaky** | Meta's estimate isn't always ready instantly (`estimate_ready: false`); needs polling/loading states and graceful "estimate pending" UX. |
+| **Not blocking** | The honest "approx size" (interest `audience_size` / custom-audience `approximate_count`) is good enough to ship the feature; real reach is a polish upgrade. |
+
+### Prerequisite gates
+
+- [ ] Meta App Review approved → Marketing API at Standard Access
+- [ ] Audiences feature validated in beta (people actually build + reuse them)
+
+### When the gate clears — how we'd approach it
+
+1. Add `metaService.estimateReach(token, accountId, targeting, optimizationGoal)` → `GET /act_<id>/delivery_estimate`; handle the async "estimate not ready" state (return a pending flag, let the client poll).
+2. Surface a real reach range on the audience cards + builder, replacing the "approx size" line. Store the last-computed range on the `Audience` row (optional) or compute on demand.
+3. Recompute when targeting changes in the builder (debounced).
+4. Optionally surface the same estimate live in the publish wizard's targeting step.
+
+---
+
 ## (Add more deferred features below this line as they come up)
 
 <!--

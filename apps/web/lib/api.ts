@@ -178,6 +178,66 @@ export interface CreateCreativeInput {
   status?: CreativeStatus;
 }
 
+/* ───────────────────────────── */
+/* Audiences (saved targeting)    */
+/* ───────────────────────────── */
+
+export type AudienceType =
+  | "LOOKALIKE"
+  | "INTEREST"
+  | "RETARGETING"
+  | "CUSTOM"
+  | "BEHAVIORAL"
+  | "SAVED";
+
+export interface Audience {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string | null;
+  type: AudienceType;
+  platforms: Platform[];
+  /** The Meta targeting spec — same shape the publish wizard sends. */
+  targeting: MetaTargetingSpec;
+  aiGenerated: boolean;
+  /** Best-effort approx size (null when unknown). Real reach range later. */
+  approxSize: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AudiencesResponse {
+  audiences: Audience[];
+  total: number;
+  page: number;
+  totalPages: number;
+}
+
+export interface CreateAudienceInput {
+  name: string;
+  description?: string | null;
+  type?: AudienceType;
+  platforms?: Platform[];
+  targeting: MetaTargetingSpec;
+  aiGenerated?: boolean;
+  approxSize?: number | null;
+}
+
+/** Response from POST /ai/generate-audience — AI proposal with names already
+ *  resolved to real Meta IDs, ready to render as editable chips. */
+export interface GeneratedAudience {
+  name: string;
+  type: AudienceType;
+  description: string;
+  targeting: MetaTargetingSpec;
+  resolved: {
+    interests: Array<{ id: string; name: string }>;
+    countries: MetaGeoLocation[];
+    cities: MetaGeoLocation[];
+  };
+  approxSize: number | null;
+}
+
 export interface ConnectAdAccountInput {
   platform: Platform;
   accountId: string;
@@ -426,6 +486,30 @@ export function useApiClient() {
       }),
     deleteCreative: (id: string) =>
       apiFetch<SuccessResponse>(`/creatives/${id}`, { method: "DELETE" }),
+
+    /* Audiences — saved targeting templates (our DB) */
+    getAudiences: (params?: Record<string, string | number | undefined>) =>
+      apiFetch<AudiencesResponse>(`/audiences${buildQuery(params)}`),
+    createAudience: (data: CreateAudienceInput) =>
+      apiFetch<Audience>("/audiences", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    updateAudience: (id: string, data: Partial<CreateAudienceInput>) =>
+      apiFetch<Audience>(`/audiences/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    deleteAudience: (id: string) =>
+      apiFetch<SuccessResponse>(`/audiences/${id}`, { method: "DELETE" }),
+    duplicateAudience: (id: string) =>
+      apiFetch<Audience>(`/audiences/${id}/duplicate`, { method: "POST" }),
+    /** AI-build: plain-English description → resolved, editable targeting. */
+    generateAudienceTargeting: (description: string) =>
+      apiFetch<GeneratedAudience>("/ai/generate-audience", {
+        method: "POST",
+        body: JSON.stringify({ description }),
+      }),
 
     /* ───────────────────────────────── */
     /* Phase 1A — Meta publish wizard    */

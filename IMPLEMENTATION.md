@@ -472,6 +472,28 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-24 — Audiences: mock → real (saved targeting templates + live Meta tab + AI/manual builders)
+
+Converted the static Audiences mock into a real, data-backed feature. An
+**Audience** is now a reusable Meta targeting spec (`MetaTargeting` JSON) saved
+workspace-scoped, that can prefill the campaign publish wizard. Two tabs: **My
+Audiences** (our DB) and **Meta Audiences** (live custom/saved/lookalike from
+the connected account, read-only). The fabricated card metrics (size / CPM /
+match-rate / reach) were **removed** — cards now show only honest data: type,
+a criteria summary, and an approximate size *only where Meta provides it*. See
+[AUDIENCES.md](AUDIENCES.md) for the full feature doc.
+
+- **Data** — new `Audience` model + `AudienceType` enum + `Workspace.audiences` relation ([schema.prisma](apps/api/prisma/schema.prisma)); applied via `prisma db push` (this project has no migrations dir — it syncs the dev DB with db push).
+- **API** — new workspace-scoped CRUD at `/audiences` ([audiences.ts](apps/api/src/routes/audiences.ts), mirrors `creatives.ts`): list/create/update/delete/duplicate. New AI route `POST /ai/generate-audience` + `aiService.generateAudienceTargeting()`: an LLM proposes targeting by NAME, then the route resolves interest/location names to **real Meta IDs** via the existing `/meta/interests` + `/meta/locations` search (requires a connected Meta account).
+- **Shared targeting components** — extracted `InterestPicker` / `CityPicker` / `CountryPicker` / `CustomAudiencePicker` / `SavedAudiencePicker` (+ `ChipList`, `formatBig`, `Selected*` types) out of the publish wizard into [components/targeting/pickers.tsx](apps/web/components/targeting/pickers.tsx); the wizard now imports them (no fork).
+- **Builders** — the build modal offers **AI** (describe → drafted, editable targeting) and **Manual** (age/gender + country/city/interest/custom-audience pickers) — the user picks. Both save one `MetaTargeting` spec.
+- **Publish integration** — a "Load saved audience" dropdown in the wizard's targeting step seeds the state from a saved audience.
+- **Client** — `getAudiences` / `createAudience` / `updateAudience` / `deleteAudience` / `duplicateAudience` / `generateAudienceTargeting` + `Audience` types in [api.ts](apps/web/lib/api.ts).
+
+**Files**: [apps/api/prisma/schema.prisma](apps/api/prisma/schema.prisma), [apps/api/src/routes/audiences.ts](apps/api/src/routes/audiences.ts), [apps/api/src/routes/index.ts](apps/api/src/routes/index.ts), [apps/api/src/routes/ai.ts](apps/api/src/routes/ai.ts), [apps/api/src/services/ai.service.ts](apps/api/src/services/ai.service.ts), [apps/web/lib/api.ts](apps/web/lib/api.ts), [apps/web/components/targeting/pickers.tsx](apps/web/components/targeting/pickers.tsx), [apps/web/components/campaigns/publish/PublishToMetaModal.tsx](apps/web/components/campaigns/publish/PublishToMetaModal.tsx), [apps/web/app/(dashboard)/audiences/page.tsx](apps/web/app/(dashboard)/audiences/page.tsx), [AUDIENCES.md](AUDIENCES.md). Real reach estimate (Meta `delivery_estimate`) deferred to post-App-Review — see [FUTURE_FEATURES.md](FUTURE_FEATURES.md). `tsc --noEmit` clean on `apps/api` + `apps/web`.
+
+---
+
 ### 2026-06-24 — AI Generate: reference-image upload (+ icon, image-guided generation)
 
 Added an optional **reference product image** to AI Generate. A "Reference image" (`+`/`ImagePlus`) control sits in the prompt bar control row for the **image** and **carousel** kinds; picking a PNG/JPEG/WebP (≤10MB) shows a thumbnail chip with an `×` to remove. When a reference is attached, generation routes to OpenAI's **`/v1/images/edits`** (image-guided) instead of `/v1/images/generations` (text-to-image), so the product is featured as the hero subject. The same image guides **all N image outputs** and **every carousel card** (re-sent per parallel call). Model stays **`gpt-image-1-mini`** / quality `low` — no cost-tier change; `input_fidelity` is intentionally not sent (unsupported on `-mini`), so the product is *guided*, not pixel-perfect.

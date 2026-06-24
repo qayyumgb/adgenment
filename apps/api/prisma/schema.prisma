@@ -66,6 +66,15 @@ enum AiSessionType {
   REPORT
 }
 
+enum AudienceType {
+  LOOKALIKE
+  INTEREST
+  RETARGETING
+  CUSTOM
+  BEHAVIORAL
+  SAVED
+}
+
 model User {
   id        String   @id @default(cuid())
   clerkId   String   @unique
@@ -95,6 +104,7 @@ model Workspace {
   campaigns   Campaign[]
   creatives   Creative[]
   aiSessions  AiSession[]
+  audiences   Audience[]
 
   @@index([ownerId])
 }
@@ -242,4 +252,34 @@ model AiSession {
   @@index([workspaceId])
   @@index([userId])
   @@index([type])
+}
+
+/// A saved, reusable Meta targeting spec ("audience"). The `targeting` JSON is
+/// the same MetaTargeting shape the publish flow sends to Meta when creating an
+/// ad set, so a saved audience can prefill the publish wizard. Meta's own
+/// Custom/Saved/Lookalike audiences are NOT stored here — those are fetched
+/// live from the platform; this table holds only our own templates.
+model Audience {
+  id          String       @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  type        AudienceType @default(SAVED)
+  /// Platforms this audience targets. v1 is always ["META"]; kept as a list
+  /// for forward-compat once Google/TikTok targeting lands.
+  platforms   Platform[]
+  /// MetaTargeting spec (age, geo, interests, custom_audiences, placements…).
+  targeting   Json
+  aiGenerated Boolean      @default(false)
+  /// Best-effort approximate size captured at build time (from Meta interest
+  /// audience_size / custom-audience approximate_count). Null when unknown.
+  /// Replaced by a real reach range once delivery_estimate lands post-App-Review.
+  approxSize  Int?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, type])
 }
