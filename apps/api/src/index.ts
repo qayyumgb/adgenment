@@ -16,6 +16,10 @@ import {
   startMetaWarmupCron,
   stopMetaWarmupCron,
 } from "./services/meta-warmup.service";
+import {
+  startSyncScheduler,
+  stopSyncScheduler,
+} from "./services/sync-scheduler.service";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -138,10 +142,14 @@ async function startServer() {
     //    See apps/api/src/services/meta-warmup.service.ts.
     startMetaWarmupCron();
 
+    // Periodic platform sync so dashboards stay current without manual action.
+    startSyncScheduler();
+
     // Graceful shutdown — Railway sends SIGTERM during redeploy
     const shutdown = (signal: string) => {
       console.log(`[advertix-api] ${signal} received — shutting down…`);
       stopMetaWarmupCron();
+      stopSyncScheduler();
       server.close(async () => {
         try {
           await prisma.$disconnect();

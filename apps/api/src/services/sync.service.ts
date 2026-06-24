@@ -260,9 +260,19 @@ class SyncService {
         ? parseFloat(purchaseAction.value) || 0
         : 0;
 
+      // Revenue = real purchase value from `action_values` (NOT roas × spend,
+      // which is circular and breaks when Meta omits purchase_roas). Falls
+      // back to roas × spend only when action_values is absent.
+      const purchaseValue = insight.action_values?.find(
+        (a) =>
+          a.action_type === "purchase" ||
+          a.action_type === "offsite_conversion.fb_pixel_purchase"
+      );
       const roasEntry = insight.purchase_roas?.[0];
       const roas = roasEntry ? parseFloat(roasEntry.value) || 0 : 0;
-      const revenue = roas * spend;
+      const revenue = purchaseValue
+        ? parseFloat(purchaseValue.value) || 0
+        : roas * spend;
 
       const ctr = impressions > 0 ? clicks / impressions : 0;
       const cpc = clicks > 0 ? spend / clicks : 0;
@@ -301,6 +311,36 @@ class SyncService {
       });
       metricsSynced++;
     }
+
+    // 3. Range-level unique reach per campaign. Reach is de-duplicated across
+    //    days, so it can't be summed from the daily rows above — fetch the
+    //    single period figure and snapshot it on each campaign. Non-fatal.
+    try {
+      const reachMap = await metaService.getCampaignReach(
+        token,
+        accountId,
+        "last_30d"
+      );
+      await Promise.all(
+        Object.entries(reachMap).map(([metaId, reach]) => {
+          const ourId = idMap[metaId];
+          if (!ourId) return Promise.resolve(null);
+          return prisma.campaign.update({
+            where: { id: ourId },
+            data: { reach },
+          });
+        })
+      );
+    } catch (err) {
+      console.error("[sync:meta] reach fetch failed (non-fatal):", err);
+    }
+
+    // 4. Stamp the successful sync so the UI can show "last synced" and the
+    //    scheduler can skip recently-synced accounts.
+    await prisma.adAccount.update({
+      where: { id: adAccount.id },
+      data: { lastSyncedAt: new Date() },
+    });
 
     return { platform: "META", campaignsSynced, metricsSynced };
   }

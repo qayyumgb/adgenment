@@ -140,6 +140,9 @@ model AdAccount {
   refreshToken String?
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
+  /// Timestamp of the last successful platform sync. Drives the "Last synced"
+  /// label and lets the scheduler skip recently-synced accounts. Null = never.
+  lastSyncedAt DateTime?
 
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaigns Campaign[]
@@ -163,6 +166,11 @@ model Campaign {
   startDate   DateTime?
   endDate     DateTime?
   targeting   Json?
+  /// Range-level unique reach (last 30d) from Meta, refreshed on each sync.
+  /// Stored on the campaign — NOT in CampaignMetrics — because reach is
+  /// de-duplicated across days, so summing daily rows would overcount. This
+  /// snapshot matches the single number Ads Manager shows for the period.
+  reach       Int            @default(0)
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 

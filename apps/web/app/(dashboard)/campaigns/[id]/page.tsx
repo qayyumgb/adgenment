@@ -435,9 +435,9 @@ function CampaignDetail({
       </div>
 
       {/* Metric cards */}
-      <div className="grid grid-cols-2 gap-4 animate-in stagger-2 md:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 animate-in stagger-2 md:grid-cols-3 lg:grid-cols-6">
         {metricsLoading ? (
-          [0, 1, 2, 3, 4].map((i) => <SkeletonMetricCard key={i} />)
+          [0, 1, 2, 3, 4, 5].map((i) => <SkeletonMetricCard key={i} />)
         ) : metrics.length === 0 ? (
           <div className="col-span-full">
             <EmptyState
@@ -461,9 +461,11 @@ function CampaignDetail({
             />
             <MetricCard
               title="Revenue"
-              value={fmtMoney(totals.revenue, currency)}
+              value={totals.revenue === 0 ? "—" : fmtMoney(totals.revenue, currency)}
               change={0}
-              changeLabel={`${metrics.length}d window`}
+              changeLabel={
+                totals.revenue === 0 ? "no revenue tracked" : `${metrics.length}d window`
+              }
               icon={TrendingUp}
               iconColor="#2563eb"
               iconBg="rgba(59, 130, 246, 0.12)"
@@ -471,14 +473,24 @@ function CampaignDetail({
             />
             <MetricCard
               title="ROAS"
-              value={avgRoas.toFixed(2)}
+              value={avgRoas === 0 ? "—" : avgRoas.toFixed(2)}
               change={0}
               changeLabel="avg"
               icon={Zap}
               iconColor="#7c3aed"
               iconBg="rgba(139, 92, 246, 0.12)"
               trend={avgRoas >= 2 ? "up" : avgRoas >= 1 ? "neutral" : "down"}
-              suffix="x"
+              suffix={avgRoas === 0 ? "" : "x"}
+            />
+            <MetricCard
+              title="Reach"
+              value={(c?.reach ?? 0) === 0 ? "—" : fmtCompact(c?.reach ?? 0)}
+              change={0}
+              changeLabel="unique"
+              icon={Users}
+              iconColor="#0d9488"
+              iconBg="rgba(13, 148, 136, 0.12)"
+              trend="neutral"
             />
             <MetricCard
               title="Impressions"

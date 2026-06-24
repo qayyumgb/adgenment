@@ -13,20 +13,26 @@ export function fmtMoney(
   options: { full?: boolean; compact?: boolean } = {}
 ): string {
   const code = (currency ?? "USD").toUpperCase();
-  const maxFractionDigits = options.full ? 2 : 0;
+  // Money shows EXACT cents by default (e.g. spend "Rs1,148.72" must match the
+  // ad platform to the cent — clients are sensitive about payment figures).
+  // `compact` is for space-constrained hero numbers, where 1 decimal ("Rs1.1K")
+  // is the readable choice. `full` is kept for back-compat (already 2 here).
+  const fractionDigits = options.compact ? 1 : 2;
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: code,
-      maximumFractionDigits: maxFractionDigits,
+      minimumFractionDigits: options.compact ? 0 : 2,
+      maximumFractionDigits: fractionDigits,
       notation: options.compact ? "compact" : "standard",
     }).format(n);
   } catch {
-    // Unknown ISO code — fall back to plain "$1,234"
+    // Unknown ISO code — fall back to plain "$1,234.56"
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
-      maximumFractionDigits: maxFractionDigits,
+      minimumFractionDigits: options.compact ? 0 : 2,
+      maximumFractionDigits: fractionDigits,
       notation: options.compact ? "compact" : "standard",
     }).format(n);
   }

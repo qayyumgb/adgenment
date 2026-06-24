@@ -163,6 +163,39 @@ router.post(
   }
 );
 
+/**
+ * POST /meta/sync — re-sync ALL active Meta ad accounts in the workspace.
+ * Convenience for the "Sync now" button so the frontend doesn't need to know
+ * an account id. Returns aggregate counts.
+ */
+router.post(
+  "/sync",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const workspace = await requireWorkspace(req.dbUserId!);
+      const active = await prisma.adAccount.findMany({
+        where: { workspaceId: workspace.id, platform: "META", isActive: true },
+      });
+      if (active.length === 0) {
+        return res
+          .status(400)
+          .json({ error: "Connect a Meta ad account first (Settings → Integrations)." });
+      }
+      let campaignsSynced = 0;
+      let metricsSynced = 0;
+      for (const acct of active) {
+        const r = await syncService.syncMetaAccount(acct);
+        campaignsSynced += r.campaignsSynced;
+        metricsSynced += r.metricsSynced;
+      }
+      res.json({ success: true, accounts: active.length, campaignsSynced, metricsSynced });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 /* ────────────────────────────────────────── */
 /* GET /meta/ad-accounts                      */
 /* ────────────────────────────────────────── */

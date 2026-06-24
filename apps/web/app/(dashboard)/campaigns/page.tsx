@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
+import toast from "react-hot-toast";
 import {
   RefreshCw,
   Plus,
@@ -228,6 +229,24 @@ export default function CampaignsPage() {
     await Promise.all([refetch(), counts.refetch()]);
   }, [refetch, counts]);
 
+  // Pull fresh data FROM Meta (imports new campaigns like boosted posts, and
+  // refreshes spend/reach), then reload the local views. Distinct from the
+  // plain refetch, which only re-reads what we've already synced.
+  const apiClient = useApiClient();
+  const [syncing, setSyncing] = useState(false);
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const r = await apiClient.syncMeta();
+      await refetchAll();
+      toast.success(`Synced ${r.campaignsSynced} campaign${r.campaignsSynced === 1 ? "" : "s"} from Meta`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }, [apiClient, refetchAll]);
+
   const totalPages = data?.totalPages ?? 1;
   const campaigns = data?.campaigns ?? [];
 
@@ -246,11 +265,17 @@ export default function CampaignsPage() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => refetch()}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+            onClick={handleSync}
+            disabled={syncing}
+            title="Pull the latest campaigns and metrics from Meta"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
           >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
+            {syncing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {syncing ? "Syncing…" : "Sync now"}
           </button>
           <button
             type="button"
@@ -410,7 +435,7 @@ export default function CampaignsPage() {
             <table className="min-w-full text-sm">
               <tbody>
                 {Array.from({ length: 8 }).map((_, i) => (
-                  <SkeletonTableRow key={i} cols={10} />
+                  <SkeletonTableRow key={i} cols={11} />
                 ))}
               </tbody>
             </table>
@@ -735,6 +760,11 @@ function CampaignCard({
               {c.startDate.slice(0, 10)}
             </span>
           )}
+          {(c.reach ?? 0) > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+              {(c.reach ?? 0).toLocaleString()} reached
+            </span>
+          )}
         </div>
         <div
           className={clsx(
@@ -841,6 +871,7 @@ function CampaignListTable({
               <th className="py-3">ROAS</th>
               <th className="py-3">CTR</th>
               <th className="py-3">Impressions</th>
+              <th className="py-3">Reach</th>
               <th className="py-3">Start</th>
               <th className="px-5 py-3 text-right">Actions</th>
             </tr>
@@ -933,6 +964,9 @@ function CampaignListRow({
       </td>
       <td className="py-3.5 text-xs font-medium text-slate-700">
         {impressions > 0 ? fmtCompact(impressions) : "—"}
+      </td>
+      <td className="py-3.5 text-xs font-medium text-slate-700">
+        {(c.reach ?? 0) > 0 ? fmtCompact(c.reach ?? 0) : "—"}
       </td>
       <td className="py-3.5 text-xs text-slate-500">
         {c.startDate ? c.startDate.slice(0, 10) : "—"}

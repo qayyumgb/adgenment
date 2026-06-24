@@ -472,6 +472,19 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-24 — Meta data fidelity: sync freshness, exact money, reach, real revenue
+
+Fixed a cluster of "app doesn't match Ads Manager" bugs reported against a live boosted-post campaign.
+
+- **Stale / missing campaigns** — root cause: sync only ran when `POST /meta/sync/:id` was hit, and the frontend never called it (no scheduler, no button). So campaigns created on Meta after connect (e.g. a boosted reel) never imported. Fix: (a) **auto-sync scheduler** ([sync-scheduler.service.ts](apps/api/src/services/sync-scheduler.service.ts)) every `SYNC_INTERVAL_HOURS` (default **6**; `SYNC_SCHEDULER_ENABLED=false` to disable), registered in [index.ts](apps/api/src/index.ts); (b) a **"Sync now"** button on the campaigns page (`api.syncMeta()` → `POST /meta/sync`, syncs all active Meta accounts); (c) **pagination** — `getCampaigns`/`getCampaignInsights` now follow `paging.next` via `graphFetchAll` (Meta's default 25-row page was truncating campaigns + daily insights); (d) `AdAccount.lastSyncedAt` stamped each sync.
+- **Spend rounded to whole numbers** (Rs1,148.72 → "Rs1149") — `fmtMoney` defaulted to 0 fraction digits. Now shows **exact 2 decimals** for standard money (spend/revenue/budget); `compact` still used for hero numbers. Dashboard/Analytics USD aggregates intentionally left as-is (see workspace-currency memory).
+- **Reach missing** — never fetched/stored/shown. Added `Campaign.reach` (range-level, **not** summed from daily rows — reach is de-duplicated, so a new `getCampaignReach` pulls the period figure that matches Ads Manager). Surfaced on the campaign cards, the list table (new Reach column), and a new Reach metric card on the detail page.
+- **Revenue / ROAS** — revenue was `roas × spend` (circular, breaks without `purchase_roas`). Now fetched from real `action_values` (purchase value). For non-sales campaigns (e.g. Landing Page Views) revenue/ROAS are genuinely 0 — the UI now shows **"—"** instead of "0"/"0.00x" so it doesn't read as broken.
+
+**Files**: [meta.service.ts](apps/api/src/services/meta.service.ts), [sync.service.ts](apps/api/src/services/sync.service.ts), [sync-scheduler.service.ts](apps/api/src/services/sync-scheduler.service.ts), [routes/meta.ts](apps/api/src/routes/meta.ts), [index.ts](apps/api/src/index.ts), [schema.prisma](apps/api/prisma/schema.prisma) (`Campaign.reach`, `AdAccount.lastSyncedAt` — applied via `db push`), [lib/api.ts](apps/web/lib/api.ts), [lib/money.ts](apps/web/lib/money.ts), [campaigns/page.tsx](apps/web/app/(dashboard)/campaigns/page.tsx), [campaigns/[id]/page.tsx](apps/web/app/(dashboard)/campaigns/[id]/page.tsx). New env: `SYNC_INTERVAL_HOURS` (default 6), `SYNC_SCHEDULER_ENABLED`. `tsc --noEmit` clean on both apps.
+
+---
+
 ### 2026-06-24 — Audiences: mock → real (saved targeting templates + live Meta tab + AI/manual builders)
 
 Converted the static Audiences mock into a real, data-backed feature. An

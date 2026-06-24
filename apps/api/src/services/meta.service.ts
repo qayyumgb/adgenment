@@ -68,6 +68,9 @@ export interface MetaInsight {
   clicks: string;
   spend: string;
   actions?: Array<{ action_type: string; value: string }>;
+  /** Monetary value per action type — the real purchase revenue lives here
+   *  (e.g. action_type "purchase" / "...fb_pixel_purchase"). */
+  action_values?: Array<{ action_type: string; value: string }>;
   purchase_roas?: Array<{ action_type: string; value: string }>;
 }
 
@@ -317,12 +320,16 @@ class MetaAdsService {
     const params = new URLSearchParams({
       fields:
         "id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time,created_time",
+      // Without an explicit limit Meta defaults to 25 — accounts with more
+      // campaigns (e.g. several boosted posts) would silently truncate. We
+      // page through everything via graphFetchAll regardless, but a larger
+      // page size means fewer round-trips.
+      limit: "200",
       access_token: accessToken,
     });
-    const data = await this.graphFetch<{ data: MetaCampaign[] }>(
+    return this.graphFetchAll<MetaCampaign>(
       `${GRAPH_BASE}/${accountPath}/campaigns?${params.toString()}`
     );
-    return data.data;
   }
 
   async getCampaignInsights(
@@ -333,16 +340,48 @@ class MetaAdsService {
     const accountPath = this.accountPath(adAccountId);
     const params = new URLSearchParams({
       fields:
-        "campaign_id,campaign_name,date_start,date_stop,impressions,clicks,spend,actions,purchase_roas",
+        "campaign_id,campaign_name,date_start,date_stop,impressions,clicks,spend,actions,action_values,purchase_roas",
       date_preset: datePreset,
       level: "campaign",
       time_increment: "1",
+      // Daily breakdown over 30 days yields up to ~30 rows PER campaign — far
+      // past Meta's default 25-row page. Page through all of them, else
+      // metrics undercount badly on multi-campaign accounts.
+      limit: "500",
       access_token: accessToken,
     });
-    const data = await this.graphFetch<{ data: MetaInsight[] }>(
+    return this.graphFetchAll<MetaInsight>(
       `${GRAPH_BASE}/${accountPath}/insights?${params.toString()}`
     );
-    return data.data;
+  }
+
+  /**
+   * Range-level unique reach per campaign (NO time_increment). Reach is
+   * de-duplicated across days, so it CANNOT be summed from daily rows — this
+   * returns the single figure Ads Manager shows for the period. Keyed by
+   * Meta campaign id.
+   */
+  async getCampaignReach(
+    accessToken: string,
+    adAccountId: string,
+    datePreset: string = "last_30d"
+  ): Promise<Record<string, number>> {
+    const accountPath = this.accountPath(adAccountId);
+    const params = new URLSearchParams({
+      fields: "campaign_id,reach",
+      date_preset: datePreset,
+      level: "campaign",
+      limit: "500",
+      access_token: accessToken,
+    });
+    const rows = await this.graphFetchAll<{ campaign_id?: string; reach?: string }>(
+      `${GRAPH_BASE}/${accountPath}/insights?${params.toString()}`
+    );
+    const map: Record<string, number> = {};
+    for (const r of rows) {
+      if (r.campaign_id) map[r.campaign_id] = parseInt(r.reach || "0", 10) || 0;
+    }
+    return map;
   }
 
   /* ───────────────────────────────── */
@@ -1130,6 +1169,26 @@ class MetaAdsService {
    * Single fetch + error-handling wrapper. Throws
    * `Error("Meta API: <message> (code: <code>)")` on any Graph-side problem.
    */
+  /**
+   * Fetch every page of a Graph API edge, following `paging.next` cursors and
+   * concatenating the `data` arrays. Meta caps each page (default 25), so any
+   * single-page fetch silently truncates large result sets. Hard cap of 50
+   * pages is a runaway guard.
+   */
+  private async graphFetchAll<TItem>(url: string): Promise<TItem[]> {
+    type Page = { data?: TItem[]; paging?: { next?: string } };
+    const items: TItem[] = [];
+    let next: string | undefined = url;
+    let pages = 0;
+    while (next && pages < 50) {
+      const page: Page = await this.graphFetch<Page>(next);
+      if (Array.isArray(page.data)) items.push(...page.data);
+      next = page.paging?.next;
+      pages++;
+    }
+    return items;
+  }
+
   private async graphFetch<T>(url: string, init?: RequestInit): Promise<T> {
     let res: Response;
     try {

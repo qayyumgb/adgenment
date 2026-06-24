@@ -85,6 +85,9 @@ export interface Campaign {
   startDate: string | null;
   endDate: string | null;
   targeting: unknown;
+  /** Range-level unique reach (last 30d) from Meta. NOT summed from daily
+   *  metrics (reach is de-duplicated) — matches the figure Ads Manager shows. */
+  reach?: number;
   createdAt: string;
   updatedAt: string;
   adAccount?: {
@@ -515,6 +518,15 @@ export function useApiClient() {
     /* Phase 1A — Meta publish wizard    */
     /* ───────────────────────────────── */
     getMetaPages: () => apiFetch<MetaPage[]>("/meta/pages"),
+    /** Re-sync all active Meta ad accounts in the workspace (the "Sync now"
+     *  button). Imports new campaigns + refreshes metrics/reach. */
+    syncMeta: () =>
+      apiFetch<{
+        success: boolean;
+        accounts: number;
+        campaignsSynced: number;
+        metricsSynced: number;
+      }>("/meta/sync", { method: "POST" }),
     getMetaCustomAudiences: () =>
       apiFetch<MetaCustomAudience[]>("/meta/custom-audiences"),
     getMetaSavedAudiences: () =>
