@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/Skeleton";
 import EmptyState from "@/components/ui/EmptyState";
 import { useApi } from "@/hooks/useApi";
+import { useApiClient } from "@/lib/api";
 import { fmtMoney as fmtMoneyCur } from "@/lib/money";
 import type {
   AnalyticsOverview,
@@ -44,6 +45,7 @@ import type {
   PlatformBreakdown as PlatformBreakdownData,
   Campaign,
   BudgetRecommendationRow,
+  Insight,
 } from "@/lib/api";
 
 /* ─────────────────────────────── */
@@ -51,42 +53,6 @@ import type {
 /* ─────────────────────────────── */
 
 // TODO: wire to /api/ai/activity once AI activity audit log lands.
-const AI_ACTIVITY = [
-  {
-    icon: Wand2,
-    color: "#6366f1",
-    bg: "rgba(99,102,241,0.12)",
-    title: "Optimized budget allocation",
-    detail:
-      "Shifted $180/day from LinkedIn to Meta on \"Summer Sale 2026\"",
-    time: "2h ago",
-  },
-  {
-    icon: Target,
-    color: "#0ea5e9",
-    bg: "rgba(14,165,233,0.12)",
-    title: "New lookalike audience built",
-    detail: "1.2M Meta users · seed from top 5% LTV customers",
-    time: "5h ago",
-  },
-  {
-    icon: Layers,
-    color: "#ec4899",
-    bg: "rgba(236,72,153,0.12)",
-    title: "Paused 3 underperforming ad sets",
-    detail: "CTR fell below 0.9% threshold for 48h on \"Retargeting Q3\"",
-    time: "yesterday",
-  },
-  {
-    icon: Bot,
-    color: "#10b981",
-    bg: "rgba(16,185,129,0.12)",
-    title: "Generated 6 new creative variants",
-    detail: "Tested headlines for \"Product Launch — Tide+\" using Claude 4.7",
-    time: "yesterday",
-  },
-];
-
 const QUICK_ACTIONS = [
   {
     label: "Launch Campaign",
@@ -448,52 +414,7 @@ export default function DashboardPage() {
 
       {/* ── Bottom Row ── */}
       <section className="grid grid-cols-1 gap-6 animate-in stagger-6 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
-                Recent AI Activity
-              </h3>
-              <p className="text-xs text-slate-500">
-                {hasAnyData
-                  ? "Autonomous optimizations from the last 48 hours"
-                  : "Example activity — appears here when AI starts optimizing"}
-              </p>
-            </div>
-            <Link
-              href="/insights"
-              className="text-xs font-semibold text-primary hover:underline"
-            >
-              View log →
-            </Link>
-          </div>
-          <ul className="space-y-1">
-            {AI_ACTIVITY.map((a) => (
-              <li
-                key={a.title}
-                className="group flex items-start gap-3 rounded-xl p-2.5 transition hover:bg-slate-50"
-              >
-                <div
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-                  style={{ backgroundColor: a.bg, color: a.color }}
-                >
-                  <a.icon className="h-4 w-4" strokeWidth={2.25} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-slate-900">
-                    {a.title}
-                  </p>
-                  <p className="line-clamp-2 text-xs text-slate-500">
-                    {a.detail}
-                  </p>
-                </div>
-                <span className="shrink-0 text-[11px] font-medium text-slate-400">
-                  {a.time}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <RecentInsightsCard />
 
         <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
           <div className="mb-4">
@@ -542,6 +463,105 @@ export default function DashboardPage() {
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-medium text-rose-700">
           Some data couldn&apos;t be loaded. Refresh the page or check that the
           API server is running.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────── */
+/* Recent AI Insights card          */
+/* ─────────────────────────────── */
+
+const INSIGHT_ICON: Record<Insight["type"], { icon: typeof Sparkles; color: string; bg: string }> = {
+  OPPORTUNITY: { icon: TrendingUp, color: "#10b981", bg: "rgba(16,185,129,0.12)" },
+  WARNING: { icon: Sparkles, color: "#f59e0b", bg: "rgba(245,158,11,0.12)" },
+  OPTIMIZATION: { icon: Sparkles, color: "#6366f1", bg: "rgba(99,102,241,0.12)" },
+  ALERT: { icon: Sparkles, color: "#ef4444", bg: "rgba(239,68,68,0.12)" },
+};
+
+function RecentInsightsCard() {
+  const router = useRouter();
+  const q = useApi<{ insights: Insight[]; lastGeneratedAt: string | null }>(
+    (c) => c.getInsights(),
+    []
+  );
+  const api = useApiClient();
+  const [generating, setGenerating] = useState(false);
+  const top = (q.data?.insights ?? []).slice(0, 3);
+
+  async function runAnalysis() {
+    setGenerating(true);
+    try {
+      await api.generateInsights();
+    } catch {
+      // ignore — the insights page surfaces errors
+    } finally {
+      setGenerating(false);
+      router.push("/insights");
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white">
+            <Sparkles className="h-3.5 w-3.5" strokeWidth={2.5} />
+          </span>
+          <div>
+            <h3 className="text-base font-bold text-slate-900">Recent AI Insights</h3>
+            <p className="text-xs text-slate-500">Data-driven observations from your campaigns</p>
+          </div>
+        </div>
+        <Link href="/insights" className="text-xs font-semibold text-primary hover:underline">
+          View all →
+        </Link>
+      </div>
+
+      {q.loading ? (
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-12 animate-pulse rounded-xl bg-slate-100" />
+          ))}
+        </div>
+      ) : top.length > 0 ? (
+        <ul className="space-y-1">
+          {top.map((ins) => {
+            const m = INSIGHT_ICON[ins.type];
+            return (
+              <li key={ins.id}>
+                <Link
+                  href="/insights"
+                  className="group flex items-start gap-3 rounded-xl p-2.5 transition hover:bg-slate-50"
+                >
+                  <div
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+                    style={{ backgroundColor: m.bg, color: m.color }}
+                  >
+                    <m.icon className="h-4 w-4" strokeWidth={2.25} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-900">{ins.title}</p>
+                    <p className="line-clamp-2 text-xs text-slate-500">{ins.message}</p>
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <div className="flex flex-col items-center gap-2 py-5 text-center">
+          <p className="text-xs text-slate-500">No insights yet — let AI analyze your campaigns.</p>
+          <button
+            type="button"
+            onClick={runAnalysis}
+            disabled={generating}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-white transition hover:bg-primary/90 disabled:opacity-60"
+          >
+            {generating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" strokeWidth={2.5} />}
+            Run AI Analysis
+          </button>
         </div>
       )}
     </div>

@@ -472,6 +472,20 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-25 — AI Insights pipeline (real Claude insights; replaces the mock Insights page)
+
+The `/insights` page was 100% hardcoded ("Powered by Claude AI" with nothing behind it). Now it's real: Claude analyzes actual campaign metrics (last 30d + week-over-week) and produces typed, data-driven insights with a full lifecycle.
+
+- **Data model:** `Insight` model + `InsightType` (OPPORTUNITY/WARNING/OPTIMIZATION/ALERT) + `InsightStatus` (ACTIVE/APPLIED/DISMISSED/EXPIRED) + `Workspace.lastInsightGeneratedAt` (`db push`).
+- **Service** ([insights.service.ts](apps/api/src/services/insights.service.ts), mirrors budget-optimizer): gathers per-campaign 30-day metrics + 7d-vs-prev-7d deltas + platform summary, asks Claude (via `aiService.generateInsights` — native fetch, `claude-opus-4-8`, `INSIGHTS_SYSTEM_PROMPT`), then dedups (same type+title; skip <24h, refresh older, create new), sets a 7-day `expiresAt`, and stamps `lastInsightGeneratedAt`. **Returns []/empty when there's no data** — never invents insights. `getInsights` auto-expires stale ones. `refreshInsights` has a **1-hour gate**; apply/dismiss/restore/getDismissed round it out.
+- **Routes** ([insights.ts](apps/api/src/routes/insights.ts)): `GET /insights`, `POST /generate` (5/hr rate-limit), `POST /:id/dismiss|apply|restore`, `GET /dismissed`.
+- **Frontend:** `/insights` page fully rewired to real data — loading skeletons, two honest empty states (no-campaigns → connect; campaigns-but-no-data → generate), real cards (type strip, confidence dot, affected-campaign chips, impact pill, Apply→"Applied ✓"/Dismiss), collapsible Dismissed section with Restore. Dashboard "Recent AI Activity" → **`RecentInsightsCard`** (top 3 real insights / "Run AI Analysis"). Analytics mock `AI_INSIGHTS` strip → **`AnalyticsAIInsights`** (real). api-client `getInsights`/`generateInsights`/`dismissInsight`/`applyInsight`/`restoreInsight`/`getDismissedInsights`.
+- **Deviations (flagged):** reused `aiService` (not the SDK); skipped the Next proxy routes (apiFetch direct); the floating **chat widget stays mock** (welcome line now references the real top insight) — wiring it to a real `/ai/chat` is a separate follow-up.
+
+**Files**: [schema.prisma](apps/api/prisma/schema.prisma), [insights.service.ts](apps/api/src/services/insights.service.ts), [ai.service.ts](apps/api/src/services/ai.service.ts), [routes/insights.ts](apps/api/src/routes/insights.ts), [routes/index.ts](apps/api/src/routes/index.ts), [lib/api.ts](apps/web/lib/api.ts), [insights/page.tsx](apps/web/app/(dashboard)/insights/page.tsx), [dashboard/page.tsx](apps/web/app/(dashboard)/dashboard/page.tsx), [analytics/page.tsx](apps/web/app/(dashboard)/analytics/page.tsx). `tsc --noEmit` clean on both apps.
+
+---
+
 ### 2026-06-25 — Meta Health Check service (full 7-check report; supersedes the readiness checklist)
 
 Upgraded the lightweight readiness check into a comprehensive **Meta health check** that runs after OAuth (and on demand) and detects every blocking state up front.

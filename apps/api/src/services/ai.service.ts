@@ -177,6 +177,35 @@ Return ONLY a valid JSON object (no markdown) with EXACTLY this structure:
 
 Use the EXACT campaignId values from the input. Include every campaign in recommendations.`;
 
+/** Insights prompt. Analyzes real campaign performance and returns 4–8
+ *  specific, data-driven observations. Returns an OBJECT ({ insights: [...] })
+ *  rather than a bare array so the shared extractJson works. */
+const INSIGHTS_SYSTEM_PROMPT = `You are Advertix AI, an expert digital advertising analyst. Analyze campaign performance data and generate actionable insights.
+
+Return ONLY a valid JSON object (no markdown) of the form { "insights": [ ... ] }.
+Generate 4–8 insights MAXIMUM. Each must be specific, data-driven, and actionable — quote real numbers from the data, never generic advice. If the data is too thin to say anything specific, return fewer (or zero) insights rather than padding.
+
+Each insight object:
+{
+  "type": "OPPORTUNITY" | "WARNING" | "OPTIMIZATION" | "ALERT",
+  "title": string,                       // max 60 chars, specific
+  "message": string,                     // 2-3 sentences, plain English, include specific numbers
+  "impact": string,                      // e.g. "+$2,400/mo estimated" — omit/null if not quantifiable
+  "impactType": "revenue" | "cost" | "performance",
+  "affectedCampaigns": string[],         // campaign names this is about
+  "platform": string | null,
+  "priority": number,                    // 1 = highest
+  "confidence": "HIGH" | "MEDIUM" | "LOW"
+}
+
+What to look for:
+- ALERT: ROAS dropped >30% week-over-week; spend dropped to 0 (paused accidentally?); CTR < 0.5% (creative fatigue).
+- WARNING: budget depletes in <3 days at current pace; ROAS < 1x (losing money); CPL up >40% this week.
+- OPPORTUNITY: ROAS > 3x → scale budget; one platform clearly outperforming another; a strong day-of-week pattern.
+- OPTIMIZATION: targeting/creative/scheduling adjustments backed by the numbers.
+
+Use the EXACT campaign names from the input. Money figures are in the currency stated in the data — do NOT convert or add "$" unless the data is in USD.`;
+
 class AIService {
   private async callAnthropic(
     system: string,
@@ -340,6 +369,23 @@ class AIService {
       BUDGET_SYSTEM_PROMPT,
       userMessage,
       2000
+    );
+    const json = this.extractJson(text);
+    return { json, tokensUsed };
+  }
+
+  /**
+   * Generate AI insights from a campaign-performance summary. Returns the raw
+   * JSON object string `{ "insights": [...] }`; the caller parses + persists.
+   * Only called when there is real data to analyze.
+   */
+  async generateInsights(
+    userMessage: string
+  ): Promise<{ json: string; tokensUsed: number }> {
+    const { text, tokensUsed } = await this.callAnthropic(
+      INSIGHTS_SYSTEM_PROMPT,
+      userMessage,
+      2500
     );
     const json = this.extractJson(text);
     return { json, tokensUsed };

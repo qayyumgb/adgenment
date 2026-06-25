@@ -253,6 +253,35 @@ export interface CreateAudienceInput {
 }
 
 /* ───────────────────────────── */
+/* AI Insights                    */
+/* ───────────────────────────── */
+
+export interface Insight {
+  id: string;
+  type: "OPPORTUNITY" | "WARNING" | "OPTIMIZATION" | "ALERT";
+  status: "ACTIVE" | "APPLIED" | "DISMISSED" | "EXPIRED";
+  title: string;
+  message: string;
+  impact?: string | null;
+  impactType?: string | null;
+  affectedCampaigns?: string[] | null;
+  platform?: string | null;
+  priority: number;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  createdAt: string;
+  appliedAt?: string | null;
+  dismissedAt?: string | null;
+}
+
+export interface InsightsResponse {
+  insights: Insight[];
+  lastGeneratedAt: string | null;
+  total: number;
+  /** Present on POST /insights/generate — false when the 1-hour gate held. */
+  generated?: boolean;
+}
+
+/* ───────────────────────────── */
 /* Budget optimizer               */
 /* ───────────────────────────── */
 
@@ -621,6 +650,19 @@ export function useApiClient() {
       apiFetch<BudgetRecommendationRow[]>("/budget-optimizer/history"),
     getLatestRecommendation: () =>
       apiFetch<BudgetRecommendationRow | null>("/budget-optimizer/latest"),
+
+    /* AI Insights */
+    getInsights: () => apiFetch<InsightsResponse>("/insights"),
+    generateInsights: () =>
+      apiFetch<InsightsResponse>("/insights/generate", { method: "POST" }),
+    dismissInsight: (id: string) =>
+      apiFetch<Insight>(`/insights/${id}/dismiss`, { method: "POST" }),
+    applyInsight: (id: string) =>
+      apiFetch<Insight>(`/insights/${id}/apply`, { method: "POST" }),
+    restoreInsight: (id: string) =>
+      apiFetch<Insight>(`/insights/${id}/restore`, { method: "POST" }),
+    getDismissedInsights: () =>
+      apiFetch<{ insights: Insight[] }>("/insights/dismissed"),
 
     /* ───────────────────────────────── */
     /* Phase 1A — Meta publish wizard    */
