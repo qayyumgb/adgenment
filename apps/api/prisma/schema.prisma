@@ -147,6 +147,14 @@ model AdAccount {
   /// used to ground budget recommendations without any FX conversion. Null
   /// until first sync.
   minDailyBudget Float?
+  /// Meta account_status (1 = active, 2 = disabled, 3 = unsettled, 7 = pending
+  /// risk review, 9 = grace period, 101 = closed…). Used to warn the user when
+  /// their ad account can't run ads. Null until first sync.
+  accountStatus  Int?
+  /// Last Meta health-check report (MetaHealthReport JSON) + when it ran. Lets
+  /// the UI show connection health without re-running all checks every load.
+  metadata        Json?
+  lastHealthCheck DateTime?
   accessToken  String
   refreshToken String?
   isActive     Boolean  @default(true)

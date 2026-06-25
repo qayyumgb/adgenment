@@ -25,6 +25,7 @@ import {
 import { useApiClient, type AdAccount } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import MetaConnect from "@/components/settings/MetaConnect";
+import MetaHealthStatus from "@/components/settings/MetaHealthStatus";
 import GoogleConnect from "@/components/settings/GoogleConnect";
 import TikTokConnect from "@/components/settings/TikTokConnect";
 import LinkedInConnect from "@/components/settings/LinkedInConnect";
@@ -902,6 +903,11 @@ function IntegrationsTab() {
             </>
           )}
         </div>
+        {meta?.id && (
+          <div className="mt-4">
+            <MetaHealthStatus adAccountId={meta.id} />
+          </div>
+        )}
       </Card>
 
       <Card

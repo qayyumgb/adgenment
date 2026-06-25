@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { isMetaError, friendlyMetaError } from "../lib/meta-errors";
 
 type ExtendedError = Error & {
   status?: number;
@@ -24,6 +25,13 @@ export function errorHandler(
   }
   if (err.code === "P2025") {
     return res.status(404).json({ error: "Resource not found" });
+  }
+
+  // Meta Graph API errors → plain, actionable messages (code 3 → "needs
+  // Standard Access", 190 → "reconnect", payment → "add a payment method"…).
+  if (isMetaError(err)) {
+    const { status, message } = friendlyMetaError(err);
+    return res.status(status).json({ error: message });
   }
 
   // multer upload errors (oversized file, too many files, etc.) are client

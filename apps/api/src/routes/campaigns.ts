@@ -9,6 +9,7 @@ import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
 import { metaService, type MetaTargeting } from "../services/meta.service";
+import { isMetaError, friendlyMetaError } from "../lib/meta-errors";
 
 const router = Router();
 router.use(requireAuth);
@@ -876,24 +877,25 @@ router.post(
         },
       });
     } catch (err) {
-      const raw =
-        err instanceof Error ? err.message : "Publish to Meta failed";
-      // Prefix with the step that failed so the UI/log pinpoints the exact
-      // Meta call (campaign vs ad set vs creative vs ad).
-      const message = `[${publishStep}] ${raw}`;
+      const raw = err instanceof Error ? err.message : "Publish to Meta failed";
+      // Keep the raw error + failing step in server logs for debugging…
+      const stepRaw = `[${publishStep}] ${raw}`;
       // Roll back any Meta-side objects we already created
       await rollback();
-      // Record the failure on the campaign so the UI can surface it
+      // …but show the user a plain, actionable message.
+      const friendly = isMetaError(err)
+        ? friendlyMetaError(err)
+        : { status: 502, message: stepRaw };
       try {
         await prisma.campaign.update({
           where: { id: campaign.id },
-          data: { publishError: message },
+          data: { publishError: friendly.message },
         });
       } catch {
         // ignore — error logging is best-effort
       }
-      console.error("[campaigns/publish] failed:", message);
-      return res.status(502).json({ error: message });
+      console.error("[campaigns/publish] failed:", stepRaw);
+      return res.status(friendly.status).json({ error: friendly.message });
     }
     void next; // satisfies lint when no fall-through next() is used
   }

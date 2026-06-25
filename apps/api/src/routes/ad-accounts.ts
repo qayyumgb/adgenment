@@ -32,6 +32,7 @@ const PUBLIC_AD_ACCOUNT_SELECT = {
   currency: true,
   timezone: true,
   minDailyBudget: true,
+  accountStatus: true,
   isActive: true,
   createdAt: true,
 } as const;

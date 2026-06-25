@@ -185,6 +185,7 @@ class SyncService {
             currency: match.currency || null,
             timezone: match.timezone || null,
             minDailyBudget: match.minDailyBudget ?? null,
+            accountStatus: match.accountStatus ?? null,
           },
         });
       }

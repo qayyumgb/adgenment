@@ -18,6 +18,7 @@ import {
 import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
 import { currencySymbol } from "@/lib/money";
+import MetaHealthStatus from "@/components/settings/MetaHealthStatus";
 import type { AdAccount, Platform as ApiPlatform } from "@/lib/api";
 
 type PlatformUI = {
@@ -384,6 +385,15 @@ export default function CreateCampaignModal({
 
         {/* Body */}
         <div className="max-h-[60vh] overflow-y-auto px-8 py-6">
+          {/* Heads-up if the Meta account isn't publish-ready (hidden when OK). */}
+          {accountsByPlatform.get("META")?.[0]?.id && (
+            <div className="mb-5">
+              <MetaHealthStatus
+                adAccountId={accountsByPlatform.get("META")![0].id}
+                hideWhenHealthy
+              />
+            </div>
+          )}
           {step === 1 && (
             <StepPlatform
               platforms={PLATFORMS_UI}

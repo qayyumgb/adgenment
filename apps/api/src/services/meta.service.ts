@@ -31,6 +31,8 @@ export interface MetaAdAccount {
   currency: string;
   timezone: string;
   accountStatus: number;
+  /** Why the account is disabled (Meta disable_reason), when applicable. */
+  disableReason?: number | null;
   /** Minimum daily budget in the account currency (e.g. 1.00 = PKR 1.00).
    *  Meta returns it in minor units; we divide by 100. Null if absent. */
   minDailyBudget: number | null;
@@ -298,7 +300,8 @@ class MetaAdsService {
 
   async getAdAccounts(accessToken: string): Promise<MetaAdAccount[]> {
     const params = new URLSearchParams({
-      fields: "id,name,currency,timezone_name,account_status,min_daily_budget",
+      fields:
+        "id,name,currency,timezone_name,account_status,disable_reason,min_daily_budget",
       access_token: accessToken,
     });
     const data = await this.graphFetch<{
@@ -308,6 +311,7 @@ class MetaAdsService {
         currency: string;
         timezone_name: string;
         account_status: number;
+        disable_reason?: number;
         min_daily_budget?: string;
       }>;
     }>(`${GRAPH_BASE}/me/adaccounts?${params.toString()}`);
@@ -318,6 +322,7 @@ class MetaAdsService {
       currency: a.currency,
       timezone: a.timezone_name,
       accountStatus: a.account_status,
+      disableReason: a.disable_reason ?? null,
       // Meta returns min_daily_budget in the currency's minor units (×100),
       // matching how we send budgets elsewhere. Divide to get the display value.
       minDailyBudget:
@@ -325,6 +330,64 @@ class MetaAdsService {
           ? (parseInt(a.min_daily_budget, 10) || 0) / 100
           : null,
     }));
+  }
+
+  /** Basic identity check — used by the health check to validate the token. */
+  async getMe(accessToken: string): Promise<{ id: string; name: string }> {
+    const params = new URLSearchParams({
+      fields: "id,name",
+      access_token: accessToken,
+    });
+    return this.graphFetch<{ id: string; name: string }>(
+      `${GRAPH_BASE}/me?${params.toString()}`
+    );
+  }
+
+  /** Granted permissions, so we can verify ads_management etc. were approved. */
+  async getPermissions(
+    accessToken: string
+  ): Promise<Array<{ permission: string; status: string }>> {
+    const params = new URLSearchParams({ access_token: accessToken });
+    const data = await this.graphFetch<{
+      data: Array<{ permission: string; status: string }>;
+    }>(`${GRAPH_BASE}/me/permissions?${params.toString()}`);
+    return data.data ?? [];
+  }
+
+  /** Funding source — to detect "no payment method" before a launch fails. */
+  async getFundingSource(
+    accessToken: string,
+    adAccountId: string
+  ): Promise<{ hasFunding: boolean; isPrepay: boolean }> {
+    const accountPath = this.accountPath(adAccountId);
+    const params = new URLSearchParams({
+      fields: "funding_source_details,is_prepay_account",
+      access_token: accessToken,
+    });
+    const data = await this.graphFetch<{
+      funding_source_details?: { id?: string; type?: number } | null;
+      is_prepay_account?: boolean;
+    }>(`${GRAPH_BASE}/${accountPath}?${params.toString()}`);
+    return {
+      hasFunding: !!data.funding_source_details?.id,
+      isPrepay: data.is_prepay_account === true,
+    };
+  }
+
+  /** Lightweight "can we read campaigns?" probe (limit 1) for the sync test. */
+  async testReadCampaigns(
+    accessToken: string,
+    adAccountId: string
+  ): Promise<void> {
+    const accountPath = this.accountPath(adAccountId);
+    const params = new URLSearchParams({
+      fields: "id",
+      limit: "1",
+      access_token: accessToken,
+    });
+    await this.graphFetch<{ data: unknown[] }>(
+      `${GRAPH_BASE}/${accountPath}/campaigns?${params.toString()}`
+    );
   }
 
   async getCampaigns(
@@ -1257,7 +1320,19 @@ class MetaAdsService {
         .join(": ");
       const base = detail || e.message || "Unknown error";
       const subcode = e.error_subcode ? `/${e.error_subcode}` : "";
-      throw new Error(`Meta API: ${base} (code: ${code}${subcode})`);
+      // Carry structured fields so callers can map to a friendly message
+      // (see lib/meta-errors.ts) instead of parsing this string.
+      const error = new Error(
+        `Meta API: ${base} (code: ${code}${subcode})`
+      ) as Error & {
+        metaCode?: number;
+        metaSubcode?: number;
+        metaUserMessage?: string;
+      };
+      if (typeof e.code === "number") error.metaCode = e.code;
+      if (typeof e.error_subcode === "number") error.metaSubcode = e.error_subcode;
+      error.metaUserMessage = base;
+      throw error;
     }
     if (!res.ok) {
       throw new Error(`Meta API: HTTP ${res.status}`);

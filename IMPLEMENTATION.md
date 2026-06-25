@@ -472,6 +472,31 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-06-25 — Meta Health Check service (full 7-check report; supersedes the readiness checklist)
+
+Upgraded the lightweight readiness check into a comprehensive **Meta health check** that runs after OAuth (and on demand) and detects every blocking state up front.
+
+- **`meta-health.service.ts`** — 7 checks → structured `MetaHealthReport` (`overall: healthy|degraded|blocked`, `checks[]`, `canSync`, `canPublish`, `readyForBeta`): **(1)** token valid (`/me`; 190/200/other), **(2)** required permissions granted (`/me/permissions`: ads_read/ads_management/business_management), **(3)** ad account exists, **(4)** account status (1/2/3/7/8/9 with per-status copy + `disable_reason`), **(5)** payment method (`funding_source_details`/`is_prepay_account`), **(6)** our pending App Review (always a non-blocking warning; keeps `canPublish=false` until approved), **(7)** sync probe (`/campaigns?limit=1`). New `metaService` helpers: `getMe`/`getPermissions`/`getFundingSource`/`testReadCampaigns` + `disable_reason`.
+- **Routes** — `GET /meta/health/:adAccountId` (5-min in-memory cache) + `POST …/refresh` (force). The **OAuth callback** now runs the check, persists the report to `AdAccount.metadata` (+ `lastHealthCheck`; schema `db push`), and redirects with `?health=healthy|degraded|blocked`.
+- **Frontend** — `<MetaHealthStatus>` (healthy/degraded/blocked banner + per-check cards, errors-first, with action links + manual refresh; `hideWhenHealthy` for inline use), wired into **Settings → Integrations** and the **Create Campaign wizard**. Client `lib/meta-errors.ts` (`translateMetaError`) + reusable `<MetaErrorCard>` (code→title/action, support link) — wired into the **publish wizard** error. api-client `getMetaHealth`/`refreshMetaHealth`.
+
+**Deliberate deviations from the spec** (all noted to the user): reused `apiFetch` instead of adding **Next proxy routes** (redundant hop); **consolidated** — this replaces the prior `/account-readiness` endpoint + `MetaReadinessChecklist` (removed) so there's one source of truth; kept the server-side `friendlyMetaError` (API responses) *alongside* the client `MetaErrorCard` (different layers); the post-connect `?health=` **toast** is covered by the always-visible health panel rather than plumbing health through the OAuth popup.
+
+**Files**: [meta-health.service.ts](apps/api/src/services/meta-health.service.ts), [meta.service.ts](apps/api/src/services/meta.service.ts), [routes/meta.ts](apps/api/src/routes/meta.ts), [sync.service.ts](apps/api/src/services/sync.service.ts), [schema.prisma](apps/api/prisma/schema.prisma) (`AdAccount.metadata`, `lastHealthCheck`), [lib/api.ts](apps/web/lib/api.ts), [lib/meta-errors.ts](apps/web/lib/meta-errors.ts), [components/ui/MetaErrorCard.tsx](apps/web/components/ui/MetaErrorCard.tsx), [components/settings/MetaHealthStatus.tsx](apps/web/components/settings/MetaHealthStatus.tsx), [settings/page.tsx](apps/web/app/(dashboard)/settings/page.tsx), [CreateCampaignModal.tsx](apps/web/components/campaigns/CreateCampaignModal.tsx), [PublishToMetaModal.tsx](apps/web/components/campaigns/publish/PublishToMetaModal.tsx). Removed `MetaReadinessChecklist.tsx` + `/account-readiness`. `tsc --noEmit` clean on both apps.
+
+---
+
+### 2026-06-25 — Beta-readiness #3: friendly Meta errors + publish-readiness checklist
+
+Onboarding hardening so beta users (whose Meta setups vary) get clear guidance instead of cryptic failures.
+
+- **Friendly Meta error mapping.** `graphFetch` now tags thrown errors with `metaCode`/`metaSubcode`/`metaUserMessage`; a new [meta-errors.ts](apps/api/src/lib/meta-errors.ts) (`friendlyMetaError`/`isMetaError`) maps them to plain, actionable messages — applied in the global `errorHandler` (covers launch/sync/etc.) and the publish route's own catch. Examples: code **3** → "Publishing isn't available yet — awaiting Meta Standard Access…"; **190** → "Your Meta connection expired — reconnect in Settings"; **200/10** → "You need Advertiser/Admin access…"; payment → "add a payment method"; rate-limit codes → "try again shortly". Raw error + failing step still logged server-side.
+- **Publish-readiness checklist.** New `GET /meta/account-readiness` returns `{ connected, hasAdAccount, accountActive, accountStatus, hasPage }` (live `getPages` + `getAdAccounts`, "not connected" is a normal state). New `<MetaReadinessChecklist>` shows ✓/✗ with fix links (connect account / review status / create a Page), wired into the **Create Campaign wizard** (`hideWhenReady`) and **Settings → Integrations**. `AdAccount.accountStatus` persisted (sync + `/ad-accounts` select; `db push`) — the checklist's "Ad account is active" row is the disabled-account warning.
+
+**Files**: [meta-errors.ts](apps/api/src/lib/meta-errors.ts), [meta.service.ts](apps/api/src/services/meta.service.ts), [middleware/errorHandler.ts](apps/api/src/middleware/errorHandler.ts), [routes/campaigns.ts](apps/api/src/routes/campaigns.ts), [routes/meta.ts](apps/api/src/routes/meta.ts), [routes/ad-accounts.ts](apps/api/src/routes/ad-accounts.ts), [sync.service.ts](apps/api/src/services/sync.service.ts), [schema.prisma](apps/api/prisma/schema.prisma), [lib/api.ts](apps/web/lib/api.ts), [components/meta/MetaReadinessChecklist.tsx](apps/web/components/meta/MetaReadinessChecklist.tsx), [CreateCampaignModal.tsx](apps/web/components/campaigns/CreateCampaignModal.tsx), [settings/page.tsx](apps/web/app/(dashboard)/settings/page.tsx). `tsc --noEmit` clean on both apps.
+
+---
+
 ### 2026-06-25 — AI Budget Optimizer (honest scaffold, DB-only apply, no auto-mode)
 
 Built the AI Budget Optimizer: analyzes campaign ROAS (last 14d vs previous 14d) and recommends budget reallocations, with per-card or "apply all". Built deliberately as a **scaffold that's honest about data and scope** (per founder decision):

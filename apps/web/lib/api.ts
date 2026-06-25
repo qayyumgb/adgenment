@@ -64,8 +64,30 @@ export interface AdAccount {
   /** Platform minimum daily budget in the account currency (e.g. 1.00).
    *  Null until first sync. Grounds budget recommendations without FX. */
   minDailyBudget?: number | null;
+  /** Meta account_status (1 = active). Null until first sync. */
+  accountStatus?: number | null;
   isActive: boolean;
   createdAt: string;
+}
+
+/** One item in the Meta health report — a connection/account check result. */
+export interface HealthCheck {
+  status: "ok" | "warning" | "error";
+  code: string;
+  title: string;
+  message: string;
+  action: string;
+  actionUrl?: string;
+  blocking: boolean;
+}
+
+/** Full Meta connection health report (post-OAuth + on demand). */
+export interface MetaHealthReport {
+  overall: "healthy" | "degraded" | "blocked";
+  checks: HealthCheck[];
+  canSync: boolean;
+  canPublish: boolean;
+  readyForBeta: boolean;
 }
 
 export interface Campaign {
@@ -604,6 +626,14 @@ export function useApiClient() {
     /* Phase 1A — Meta publish wizard    */
     /* ───────────────────────────────── */
     getMetaPages: () => apiFetch<MetaPage[]>("/meta/pages"),
+    /** Full Meta connection health report (cached 5 min on the server). */
+    getMetaHealth: (adAccountId: string) =>
+      apiFetch<MetaHealthReport>(`/meta/health/${adAccountId}`),
+    /** Force a fresh Meta health report (bypass the server cache). */
+    refreshMetaHealth: (adAccountId: string) =>
+      apiFetch<MetaHealthReport>(`/meta/health/${adAccountId}/refresh`, {
+        method: "POST",
+      }),
     /** Re-sync all active Meta ad accounts in the workspace (the "Sync now"
      *  button). Imports new campaigns + refreshes metrics/reach. */
     syncMeta: () =>

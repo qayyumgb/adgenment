@@ -9,7 +9,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
-  AlertCircle,
   Rocket,
   Users,
   MapPin,
@@ -29,6 +28,7 @@ import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
 import { MetaAdPreview } from "./MetaAdPreview";
+import MetaErrorCard from "@/components/ui/MetaErrorCard";
 import type {
   Campaign,
   MetaPage,
@@ -539,14 +539,10 @@ export default function PublishToMetaModal({
           )}
         </div>
 
-        {/* Error banner */}
+        {/* Error — friendly Meta error card (message already humanised server-side) */}
         {submitError && (
-          <div className="mx-7 mb-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="flex-1">
-              <div className="font-bold">Publish failed</div>
-              <div className="text-xs">{submitError}</div>
-            </div>
+          <div className="mx-7 mb-3">
+            <MetaErrorCard message={submitError} />
           </div>
         )}
 
