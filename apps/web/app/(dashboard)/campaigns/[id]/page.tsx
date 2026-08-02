@@ -1009,15 +1009,24 @@ function SettingsTab({
 }) {
   const api = useApiClient();
   const [name, setName] = useState(c.name);
-  const [budget, setBudget] = useState(Number(c.budget) || 0);
+  // Raw text, same reason as the create wizard: a number-typed state makes the
+  // last character undeletable because "" coerces straight back to 0.
+  const [budgetInput, setBudgetInput] = useState(String(Number(c.budget) || 0));
+  const budget = (() => {
+    const n = Number(budgetInput);
+    return budgetInput.trim() !== "" && Number.isFinite(n) ? n : 0;
+  })();
   const [busy, setBusy] = useState(false);
 
-  const dirty = name !== c.name || budget !== Number(c.budget);
+  const dirty = (name.trim() !== c.name && name.trim() !== "") || budget !== Number(c.budget);
   // Block daily budgets below the account's real Meta minimum (publish would
-  // be rejected otherwise). Only when the minimum is known.
+  // be rejected otherwise). Only when the minimum is known — but a zero or
+  // empty budget is invalid regardless, and without this guard an account that
+  // hasn't synced its minimum yet could save a 0 that fails at publish.
   const minDaily = c.adAccount?.minDailyBudget ?? null;
   const belowMin =
-    c.budgetType === "DAILY" && !!minDaily && minDaily > 0 && budget < minDaily;
+    budget <= 0 ||
+    (c.budgetType === "DAILY" && !!minDaily && minDaily > 0 && budget < minDaily);
 
   async function save() {
     if (busy || !dirty || belowMin) return;
@@ -1071,7 +1080,7 @@ function SettingsTab({
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">
-              Daily budget
+              {c.budgetType === "DAILY" ? "Daily budget" : "Total budget"}
             </label>
             <div className="relative">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
@@ -1079,9 +1088,17 @@ function SettingsTab({
               </span>
               <input
                 type="number"
-                value={budget}
+                value={budgetInput}
                 min={c.budgetType === "DAILY" && minDaily ? minDaily : 1}
-                onChange={(e) => setBudget(Number(e.target.value) || 0)}
+                inputMode="decimal"
+                onChange={(e) => setBudgetInput(e.target.value)}
+                onBlur={() => {
+                  if (budgetInput.trim() === "") {
+                    setBudgetInput(
+                      String(Math.ceil(c.budgetType === "DAILY" && minDaily ? minDaily : 1))
+                    );
+                  }
+                }}
                 className={clsx(
                   "h-11 w-full rounded-xl border pl-12 pr-3 text-sm font-medium text-slate-900 transition focus:outline-none",
                   belowMin
@@ -1092,9 +1109,11 @@ function SettingsTab({
             </div>
             {belowMin && (
               <p className="mt-1.5 text-xs font-semibold text-rose-600">
-                Below this account&apos;s minimum of{" "}
-                {currencySymbol(c.adAccount?.currency)}
-                {(minDaily ?? 0).toLocaleString()}/day.
+                {budget <= 0
+                  ? "Enter a budget above zero."
+                  : `Below this account's minimum of ${currencySymbol(
+                      c.adAccount?.currency
+                    )}${(minDaily ?? 0).toLocaleString()} per day.`}
               </p>
             )}
           </div>

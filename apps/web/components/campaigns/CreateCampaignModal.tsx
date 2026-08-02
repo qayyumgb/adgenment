@@ -177,7 +177,21 @@ export default function CreateCampaignModal({
   const [selectedPlatforms, setSelectedPlatforms] = useState<ApiPlatform[]>([]);
   const [objective, setObjective] = useState<Objective["id"] | null>(null);
   const [budgetType, setBudgetType] = useState<"daily" | "lifetime">("daily");
-  const [budgetAmount, setBudgetAmount] = useState<number>(75);
+  /**
+   * The budget field holds RAW TEXT, not a number.
+   *
+   * A number-typed state can't represent "the user has cleared the box": the
+   * input reports `""`, `Number("") || 0` collapses it to 0, and the 0 renders
+   * straight back — so the last character is impossible to delete. Keeping the
+   * string and deriving the number fixes that and costs nothing.
+   */
+  const [budgetInput, setBudgetInput] = useState<string>("");
+  const budgetAmount = (() => {
+    const n = Number(budgetInput);
+    return budgetInput.trim() !== "" && Number.isFinite(n) ? n : 0;
+  })();
+  /** Set once the user edits the field, so we stop auto-seeding it. */
+  const budgetTouched = useRef(false);
   const [startDate, setStartDate] = useState<string>(
     new Date().toISOString().slice(0, 10)
   );
@@ -220,7 +234,8 @@ export default function CreateCampaignModal({
         setSelectedPlatforms([]);
         setObjective(null);
         setBudgetType("daily");
-        setBudgetAmount(75);
+        setBudgetInput("");
+        budgetTouched.current = false;
         setEndDate("");
         setRunContinuously(true);
         setCampaignName("");
@@ -281,7 +296,8 @@ export default function CreateCampaignModal({
     }
 
     if (typeof prefill.budget === "number" && prefill.budget > 0) {
-      setBudgetAmount(Math.round(prefill.budget));
+      setBudgetInput(String(Math.round(prefill.budget)));
+      budgetTouched.current = true; // the plan's number wins over auto-seeding
     }
     if (prefill.name) setCampaignName(prefill.name);
     if (prefill.startDate) setStartDate(prefill.startDate);
@@ -397,6 +413,20 @@ export default function CreateCampaignModal({
     minDailyBudget,
     budgetCurrency,
   ]);
+
+  /**
+   * Seed the budget from this account's REAL minimum.
+   *
+   * The old hardcoded 75 was a USD-shaped guess: on a PKR account whose Meta
+   * floor is 279.11/day it opened the step already invalid, with an error the
+   * user hadn't done anything to deserve. `scheduleValidation.floor` is the
+   * live floor for the current budget type, so switching Daily↔Lifetime
+   * re-seeds correctly too. Stops as soon as the user types.
+   */
+  useEffect(() => {
+    if (!open || budgetTouched.current) return;
+    setBudgetInput(String(Math.ceil(scheduleValidation.floor)));
+  }, [open, scheduleValidation.floor]);
 
   const canAdvance = useMemo(() => {
     if (step === 1) return selectedPlatforms.length > 0;
@@ -604,7 +634,11 @@ export default function CreateCampaignModal({
               budgetType={budgetType}
               setBudgetType={setBudgetType}
               budgetAmount={budgetAmount}
-              setBudgetAmount={setBudgetAmount}
+              budgetInput={budgetInput}
+              onBudgetInput={(v) => {
+                budgetTouched.current = true;
+                setBudgetInput(v);
+              }}
               startDate={startDate}
               setStartDate={setStartDate}
               endDate={endDate}
@@ -982,7 +1016,8 @@ function StepBudget({
   budgetType,
   setBudgetType,
   budgetAmount,
-  setBudgetAmount,
+  budgetInput,
+  onBudgetInput,
   startDate,
   setStartDate,
   endDate,
@@ -998,8 +1033,11 @@ function StepBudget({
 }: {
   budgetType: "daily" | "lifetime";
   setBudgetType: (v: "daily" | "lifetime") => void;
+  /** Parsed value, for display maths and validation. */
   budgetAmount: number;
-  setBudgetAmount: (n: number) => void;
+  /** Raw field text — lets the box actually be empty while typing. */
+  budgetInput: string;
+  onBudgetInput: (v: string) => void;
   startDate: string;
   setStartDate: (s: string) => void;
   endDate: string;
@@ -1078,9 +1116,19 @@ function StepBudget({
             type="number"
             min={validation.floor}
             step="1"
-            value={budgetAmount}
+            inputMode="decimal"
+            value={budgetInput}
             aria-invalid={validation.budget !== null}
-            onChange={(e) => setBudgetAmount(Number(e.target.value) || 0)}
+            // Pass the raw string straight through — no Number() coercion
+            // here, or clearing the field snaps it back to 0.
+            onChange={(e) => onBudgetInput(e.target.value)}
+            // Empty on blur is a dead end (Next stays disabled with no value
+            // to fix), so fall back to the minimum that would be valid.
+            onBlur={() => {
+              if (budgetInput.trim() === "") {
+                onBudgetInput(String(Math.ceil(validation.floor)));
+              }
+            }}
             className={clsx(
               "h-14 w-full rounded-xl border-2 pl-14 pr-4 text-2xl font-bold tracking-tight text-slate-900 transition focus:outline-none",
               validation.budget
