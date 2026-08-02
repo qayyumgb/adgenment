@@ -10,12 +10,6 @@ import rateLimit from "express-rate-limit";
 import router from "./routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { prisma } from "./lib/prisma";
-// ⚠️ TEMPORARY — remove after Meta App Review approves. See
-//    apps/api/src/services/meta-warmup.service.ts header for context.
-import {
-  startMetaWarmupCron,
-  stopMetaWarmupCron,
-} from "./services/meta-warmup.service";
 import {
   startSyncScheduler,
   stopSyncScheduler,
@@ -138,17 +132,12 @@ async function startServer() {
       );
     });
 
-    // ⚠️ TEMPORARY — Meta API warmup cron. Remove after App Review approves.
-    //    See apps/api/src/services/meta-warmup.service.ts.
-    startMetaWarmupCron();
-
     // Periodic platform sync so dashboards stay current without manual action.
     startSyncScheduler();
 
     // Graceful shutdown — Railway sends SIGTERM during redeploy
     const shutdown = (signal: string) => {
       console.log(`[advertix-api] ${signal} received — shutting down…`);
-      stopMetaWarmupCron();
       stopSyncScheduler();
       server.close(async () => {
         try {

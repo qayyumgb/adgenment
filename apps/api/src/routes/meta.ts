@@ -10,6 +10,7 @@ import {
   type MetaHealthReport,
 } from "../services/meta-health.service";
 import { syncService } from "../services/sync.service";
+import { isMetaError, friendlyMetaError } from "../lib/meta-errors";
 
 const router = Router();
 
@@ -188,7 +189,12 @@ router.post(
 /**
  * POST /meta/sync — re-sync ALL active Meta ad accounts in the workspace.
  * Convenience for the "Sync now" button so the frontend doesn't need to know
- * an account id. Returns aggregate counts.
+ * an account id.
+ *
+ * One failing account no longer aborts the run: each is synced independently
+ * and its failure is translated to a plain-English line in `errors`, so a user
+ * with two accounts still gets the data from the healthy one and is told
+ * exactly what's wrong with the other.
  */
 router.post(
   "/sync",
@@ -204,14 +210,42 @@ router.post(
           .status(400)
           .json({ error: "Connect a Meta ad account first (Settings → Integrations)." });
       }
+
       let campaignsSynced = 0;
       let metricsSynced = 0;
+      let accountsSynced = 0;
+      const errors: Array<{ accountName: string; message: string }> = [];
+
       for (const acct of active) {
-        const r = await syncService.syncMetaAccount(acct);
-        campaignsSynced += r.campaignsSynced;
-        metricsSynced += r.metricsSynced;
+        try {
+          const r = await syncService.syncMetaAccount(acct);
+          campaignsSynced += r.campaignsSynced;
+          metricsSynced += r.metricsSynced;
+          accountsSynced++;
+        } catch (err) {
+          const friendly = isMetaError(err)
+            ? friendlyMetaError(err).message
+            : "Meta didn't respond. Try again in a minute.";
+          errors.push({ accountName: acct.accountName, message: friendly });
+          console.error(`[meta/sync] ${acct.accountName} failed:`, err);
+        }
       }
-      res.json({ success: true, accounts: active.length, campaignsSynced, metricsSynced });
+
+      // Every account failed → this is a failure, not a partial success.
+      if (accountsSynced === 0) {
+        return res.status(502).json({
+          error: errors[0]?.message ?? "Sync failed. Try again in a minute.",
+          errors,
+        });
+      }
+
+      res.json({
+        success: true,
+        accounts: accountsSynced,
+        campaignsSynced,
+        metricsSynced,
+        errors,
+      });
     } catch (err) {
       next(err);
     }
@@ -422,6 +456,28 @@ router.get(
       if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
       const pages = await metaService.getPages(ctx.token);
       res.json(pages);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /meta/pixels — Meta Pixels on the connected ad account.
+ *
+ * The publish wizard calls this on the objective step so a user picking Sales
+ * or Leads is told they need a pixel *there*, rather than discovering it when
+ * the publish call fails five steps later.
+ */
+router.get(
+  "/pixels",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ctx = await resolveMetaContext(req);
+      if ("error" in ctx) return res.status(ctx.status).json({ error: ctx.error });
+      const pixels = await metaService.getPixels(ctx.token, ctx.accountId);
+      res.json(pixels);
     } catch (err) {
       next(err);
     }

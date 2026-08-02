@@ -23,12 +23,14 @@ import {
   Calendar,
   Megaphone,
   Loader2,
+  Rocket,
 } from "lucide-react";
 import CreateCampaignModal, {
   type CampaignPrefill,
 } from "@/components/campaigns/CreateCampaignModal";
 import { SkeletonCampaignCard, SkeletonTableRow } from "@/components/ui/Skeleton";
 import EmptyState from "@/components/ui/EmptyState";
+import MetaErrorCard from "@/components/ui/MetaErrorCard";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
@@ -233,19 +235,46 @@ export default function CampaignsPage() {
   // refreshes spend/reach), then reload the local views. Distinct from the
   // plain refetch, which only re-reads what we've already synced.
   const apiClient = useApiClient();
-  const [syncing, setSyncing] = useState(false);
+  // `syncStage` doubles as the in-flight flag and the label. A bare spinner
+  // gives the user nothing to wait on; naming the step does.
+  const [syncStage, setSyncStage] = useState<null | string>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncing = syncStage !== null;
+
   const handleSync = useCallback(async () => {
-    setSyncing(true);
+    if (syncStage !== null) return; // no double-firing
+    setSyncError(null);
+    setSyncStage("Syncing campaigns…");
+    // The API does campaigns then metrics in one call, so we can't observe the
+    // hand-off — but the second stage is by far the longer one, so advancing
+    // the label after a beat tracks reality closely enough to be honest.
+    const toMetrics = setTimeout(() => setSyncStage("Syncing metrics…"), 1200);
     try {
       const r = await apiClient.syncMeta();
+      clearTimeout(toMetrics);
+      setSyncStage("Refreshing…");
       await refetchAll();
-      toast.success(`Synced ${r.campaignsSynced} campaign${r.campaignsSynced === 1 ? "" : "s"} from Meta`);
+
+      const n = r.campaignsSynced;
+      const base = `Sync complete — ${n} campaign${n === 1 ? "" : "s"} updated`;
+      if (r.errors && r.errors.length > 0) {
+        // Partial success: the healthy accounts synced, name the ones that
+        // didn't so the user knows the numbers are incomplete.
+        const first = r.errors[0];
+        setSyncError(`${first.accountName}: ${first.message}`);
+        toast.success(`${base} (${r.errors.length} account had a problem)`);
+      } else {
+        toast.success(base);
+      }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Sync failed");
+      clearTimeout(toMetrics);
+      const msg = e instanceof Error ? e.message : "Sync failed. Try again in a minute.";
+      setSyncError(msg);
+      toast.error(msg);
     } finally {
-      setSyncing(false);
+      setSyncStage(null);
     }
-  }, [apiClient, refetchAll]);
+  }, [apiClient, refetchAll, syncStage]);
 
   const totalPages = data?.totalPages ?? 1;
   const campaigns = data?.campaigns ?? [];
@@ -275,7 +304,7 @@ export default function CampaignsPage() {
             ) : (
               <RefreshCw className="h-4 w-4" />
             )}
-            {syncing ? "Syncing…" : "Sync now"}
+            {syncStage ?? "Sync now"}
           </button>
           <button
             type="button"
@@ -287,6 +316,20 @@ export default function CampaignsPage() {
           </button>
         </div>
       </header>
+
+      {/* Sync failure — already translated to plain English server-side; the
+          card adds the right follow-up action (reconnect / retry). */}
+      {syncError && (
+        <div className="animate-in">
+          <MetaErrorCard
+            message={syncError}
+            onRetry={() => {
+              setSyncError(null);
+              void handleSync();
+            }}
+          />
+        </div>
+      )}
 
       {/* ── Stats chips ── */}
       <div className="flex flex-wrap items-center gap-2 animate-in stagger-2">
@@ -575,41 +618,59 @@ function useCampaignActions(c: Campaign, onMutate: () => void) {
 
   const wrap = async (
     kind: "toggle" | "duplicate" | "delete",
-    fn: () => Promise<unknown>
+    fn: () => Promise<unknown>,
+    successMessage?: string
   ) => {
+    if (busy) return; // guards against a double-click firing the call twice
     setBusy(kind);
     try {
       await fn();
+      if (successMessage) toast.success(successMessage);
       onMutate();
     } catch (err) {
-      // eslint-disable-next-line no-alert
-      alert(err instanceof Error ? err.message : "Action failed");
+      toast.error(err instanceof Error ? err.message : "That didn't work. Try again.");
     } finally {
       setBusy(null);
     }
   };
 
+  /**
+   * A campaign that's live on Meta has to be flipped ON META, not just in our
+   * database — otherwise the card reads "Paused" while the ad keeps spending.
+   * `launchCampaign` hits the route that flips campaign + ad set + ad together;
+   * `updateCampaign` is only right for local drafts that were never published.
+   */
+  const isLiveOnMeta = c.platform === "META" && Boolean(c.externalId);
+
   const toggleStatus = () => {
-    const next: CampaignStatus =
-      c.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
-    return wrap("toggle", () =>
-      client.updateCampaign(c.id, { status: next })
+    const next: CampaignStatus = c.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
+    const verb = next === "ACTIVE" ? "resumed" : "paused";
+    return wrap(
+      "toggle",
+      () =>
+        isLiveOnMeta
+          ? client.launchCampaign(c.id, next)
+          : client.updateCampaign(c.id, { status: next }),
+      isLiveOnMeta ? `Campaign ${verb} on Meta` : `Campaign ${verb}`
     );
   };
 
   const duplicate = () =>
-    wrap("duplicate", () =>
-      client.createCampaign({
-        name: `${c.name} (copy)`,
-        platform: c.platform,
-        objective: c.objective,
-        budget: Number(c.budget) || 0,
-        budgetType: c.budgetType,
-        startDate: c.startDate ?? null,
-        endDate: c.endDate ?? null,
-        adAccountId: c.adAccountId,
-        targeting: c.targeting,
-      })
+    wrap(
+      "duplicate",
+      () =>
+        client.createCampaign({
+          name: `${c.name} (copy)`,
+          platform: c.platform,
+          objective: c.objective,
+          budget: Number(c.budget) || 0,
+          budgetType: c.budgetType,
+          startDate: c.startDate ?? null,
+          endDate: c.endDate ?? null,
+          adAccountId: c.adAccountId,
+          targeting: c.targeting,
+        }),
+      "Copied — the duplicate is a draft, publish it when you're ready"
     );
 
   const remove = () => {
@@ -621,12 +682,20 @@ function useCampaignActions(c: Campaign, onMutate: () => void) {
     ) {
       return;
     }
-    return wrap("delete", () => client.deleteCampaign(c.id));
+    return wrap("delete", () => client.deleteCampaign(c.id), "Campaign deleted");
   };
 
   const edit = () => router.push(`/campaigns/${c.id}`);
 
-  return { busy, toggleStatus, duplicate, remove, edit };
+  /**
+   * A Meta campaign that was never published has nothing on Meta to start.
+   * Marking it ACTIVE in our DB would show a green "Active" badge over a
+   * campaign that isn't running anywhere — so we send the user to the detail
+   * page to publish instead of offering a resume that does nothing.
+   */
+  const needsPublish = c.platform === "META" && !c.externalId;
+
+  return { busy, toggleStatus, duplicate, remove, edit, needsPublish, isLiveOnMeta };
 }
 
 function CampaignCard({
@@ -775,18 +844,36 @@ function CampaignCard({
           <CardIconBtn label="Edit" onClick={actions.edit}>
             <Pencil className="h-3.5 w-3.5" />
           </CardIconBtn>
-          <CardIconBtn
-            label={c.status === "ACTIVE" ? "Pause" : "Resume"}
-            onClick={actions.toggleStatus}
-            loading={actions.busy === "toggle"}
-            disabled={!!actions.busy}
-          >
-            {c.status === "ACTIVE" ? (
-              <PauseCircle className="h-3.5 w-3.5" />
-            ) : (
-              <PlayCircle className="h-3.5 w-3.5" />
-            )}
-          </CardIconBtn>
+          {actions.needsPublish ? (
+            <CardIconBtn
+              label="Publish to Meta to go live"
+              onClick={actions.edit}
+              disabled={!!actions.busy}
+            >
+              <Rocket className="h-3.5 w-3.5" />
+            </CardIconBtn>
+          ) : (
+            <CardIconBtn
+              label={
+                c.status === "ACTIVE"
+                  ? actions.isLiveOnMeta
+                    ? "Pause on Meta"
+                    : "Pause"
+                  : actions.isLiveOnMeta
+                    ? "Resume on Meta"
+                    : "Resume"
+              }
+              onClick={actions.toggleStatus}
+              loading={actions.busy === "toggle"}
+              disabled={!!actions.busy}
+            >
+              {c.status === "ACTIVE" ? (
+                <PauseCircle className="h-3.5 w-3.5" />
+              ) : (
+                <PlayCircle className="h-3.5 w-3.5" />
+              )}
+            </CardIconBtn>
+          )}
           <CardIconBtn
             label="Duplicate"
             onClick={actions.duplicate}
@@ -973,18 +1060,36 @@ function CampaignListRow({
       </td>
       <td className="px-5 py-3.5 text-right">
         <div className="inline-flex items-center justify-end gap-1">
-          <CardIconBtn
-            label={c.status === "ACTIVE" ? "Pause" : "Resume"}
-            onClick={actions.toggleStatus}
-            loading={actions.busy === "toggle"}
-            disabled={!!actions.busy}
-          >
-            {c.status === "ACTIVE" ? (
-              <PauseCircle className="h-3.5 w-3.5" />
-            ) : (
-              <PlayCircle className="h-3.5 w-3.5" />
-            )}
-          </CardIconBtn>
+          {actions.needsPublish ? (
+            <CardIconBtn
+              label="Publish to Meta to go live"
+              onClick={actions.edit}
+              disabled={!!actions.busy}
+            >
+              <Rocket className="h-3.5 w-3.5" />
+            </CardIconBtn>
+          ) : (
+            <CardIconBtn
+              label={
+                c.status === "ACTIVE"
+                  ? actions.isLiveOnMeta
+                    ? "Pause on Meta"
+                    : "Pause"
+                  : actions.isLiveOnMeta
+                    ? "Resume on Meta"
+                    : "Resume"
+              }
+              onClick={actions.toggleStatus}
+              loading={actions.busy === "toggle"}
+              disabled={!!actions.busy}
+            >
+              {c.status === "ACTIVE" ? (
+                <PauseCircle className="h-3.5 w-3.5" />
+              ) : (
+                <PlayCircle className="h-3.5 w-3.5" />
+              )}
+            </CardIconBtn>
+          )}
           <CardIconBtn
             label="Duplicate"
             onClick={actions.duplicate}

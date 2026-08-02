@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import {
   X,
@@ -19,7 +20,7 @@ import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
 import { currencySymbol } from "@/lib/money";
 import MetaHealthStatus from "@/components/settings/MetaHealthStatus";
-import type { AdAccount, Platform as ApiPlatform } from "@/lib/api";
+import type { AdAccount, MetaPixel, Platform as ApiPlatform } from "@/lib/api";
 
 type PlatformUI = {
   id: ApiPlatform;
@@ -31,18 +32,19 @@ type PlatformUI = {
 };
 
 type Objective = {
-  id:
-    | "conversions"
-    | "awareness"
-    | "traffic"
-    | "video"
-    | "leads"
-    | "catalog";
+  id: "conversions" | "awareness" | "traffic" | "video" | "leads";
   /** Backend-facing string stored on the Campaign row. */
   value: string;
   name: string;
   desc: string;
   emoji: string;
+  /** Plain-English tooltip — what Meta actually does with this objective and
+   *  who it suits. Deliberately jargon-free: the person reading it has never
+   *  heard of "the learning phase". */
+  explainer: string;
+  /** Conversion objectives optimize against the Meta Pixel. Without one Meta
+   *  rejects the ad set, so we warn on this step rather than at publish. */
+  needsPixel?: boolean;
 };
 
 // Platforms supported by both UI and backend. The modal only ENABLES the ones
@@ -57,13 +59,63 @@ const PLATFORMS_UI: PlatformUI[] = [
   { id: "SNAPCHAT", name: "Snapchat Ads", sub: "Stories · AR Lenses", color: "#FFFC00", textOnColor: "black", initial: "S" },
 ];
 
+/**
+ * Objectives we can actually publish to Meta today.
+ *
+ * Removed deliberately:
+ *  - "Catalog Sales" needs a product catalog + feed connected to the ad
+ *    account, which this wizard has no way to set up. Offering it meant users
+ *    could reach the final step and fail.
+ *  - "App Promotion" needs a registered app object we never collect.
+ */
 const OBJECTIVES: Objective[] = [
-  { id: "conversions", value: "Conversions", name: "Conversions", desc: "Drive purchases or sign-ups", emoji: "🎯" },
-  { id: "awareness", value: "Awareness", name: "Awareness", desc: "Reach more people", emoji: "👁" },
-  { id: "traffic", value: "Traffic", name: "Traffic", desc: "Send people to your website", emoji: "🖱" },
-  { id: "video", value: "Video Views", name: "Video Views", desc: "Get more video plays", emoji: "🎬" },
-  { id: "leads", value: "Lead Generation", name: "Lead Generation", desc: "Collect contact info", emoji: "🤝" },
-  { id: "catalog", value: "Catalog Sales", name: "Catalog Sales", desc: "Promote product catalog", emoji: "🛍" },
+  {
+    id: "traffic",
+    value: "Traffic",
+    name: "Website Visits",
+    desc: "Send people to your site",
+    emoji: "🖱",
+    explainer:
+      "Meta shows your ad to the people most likely to click through to your website. The cheapest way to start, and the one that works without any tracking set up. Good when you want eyes on a page — a product, a booking form, an article.",
+  },
+  {
+    id: "leads",
+    value: "Lead Generation",
+    name: "Leads",
+    desc: "Collect enquiries and contact details",
+    emoji: "🤝",
+    explainer:
+      "Meta looks for people likely to fill in your form, not just click. Needs the Meta Pixel installed on your site so Meta can see which visits turned into enquiries. Best for services, consultations, quotes and demos.",
+    needsPixel: true,
+  },
+  {
+    id: "conversions",
+    value: "Conversions",
+    name: "Sales",
+    desc: "Drive purchases and sign-ups",
+    emoji: "🎯",
+    explainer:
+      "Meta finds people likely to actually buy, using what your Pixel tells it about past purchasers. The most powerful objective and the most demanding: the Pixel must be installed and recording purchases before it can work.",
+    needsPixel: true,
+  },
+  {
+    id: "awareness",
+    value: "Awareness",
+    name: "Awareness",
+    desc: "Get in front of as many people as possible",
+    emoji: "👁",
+    explainer:
+      "Meta shows your ad to the largest number of different people for your money. Cheapest per person reached — but judge it on reach, not sales. Use it for launches, local presence and brand-building, not to sell something today.",
+  },
+  {
+    id: "video",
+    value: "Video Views",
+    name: "Engagement",
+    desc: "Video plays, likes, comments and shares",
+    emoji: "🎬",
+    explainer:
+      "Meta optimizes for people who watch, react and comment. Builds social proof on a post and warms up an audience you can retarget later. Not a direct-response objective — don't expect it to drive sales on its own.",
+  },
 ];
 
 /**
@@ -82,6 +134,18 @@ export interface CampaignPrefill {
   budget?: number;
   /** Suggested campaign name. */
   name?: string;
+  /** ISO yyyy-mm-dd. From the AI plan's duration. */
+  startDate?: string;
+  endDate?: string;
+  /** Audience the plan proposed. Carried through to the publish wizard via
+   *  sessionStorage so the user doesn't retype targeting the AI already
+   *  worked out. Display-only in this modal. */
+  audience?: {
+    ageRange?: string;
+    genders?: string[];
+    interests?: string[];
+    locations?: string[];
+  };
 }
 
 interface CreateCampaignModalProps {
@@ -102,6 +166,7 @@ export default function CreateCampaignModal({
   prefill,
 }: CreateCampaignModalProps) {
   const client = useApiClient();
+  const router = useRouter();
   // Only fetch the ad-accounts list while the modal is open.
   const accounts = useApi<AdAccount[]>(
     (c) => (open ? c.getAdAccounts() : Promise.resolve([])),
@@ -119,7 +184,7 @@ export default function CreateCampaignModal({
   const [endDate, setEndDate] = useState<string>("");
   const [runContinuously, setRunContinuously] = useState(true);
   const [campaignName, setCampaignName] = useState<string>("");
-  const [submitting, setSubmitting] = useState<null | "launch" | "draft">(null);
+  const [submitting, setSubmitting] = useState<null | "publish" | "draft">(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Build a lookup of active ad accounts grouped by platform.
@@ -166,35 +231,83 @@ export default function CreateCampaignModal({
     }
   }, [open]);
 
-  // Apply pre-fill on open. Platform pre-fill is filtered against the user's
-  // actually-connected ad accounts so we never auto-select something the
-  // backend would reject.
+  /**
+   * Apply an AI-planner pre-fill.
+   *
+   * Platform pre-fill is filtered against the user's actually-connected ad
+   * accounts so we never auto-select something the backend would reject. When
+   * every field the plan supplies lands cleanly we jump straight to Review —
+   * the point of "Apply to Campaign" is that the user shouldn't have to walk
+   * back through decisions the AI already made for them.
+   */
+  const prefillApplied = useRef(false);
   useEffect(() => {
-    if (!open || !prefill) return;
+    if (!open) {
+      prefillApplied.current = false;
+      return;
+    }
+    if (!prefill || prefillApplied.current) return;
+    // Wait for the accounts list before deciding — otherwise the platform
+    // filter runs against an empty map and drops the selection.
+    if (accounts.loading) return;
+
+    let matchedPlatform = false;
+    let matchedObjective = false;
+
     if (prefill.platforms && prefill.platforms.length > 0) {
       const allowed = prefill.platforms
         .map((p) => p.toUpperCase() as ApiPlatform)
         .filter((p) => accountsByPlatform.has(p));
-      if (allowed.length > 0) setSelectedPlatforms(allowed);
+      if (allowed.length > 0) {
+        setSelectedPlatforms(allowed);
+        matchedPlatform = true;
+      }
     }
+
     if (prefill.objective) {
       const lower = prefill.objective.toLowerCase();
-      // Match either the modal id OR the backend-facing label.
+      // Match the modal id, the backend-facing value, or the display label —
+      // the AI may return any of the three.
       const obj = OBJECTIVES.find(
         (o) =>
           o.id === lower ||
           o.value.toLowerCase() === lower ||
           o.name.toLowerCase() === lower
       );
-      if (obj) setObjective(obj.id);
+      if (obj) {
+        setObjective(obj.id);
+        matchedObjective = true;
+      }
     }
+
     if (typeof prefill.budget === "number" && prefill.budget > 0) {
       setBudgetAmount(Math.round(prefill.budget));
     }
     if (prefill.name) setCampaignName(prefill.name);
-    // The accountsByPlatform map can arrive after the first render; rerun
-    // when it's populated so we don't silently drop platform pre-selection.
-  }, [open, prefill, accountsByPlatform]);
+    if (prefill.startDate) setStartDate(prefill.startDate);
+    if (prefill.endDate) {
+      setEndDate(prefill.endDate);
+      setRunContinuously(false);
+    }
+
+    prefillApplied.current = true;
+
+    // Only skip ahead when the two gating choices actually resolved. Landing
+    // on Review with no platform selected would be worse than starting at
+    // step 1, because the user can't see what's missing from there.
+    if (matchedPlatform && matchedObjective) {
+      setStep(4);
+    }
+  }, [open, prefill, accountsByPlatform, accounts.loading]);
+
+  // A total budget can't run forever — Meta needs the end date to pace it.
+  // Switching budget type has to clear the flag, or step 3 would be stuck in a
+  // state the user can see is checked but can't uncheck.
+  useEffect(() => {
+    if (budgetType === "lifetime" && runContinuously) {
+      setRunContinuously(false);
+    }
+  }, [budgetType, runContinuously]);
 
   // ESC to close (but not while a submit is in flight)
   useEffect(() => {
@@ -206,8 +319,11 @@ export default function CreateCampaignModal({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose, submitting]);
 
-  // Auto-generated default name
+  // Auto-generated default name. Skipped when the AI planner supplied one —
+  // this effect runs after the prefill effect in the same commit, so without
+  // the guard it would queue a second setState and clobber the plan's name.
   useEffect(() => {
+    if (prefill?.name) return;
     if (!campaignName && selectedPlatforms.length > 0 && objective) {
       const platformLabel =
         selectedPlatforms.length === 1
@@ -220,24 +336,74 @@ export default function CreateCampaignModal({
       });
       setCampaignName(`${platformLabel} – ${objLabel} – ${month}`);
     }
-  }, [step, selectedPlatforms, objective, campaignName]);
+  }, [step, selectedPlatforms, objective, campaignName, prefill?.name]);
 
-  // A daily budget below the account's real minimum will be rejected by Meta
-  // at publish ("budget too low"). Block it up front. Only enforced for daily
-  // budgets (Meta's min is a daily figure) and only when the minimum is known.
-  const belowMinBudget =
-    budgetType === "daily" &&
-    !!minDailyBudget &&
-    minDailyBudget > 0 &&
-    budgetAmount < minDailyBudget;
+  /**
+   * Everything Meta would reject about the budget and schedule, checked here
+   * so the user is corrected on this step instead of at publish. Returns the
+   * first blocking problem per field, or null when the field is fine.
+   */
+  const scheduleValidation = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    // Meta's floor is $1/day (or the account's own minimum, which is higher in
+    // some currencies). A lifetime budget has to cover $1 for every day it
+    // runs, otherwise Meta can't pace it.
+    const dailyFloor = Math.max(1, minDailyBudget && minDailyBudget > 0 ? minDailyBudget : 1);
+    const days =
+      !runContinuously && endDate && startDate
+        ? Math.max(
+            1,
+            Math.round(
+              (new Date(endDate).getTime() - new Date(startDate).getTime()) /
+                86_400_000
+            ) + 1
+          )
+        : null;
+    const lifetimeFloor = days ? dailyFloor * days : dailyFloor;
+    const floor = budgetType === "daily" ? dailyFloor : lifetimeFloor;
+
+    let budget: string | null = null;
+    if (!Number.isFinite(budgetAmount) || budgetAmount <= 0) {
+      budget = "Enter a budget above zero.";
+    } else if (budgetAmount < floor) {
+      budget =
+        budgetType === "daily"
+          ? `Meta's minimum for this account is ${currencySymbol(budgetCurrency)}${dailyFloor.toLocaleString()} per day.`
+          : `A ${days ?? 1}-day campaign needs at least ${currencySymbol(budgetCurrency)}${lifetimeFloor.toLocaleString()} total — Meta needs ${currencySymbol(budgetCurrency)}${dailyFloor.toLocaleString()} a day to deliver.`;
+    }
+
+    let start: string | null = null;
+    if (!startDate) start = "Pick a start date.";
+    else if (startDate < todayStr) start = "The start date can't be in the past.";
+
+    let end: string | null = null;
+    if (!runContinuously) {
+      if (!endDate) end = "Pick an end date, or switch on “Run continuously”.";
+      else if (endDate <= startDate) end = "The end date has to be after the start date.";
+    }
+    // A lifetime budget with no end date can't be paced by Meta at all.
+    if (budgetType === "lifetime" && runContinuously) {
+      end = "A total budget needs an end date so Meta knows how to spread it.";
+    }
+
+    return { budget, start, end, days, floor, ok: !budget && !start && !end };
+  }, [
+    budgetAmount,
+    budgetType,
+    startDate,
+    endDate,
+    runContinuously,
+    minDailyBudget,
+    budgetCurrency,
+  ]);
 
   const canAdvance = useMemo(() => {
     if (step === 1) return selectedPlatforms.length > 0;
     if (step === 2) return objective !== null;
-    if (step === 3)
-      return budgetAmount > 0 && startDate !== "" && !belowMinBudget;
-    return true;
-  }, [step, selectedPlatforms, objective, budgetAmount, startDate, belowMinBudget]);
+    if (step === 3) return scheduleValidation.ok;
+    return campaignName.trim().length > 0;
+  }, [step, selectedPlatforms, objective, scheduleValidation.ok, campaignName]);
 
   if (!open) return null;
 
@@ -248,10 +414,28 @@ export default function CreateCampaignModal({
     );
   };
 
-  const reachLow = Math.max(2000, budgetAmount * 160);
-  const reachHigh = Math.max(8000, budgetAmount * 600);
+  // Estimated DAILY reach, so it has to be driven by the daily-equivalent
+  // spend — a 30-day lifetime budget doesn't reach 30x as many people per day.
+  // Static multipliers on purpose: a real Meta reach estimate needs a full
+  // targeting spec we don't have yet, and a fake API call would be worse than
+  // an honest range.
+  const dailyEquivalent =
+    budgetType === "lifetime" && scheduleValidation.days
+      ? budgetAmount / scheduleValidation.days
+      : budgetAmount;
+  const reachLow = Math.round(Math.max(500, dailyEquivalent * 160));
+  const reachHigh = Math.round(Math.max(2000, dailyEquivalent * 600));
 
-  async function handleSubmit(mode: "launch" | "draft") {
+  /**
+   * Creates the campaign(s) as drafts.
+   *
+   * There is deliberately no "launch now" here any more. The old flow flipped
+   * the new row to ACTIVE in our database, which showed a green Active badge
+   * over a campaign that existed nowhere on Meta and was spending nothing. A
+   * Meta campaign only becomes real once it's been published with a creative,
+   * so `continueToPublish` hands the user straight to that step instead.
+   */
+  async function handleSubmit(mode: "publish" | "draft") {
     if (selectedPlatforms.length === 0 || !objective) return;
     setSubmitting(mode);
     setSubmitError(null);
@@ -265,7 +449,9 @@ export default function CreateCampaignModal({
         selectedPlatforms.map((platform) => {
           const acct = accountsByPlatform.get(platform)?.[0];
           if (!acct) {
-            throw new Error(`No connected ${platform} ad account`);
+            throw new Error(
+              `No connected ${platform} ad account. Connect one in Settings → Integrations.`
+            );
           }
           const finalName =
             selectedPlatforms.length > 1
@@ -285,19 +471,19 @@ export default function CreateCampaignModal({
         })
       );
 
-      if (mode === "launch") {
-        // Flip each newly-created campaign to ACTIVE.
-        await Promise.all(
-          created.map((c) =>
-            client.updateCampaign(c.id, { status: "ACTIVE" })
-          )
-        );
-      }
-
       onCreated?.();
       onClose();
+
+      // Straight into the publish step for a single Meta campaign — that's the
+      // only place an ad actually gets built and sent to Meta.
+      const metaCampaign = created.find((c) => c.platform === "META");
+      if (mode === "publish" && metaCampaign) {
+        router.push(`/campaigns/${metaCampaign.id}?publish=1`);
+      }
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to create campaign");
+      setSubmitError(
+        err instanceof Error ? err.message : "Couldn't create the campaign. Try again."
+      );
     } finally {
       setSubmitting(null);
     }
@@ -305,6 +491,7 @@ export default function CreateCampaignModal({
 
   const noAccounts =
     !accounts.loading && (accounts.data?.filter((a) => a.isActive).length ?? 0) === 0;
+  const hasMetaSelected = selectedPlatforms.includes("META");
 
   return (
     <div
@@ -406,7 +593,11 @@ export default function CreateCampaignModal({
             />
           )}
           {step === 2 && (
-            <StepObjective selected={objective} onSelect={setObjective} />
+            <StepObjective
+              selected={objective}
+              onSelect={setObjective}
+              metaSelected={hasMetaSelected}
+            />
           )}
           {step === 3 && (
             <StepBudget
@@ -425,6 +616,7 @@ export default function CreateCampaignModal({
               objective={objective}
               currency={budgetCurrency}
               minDailyBudget={minDailyBudget}
+              validation={scheduleValidation}
             />
           )}
           {step === 4 && (
@@ -482,30 +674,37 @@ export default function CreateCampaignModal({
             <div className="flex flex-col items-end gap-2">
               <button
                 type="button"
-                disabled={!!submitting}
+                disabled={!!submitting || !canAdvance}
                 className="btn-brand disabled:pointer-events-none disabled:opacity-60"
-                onClick={() => handleSubmit("launch")}
+                onClick={() => handleSubmit(hasMetaSelected ? "publish" : "draft")}
               >
-                {submitting === "launch" ? (
+                {submitting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Launching…
+                    Creating…
+                  </>
+                ) : hasMetaSelected ? (
+                  <>
+                    <Rocket className="h-4 w-4" strokeWidth={2.5} />
+                    Create &amp; Add Creative
                   </>
                 ) : (
                   <>
                     <Rocket className="h-4 w-4" strokeWidth={2.5} />
-                    Launch Campaign
+                    Create Campaign
                   </>
                 )}
               </button>
-              <button
-                type="button"
-                disabled={!!submitting}
-                onClick={() => handleSubmit("draft")}
-                className="text-xs font-semibold text-slate-500 hover:text-primary disabled:opacity-50"
-              >
-                {submitting === "draft" ? "Saving…" : "Save as Draft"}
-              </button>
+              {hasMetaSelected && (
+                <button
+                  type="button"
+                  disabled={!!submitting || !canAdvance}
+                  onClick={() => handleSubmit("draft")}
+                  className="text-xs font-semibold text-slate-500 transition hover:text-primary disabled:opacity-50"
+                >
+                  {submitting === "draft" ? "Saving…" : "Just save as a draft"}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -566,69 +765,100 @@ function StepPlatform({
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {platforms.map((p) => {
-          const accountsForPlat = accountsByPlatform.get(p.id) ?? [];
-          const connected = accountsForPlat.length > 0;
-          const isSelected = selected.includes(p.id);
-          return (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => onToggle(p.id)}
-              disabled={!connected}
-              className={clsx(
-                "group relative rounded-xl border-2 p-4 text-left transition",
-                isSelected
-                  ? "border-primary bg-primary/5 shadow-glow"
-                  : connected
-                    ? "border-slate-200 bg-white hover:border-slate-300"
-                    : "cursor-not-allowed border-dashed border-slate-200 bg-slate-50 opacity-70"
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <div
-                  className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold shadow-sm"
-                  style={{
-                    backgroundColor: p.color,
-                    color: p.textOnColor === "black" ? "#0f172a" : "#ffffff",
-                  }}
-                >
-                  {p.initial}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-bold text-slate-900">
-                    {p.name}
-                  </div>
-                  <div className="truncate text-[11px] text-slate-500">
-                    {connected ? accountsForPlat[0].accountName : p.sub}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3 flex items-center justify-between">
-                {connected ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-600">
-                    <span className="status-dot active" />
-                    Connected
-                  </span>
-                ) : (
-                  <span className="text-[10px] font-semibold text-slate-400">
-                    Not connected
-                  </span>
-                )}
-              </div>
-              {isSelected && (
-                <div className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white shadow-md">
-                  <Check className="h-3 w-3" strokeWidth={3} />
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
       {loading && (
-        <p className="mt-3 text-xs text-slate-400">Loading connected platforms…</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div
+              key={i}
+              className="h-[104px] animate-pulse rounded-xl bg-slate-100"
+            />
+          ))}
+        </div>
+      )}
+
+      {!loading && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {platforms.map((p) => {
+            const accountsForPlat = accountsByPlatform.get(p.id) ?? [];
+            const connected = accountsForPlat.length > 0;
+            const isSelected = selected.includes(p.id);
+
+            const inner = (
+              <>
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold shadow-sm"
+                    style={{
+                      backgroundColor: p.color,
+                      color: p.textOnColor === "black" ? "#0f172a" : "#ffffff",
+                    }}
+                  >
+                    {p.initial}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-bold text-slate-900">
+                      {p.name}
+                    </div>
+                    <div className="truncate text-[11px] text-slate-500">
+                      {connected ? accountsForPlat[0].accountName : p.sub}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  {connected ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-600">
+                      <span className="status-dot active" />
+                      Connected
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                      Connect {p.name} →
+                    </span>
+                  )}
+                </div>
+              </>
+            );
+
+            // An unconnected platform renders as a LINK to the integrations
+            // page, not a disabled tile. A dead tile tells the user "no" and
+            // stops there; this tells them what to do about it. (It can't be a
+            // disabled <button> wrapping a link — disabled buttons swallow
+            // clicks on their children.)
+            if (!connected) {
+              return (
+                <Link
+                  key={p.id}
+                  href="/settings?tab=integrations"
+                  title={`Connect ${p.name} to advertise on it`}
+                  className="group relative rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/70 p-4 text-left transition hover:border-primary/40 hover:bg-primary/[0.03]"
+                >
+                  {inner}
+                </Link>
+              );
+            }
+
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => onToggle(p.id)}
+                className={clsx(
+                  "group relative rounded-xl border-2 p-4 text-left transition",
+                  isSelected
+                    ? "border-primary bg-primary/5 shadow-glow"
+                    : "border-slate-200 bg-white hover:border-slate-300"
+                )}
+              >
+                {inner}
+                {isSelected && (
+                  <div className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white shadow-md">
+                    <Check className="h-3 w-3" strokeWidth={3} />
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -640,42 +870,107 @@ function StepPlatform({
 function StepObjective({
   selected,
   onSelect,
+  metaSelected,
 }: {
   selected: Objective["id"] | null;
   onSelect: (id: Objective["id"]) => void;
+  /** Only check for a pixel when Meta is actually one of the targets. */
+  metaSelected: boolean;
 }) {
+  // Which objectives are publishable depends on whether a pixel exists. Told
+  // here, on the step where the choice is made — not at the publish step where
+  // it's five clicks too late to matter.
+  const pixelsQ = useApi<MetaPixel[]>(
+    (c) => (metaSelected ? c.getMetaPixels() : Promise.resolve([])),
+    [metaSelected]
+  );
+  const hasPixel = (pixelsQ.data?.length ?? 0) > 0;
+  const pixelKnown = metaSelected && !pixelsQ.loading && !pixelsQ.error;
+
+  const chosen = OBJECTIVES.find((o) => o.id === selected) ?? null;
+  const pixelBlocked = Boolean(
+    chosen?.needsPixel && pixelKnown && !hasPixel
+  );
+
   return (
     <div>
       <h3 className="mb-1 text-xl font-bold text-slate-900">
-        What&apos;s your goal?
+        What do you want this ad to do?
       </h3>
       <p className="mb-5 text-sm text-slate-500">
-        We&apos;ll optimize delivery to match this outcome.
+        Meta uses this to decide who sees your ad. Hover any option for what it
+        actually means.
       </p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {OBJECTIVES.map((o) => {
           const isSelected = selected === o.id;
+          const needsMissingPixel = o.needsPixel && pixelKnown && !hasPixel;
           return (
             <button
               key={o.id}
               type="button"
               onClick={() => onSelect(o.id)}
+              title={o.explainer}
               className={clsx(
-                "group rounded-xl border-2 p-4 text-left transition",
+                "group relative rounded-xl border-2 p-4 text-left transition",
                 isSelected
                   ? "border-primary bg-primary/[0.06] shadow-glow"
                   : "border-slate-200 bg-white hover:border-slate-300"
               )}
             >
               <div className="text-2xl">{o.emoji}</div>
-              <div className="mt-2 text-sm font-bold text-slate-900">
-                {o.name}
+              <div className="mt-2 flex items-center gap-1.5">
+                <span className="text-sm font-bold text-slate-900">{o.name}</span>
+                {needsMissingPixel && (
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                )}
               </div>
               <div className="text-[11px] text-slate-500">{o.desc}</div>
             </button>
           );
         })}
       </div>
+
+      {/* Full explainer for the current pick — a tooltip alone isn't reachable
+          on touch, and this is the sentence that decides the campaign. */}
+      {chosen && (
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+          <div className="flex items-start gap-2.5">
+            <span className="text-lg leading-none">{chosen.emoji}</span>
+            <div className="min-w-0">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                What {chosen.name} does
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-slate-700">
+                {chosen.explainer}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pixelBlocked && (
+        <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="min-w-0 flex-1 text-xs leading-relaxed text-amber-900">
+            <strong>
+              We couldn&apos;t find a Meta Pixel on your ad account.
+            </strong>{" "}
+            {chosen?.name} campaigns need one — it&apos;s the snippet on your
+            website that tells Meta who converted. Create it in Meta Events
+            Manager and install it on your site, or pick{" "}
+            <strong>Website Visits</strong> instead, which works today.
+            <a
+              href="https://business.facebook.com/events_manager2"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1.5 block font-bold text-amber-900 underline"
+            >
+              Open Meta Events Manager →
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -699,6 +994,7 @@ function StepBudget({
   objective,
   currency,
   minDailyBudget,
+  validation,
 }: {
   budgetType: "daily" | "lifetime";
   setBudgetType: (v: "daily" | "lifetime") => void;
@@ -715,13 +1011,17 @@ function StepBudget({
   objective: Objective["id"] | null;
   currency: string | null;
   minDailyBudget: number | null;
+  validation: {
+    budget: string | null;
+    start: string | null;
+    end: string | null;
+    days: number | null;
+    floor: number;
+    ok: boolean;
+  };
 }) {
   const sym = currencySymbol(currency);
-  const belowMin =
-    budgetType === "daily" &&
-    !!minDailyBudget &&
-    minDailyBudget > 0 &&
-    budgetAmount < minDailyBudget;
+  const todayStr = new Date().toISOString().slice(0, 10);
   // Recommendation is anchored on Meta's REAL minimum daily budget for this
   // account (already in the account currency, kept current by Meta — no FX).
   // We suggest a sensible multiple of that floor, varied by objective. When the
@@ -763,7 +1063,10 @@ function StepBudget({
       </div>
 
       <div>
-        <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">
+        <label
+          htmlFor="campaign-budget"
+          className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500"
+        >
           {budgetType === "daily" ? "Daily budget" : "Total budget"}
         </label>
         <div className="relative">
@@ -771,23 +1074,25 @@ function StepBudget({
             {sym}
           </span>
           <input
+            id="campaign-budget"
             type="number"
-            min={budgetType === "daily" && minDailyBudget ? minDailyBudget : 1}
+            min={validation.floor}
+            step="1"
             value={budgetAmount}
+            aria-invalid={validation.budget !== null}
             onChange={(e) => setBudgetAmount(Number(e.target.value) || 0)}
             className={clsx(
               "h-14 w-full rounded-xl border-2 pl-14 pr-4 text-2xl font-bold tracking-tight text-slate-900 transition focus:outline-none",
-              belowMin
+              validation.budget
                 ? "border-rose-300 focus:border-rose-400"
                 : "border-slate-200 focus:border-primary"
             )}
           />
         </div>
-        {belowMin ? (
-          <p className="mt-2 text-xs font-semibold text-rose-600">
-            Below this account&apos;s minimum of {sym}
-            {(minDailyBudget ?? 0).toLocaleString()}/day — increase the budget to
-            continue.
+        {validation.budget ? (
+          <p className="mt-2 flex items-start gap-1.5 text-xs font-semibold text-rose-600">
+            <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" />
+            {validation.budget}
           </p>
         ) : (
           <p className="mt-2 text-xs text-slate-500">
@@ -796,41 +1101,79 @@ function StepBudget({
               {reachLow.toLocaleString()}–{reachHigh.toLocaleString()}
             </span>{" "}
             people
+            {budgetType === "lifetime" && validation.days ? (
+              <>
+                {" "}
+                · {sym}
+                {Math.round(budgetAmount / validation.days).toLocaleString()}/day
+                across {validation.days} days
+              </>
+            ) : null}
           </p>
         )}
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">
+          <label
+            htmlFor="campaign-start"
+            className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500"
+          >
             Start date
           </label>
           <div className="relative">
             <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
+              id="campaign-start"
               type="date"
               value={startDate}
-              min={new Date().toISOString().slice(0, 10)}
+              min={todayStr}
+              aria-invalid={validation.start !== null}
               onChange={(e) => setStartDate(e.target.value)}
-              className="h-11 w-full rounded-xl border border-slate-200 pl-10 pr-3 text-sm font-medium text-slate-900 transition focus:border-primary focus:outline-none"
+              className={clsx(
+                "h-11 w-full rounded-xl border pl-10 pr-3 text-sm font-medium text-slate-900 transition focus:outline-none",
+                validation.start
+                  ? "border-rose-300 focus:border-rose-400"
+                  : "border-slate-200 focus:border-primary"
+              )}
             />
           </div>
+          {validation.start && (
+            <p className="mt-1.5 text-[11px] font-semibold text-rose-600">
+              {validation.start}
+            </p>
+          )}
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">
+          <label
+            htmlFor="campaign-end"
+            className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500"
+          >
             End date
           </label>
           <div className="relative">
             <Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
+              id="campaign-end"
               type="date"
               value={endDate}
               disabled={runContinuously}
-              min={startDate}
+              min={startDate || todayStr}
+              aria-invalid={validation.end !== null}
               onChange={(e) => setEndDate(e.target.value)}
-              className="h-11 w-full rounded-xl border border-slate-200 pl-10 pr-3 text-sm font-medium text-slate-900 transition focus:border-primary focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
+              className={clsx(
+                "h-11 w-full rounded-xl border pl-10 pr-3 text-sm font-medium text-slate-900 transition focus:outline-none disabled:bg-slate-50 disabled:text-slate-400",
+                validation.end && !runContinuously
+                  ? "border-rose-300 focus:border-rose-400"
+                  : "border-slate-200 focus:border-primary"
+              )}
             />
           </div>
+          {validation.end && (
+            <p className="mt-1.5 text-[11px] font-semibold text-rose-600">
+              {validation.end}
+            </p>
+          )}
         </div>
       </div>
 
@@ -838,10 +1181,18 @@ function StepBudget({
         <input
           type="checkbox"
           checked={runContinuously}
+          // A total budget has to have an end date for Meta to pace it, so
+          // "run continuously" simply isn't a valid combination here.
+          disabled={budgetType === "lifetime"}
           onChange={(e) => setRunContinuously(e.target.checked)}
-          className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+          className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary disabled:opacity-40"
         />
         Run continuously
+        {budgetType === "lifetime" && (
+          <span className="text-xs font-normal text-slate-400">
+            (not available with a total budget)
+          </span>
+        )}
       </label>
 
       <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/[0.06] via-purple-500/[0.04] to-pink-500/[0.04] p-4 ring-1 ring-inset ring-primary/15">
@@ -924,6 +1275,7 @@ function StepReview({
     selectedPlatforms.includes(p.id)
   );
   const objMeta = OBJECTIVES.find((o) => o.id === objective);
+  const hasMeta = selectedPlatforms.includes("META");
 
   const impressionsLow = reachLow * 4;
   const impressionsHigh = reachHigh * 5;
@@ -935,7 +1287,9 @@ function StepReview({
           Review your campaign
         </h3>
         <p className="text-sm text-slate-500">
-          Looks good? Launch it, or save as a draft to come back later.
+          {hasMeta
+            ? "Next you'll add the image and wording, then publish. Nothing goes live and nothing is charged until you do."
+            : "This saves as a draft you can edit any time."}
         </p>
       </div>
 

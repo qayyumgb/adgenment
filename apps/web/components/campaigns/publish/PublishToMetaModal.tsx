@@ -23,6 +23,7 @@ import {
   Sparkles,
   Plus,
   Minus,
+  ExternalLink,
 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
@@ -38,6 +39,7 @@ import type {
   MetaGeoLocation,
   MetaCallToAction,
   MetaTargetingSpec,
+  MetaPixel,
   PublishCampaignPayload,
   PublishCampaignResult,
   Creative,
@@ -134,6 +136,38 @@ interface WizardState {
   uploadFile: File | null;
 }
 
+/* ──────────────────────────────────────────────────────────────────── */
+/* Copy limits                                                          */
+/* ──────────────────────────────────────────────────────────────────── */
+
+/**
+ * Meta's hard caps, and the soft "start warning here" points.
+ *
+ * The warning thresholds sit BELOW the hard caps on purpose: Meta truncates
+ * with an ellipsis well before the field limit on most placements, so an ad
+ * that fits the cap can still read as cut off in the feed. Warning at 38/120
+ * gives the user room to land the sentence instead of discovering the problem
+ * in a live ad.
+ */
+const COPY_LIMITS = {
+  headline: { warn: 38, max: 40 },
+  message: { warn: 120, max: 2200 },
+  description: { warn: 28, max: 120 },
+} as const;
+
+/** Is this something Meta will accept as a destination? Mirrors the identical
+ *  server-side check so the user is corrected before they hit Publish. */
+function isValidDestinationUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  return url.hostname.includes(".") && !url.hostname.endsWith(".");
+}
+
 /** Where the ad runs. Maps to Meta's publisher_platforms + positions
  *  arrays at submit time. "all" defers to Meta's Advantage+ placements
  *  recommendation, which is what 95% of advertisers should use unless they
@@ -217,47 +251,68 @@ const CTA_OPTIONS: { value: MetaCallToAction; label: string }[] = [
   { value: "ORDER_NOW", label: "Order Now" },
 ];
 
-const OBJECTIVE_META: Record<string, { meta: string; description: string }> = {
+/**
+ * How each stored objective maps onto Meta, in plain English.
+ *
+ * `needsPixel` mirrors the server's `optimizationFor()` — those objectives
+ * optimize against the Meta Pixel and Meta rejects the ad set without one, so
+ * the wizard warns here rather than letting the user reach Publish and fail.
+ */
+const OBJECTIVE_META: Record<
+  string,
+  { meta: string; label: string; description: string; needsPixel?: boolean }
+> = {
   conversions: {
     meta: "OUTCOME_SALES",
+    label: "Sales",
     description:
-      "Drives purchases / sign-ups. Meta optimizes for offsite conversions tracked via your Meta Pixel.",
+      "Meta hunts for people likely to actually buy, learning from who has purchased before. Needs your Meta Pixel installed and recording purchases — that's how it knows what a buyer looks like.",
+    needsPixel: true,
   },
   sales: {
     meta: "OUTCOME_SALES",
-    description: "Drives purchases. Same as Conversions in our model.",
+    label: "Sales",
+    description:
+      "Meta hunts for people likely to actually buy. Needs your Meta Pixel installed and recording purchases.",
+    needsPixel: true,
   },
   awareness: {
     meta: "OUTCOME_AWARENESS",
+    label: "Awareness",
     description:
-      "Optimizes for reach — getting your ad in front of as many unique people as possible. Cheapest objective.",
+      "Meta shows your ad to as many different people as your budget allows. The cheapest way to be seen — judge it on how many people you reached, not on sales.",
   },
   traffic: {
     meta: "OUTCOME_TRAFFIC",
+    label: "Website Visits",
     description:
-      "Optimizes for clicks to your destination URL. Good for blog posts, product pages, sign-up flows.",
+      "Meta finds the people most likely to click through to your site. Works without any tracking set up, which makes it the safest place to start.",
   },
   leads: {
     meta: "OUTCOME_LEADS",
+    label: "Leads",
     description:
-      "Optimizes for lead form completions. Best when paired with Meta Lead Forms.",
-  },
-  engagement: {
-    meta: "OUTCOME_ENGAGEMENT",
-    description:
-      "Optimizes for likes, comments, shares, video views. Good for social proof.",
-  },
-  "video views": {
-    meta: "OUTCOME_ENGAGEMENT",
-    description: "Optimizes for video plays. Awareness alternative.",
-  },
-  "catalog sales": {
-    meta: "OUTCOME_SALES",
-    description: "Dynamic product ads from your catalog.",
+      "Meta looks for people likely to fill in your form, not just click. Needs the Meta Pixel on your site so Meta can see which visits turned into enquiries.",
+    needsPixel: true,
   },
   "lead generation": {
     meta: "OUTCOME_LEADS",
-    description: "Lead form completions.",
+    label: "Leads",
+    description:
+      "Meta looks for people likely to fill in your form, not just click. Needs the Meta Pixel on your site so Meta can see which visits turned into enquiries.",
+    needsPixel: true,
+  },
+  engagement: {
+    meta: "OUTCOME_ENGAGEMENT",
+    label: "Engagement",
+    description:
+      "Meta optimizes for likes, comments, shares and video views. Builds social proof on the post and warms up an audience you can retarget later.",
+  },
+  "video views": {
+    meta: "OUTCOME_ENGAGEMENT",
+    label: "Engagement",
+    description:
+      "Meta optimizes for people who watch and react. Good for building an audience, not for selling something today.",
   },
 };
 
@@ -276,6 +331,10 @@ export default function PublishToMetaModal({
   const [state, setState] = useState<WizardState>(() => initialState(campaign));
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Set once the publish succeeds. The modal switches to a success screen
+  // instead of vanishing — closing instantly gave no confirmation that
+  // anything reached Meta, and no route to go look at it.
+  const [published, setPublished] = useState<PublishCampaignResult | null>(null);
 
   // Reset when the modal closes or campaign changes
   useEffect(() => {
@@ -285,6 +344,7 @@ export default function PublishToMetaModal({
         setState(initialState(campaign));
         setSubmitting(false);
         setSubmitError(null);
+        setPublished(null);
       }, 250);
       return () => clearTimeout(t);
     }
@@ -312,16 +372,19 @@ export default function PublishToMetaModal({
       case 3:
         return true; // schedule is locked from the campaign
       case 4: {
-        if (!state.message.trim() || !state.linkUrl.trim()) return false;
-        // Need at least one resolvable asset — image, video, carousel,
-        // or library reference (which expands to one of those).
+        if (!state.message.trim()) return false;
+        // A malformed URL is rejected by Meta with a generic error, so gate on
+        // it here rather than letting the user reach Publish and fail.
+        if (!isValidDestinationUrl(state.linkUrl)) return false;
+        // Need a real asset. A library creative with no media resolves to
+        // nothing at publish time, so `libraryCreativeId` alone is NOT enough
+        // — that let users through to a publish that always failed.
         return Boolean(
           state.imageHash ||
             state.imageUrl ||
             state.videoId ||
             state.videoUrl ||
-            state.carouselCards.length >= 2 ||
-            state.libraryCreativeId
+            state.carouselCards.length >= 2
         );
       }
       case 5:
@@ -449,11 +512,17 @@ export default function PublishToMetaModal({
         targeting,
         creative,
       });
-      toast.success("Campaign published to Meta — Paused until you launch");
+      toast.success("Published to Meta — paused until you start it");
+      // Show the success screen rather than closing. `onPublished` refreshes
+      // the page behind the modal so the campaign shows its new state the
+      // moment the user dismisses it.
+      setPublished(result);
       onPublished(result);
-      onClose();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Publish failed";
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Publishing failed. Nothing was created on Meta — try again.";
       setSubmitError(msg);
     } finally {
       setSubmitting(false);
@@ -468,6 +537,13 @@ export default function PublishToMetaModal({
       }}
     >
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+      {published ? (
+        <PublishSuccess
+          campaign={campaign}
+          result={published}
+          onClose={onClose}
+        />
+      ) : (
       <div className="relative z-10 flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-7 py-4">
@@ -532,7 +608,11 @@ export default function PublishToMetaModal({
           {step === 2 && <Step3Audience state={state} patch={patch} />}
           {step === 3 && <Step4Schedule campaign={campaign} />}
           {step === 4 && (
-            <Step5Creative state={state} patch={patch} />
+            <Step5Creative
+              state={state}
+              patch={patch}
+              pageName={state.pageName}
+            />
           )}
           {step === 5 && (
             <Step6Review campaign={campaign} state={state} />
@@ -572,25 +652,102 @@ export default function PublishToMetaModal({
               <ChevronRight className="h-4 w-4" />
             </button>
           ) : (
+            // The final action of the whole wizard — sized and coloured to be
+            // unmistakably the thing to click.
             <button
               type="button"
               disabled={submitting}
               onClick={handleSubmit}
-              className="btn-brand disabled:pointer-events-none disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-7 py-3.5 text-base font-bold text-white shadow-lg shadow-indigo-500/25 transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-indigo-500/30 disabled:pointer-events-none disabled:opacity-60"
             >
               {submitting ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-5 w-5 animate-spin" />
                   Publishing to Meta…
                 </>
               ) : (
                 <>
-                  <Rocket className="h-4 w-4" strokeWidth={2.5} />
+                  <Rocket className="h-5 w-5" strokeWidth={2.5} />
                   Publish to Meta
                 </>
               )}
             </button>
           )}
+        </div>
+      </div>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────── */
+/* Success screen                                                        */
+/* ──────────────────────────────────────────────────────────────────── */
+
+/**
+ * What the user sees the moment the ad reaches Meta. Three jobs: confirm it
+ * worked, make absolutely clear it is NOT spending yet, and give a way to go
+ * see it on Meta's side.
+ */
+function PublishSuccess({
+  campaign,
+  result,
+  onClose,
+}: {
+  campaign: Campaign;
+  result: PublishCampaignResult;
+  onClose: () => void;
+}) {
+  const accountId = campaign.adAccount?.accountId;
+  const adsManagerUrl = accountId
+    ? `https://business.facebook.com/adsmanager/manage/campaigns?act=${accountId}&selected_campaign_ids=${result.meta.campaignId}`
+    : "https://business.facebook.com/adsmanager";
+
+  return (
+    <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <div className="px-8 pb-6 pt-9 text-center">
+        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/25">
+          <Check className="h-8 w-8" strokeWidth={3} />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900">
+          Your ad is on Meta
+        </h2>
+        <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-slate-500">
+          <strong className="text-slate-700">{campaign.name}</strong> was
+          created in your ad account, along with its ad set and creative.
+        </p>
+
+        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-left">
+          <div className="flex items-start gap-2.5">
+            <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-400 text-[11px] font-bold text-white">
+              !
+            </div>
+            <div className="text-xs leading-relaxed text-amber-900">
+              <strong>It is paused, and it is not spending anything.</strong>{" "}
+              Nothing is charged until you start it. Review it here or in Ads
+              Manager, then hit <strong>Resume</strong> on the campaign when
+              you&apos;re happy with it.
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <a
+            href={adsManagerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877F2] px-5 py-3 text-sm font-bold text-white shadow-md transition hover:bg-[#1565d8]"
+          >
+            Open in Facebook Ads Manager
+            <ExternalLink className="h-4 w-4" />
+          </a>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Back to the campaign
+          </button>
         </div>
       </div>
     </div>
@@ -746,18 +903,34 @@ function Step2Objective({ campaign }: { campaign: Campaign }) {
     OBJECTIVE_META[key] ??
     OBJECTIVE_META[key.replace(/[^a-z\s]/g, "")] ?? {
       meta: "OUTCOME_TRAFFIC",
+      label: "Website Visits",
       description:
-        "Defaulted to Traffic. To change, edit the campaign's objective before publishing.",
+        "We'll run this as a Website Visits campaign. To change it, edit the objective in the campaign's Settings tab before publishing.",
     };
+
+  // Conversion objectives are rejected by Meta without a pixel. Checking on
+  // THIS step means the user can go fix it (or change objective) before
+  // spending five more minutes writing copy.
+  const pixelsQ = useApi<MetaPixel[]>(
+    (c) => (meta.needsPixel ? c.getMetaPixels() : Promise.resolve([])),
+    [meta.needsPixel]
+  );
+  const pixels = pixelsQ.data ?? [];
+  const pixelMissing =
+    Boolean(meta.needsPixel) && !pixelsQ.loading && !pixelsQ.error && pixels.length === 0;
+  const pixelNeverFired =
+    Boolean(meta.needsPixel) &&
+    pixels.length > 0 &&
+    pixels.every((p) => p.lastFiredTime === null);
 
   return (
     <div>
       <h3 className="mb-1 text-xl font-bold text-slate-900">
-        Objective
+        What this campaign is optimizing for
       </h3>
       <p className="mb-5 text-sm text-slate-500">
-        This is locked to what you set on the campaign. To change it, go back to
-        the campaign settings tab.
+        Locked to what you chose when you created the campaign. To change it,
+        edit the campaign&apos;s Settings tab.
       </p>
 
       <div className="rounded-2xl border-2 border-primary/30 bg-primary/[0.04] p-5">
@@ -767,18 +940,66 @@ function Step2Objective({ campaign }: { campaign: Campaign }) {
           </div>
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-primary">
-              Your Objective
+              Your objective
             </div>
-            <div className="text-lg font-bold text-slate-900">
-              {campaign.objective}
-            </div>
-            <div className="text-[11px] font-mono text-slate-500">
-              Meta: {meta.meta}
+            <div className="text-lg font-bold text-slate-900">{meta.label}</div>
+            <div className="text-[11px] text-slate-500">
+              Stored as &ldquo;{campaign.objective}&rdquo;
             </div>
           </div>
         </div>
-        <p className="mt-3 text-sm text-slate-600">{meta.description}</p>
+        <p className="mt-3 text-sm leading-relaxed text-slate-600">
+          {meta.description}
+        </p>
       </div>
+
+      {meta.needsPixel && pixelsQ.loading && (
+        <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Checking your Meta Pixel…
+        </div>
+      )}
+
+      {pixelMissing && (
+        <div className="mt-3 rounded-xl border-l-4 border-l-rose-500 border border-rose-200 bg-rose-50/70 p-4">
+          <p className="text-sm font-bold text-rose-900">
+            You need a Meta Pixel before this can publish
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-rose-800">
+            A {meta.label} campaign tells Meta to find people who convert — it
+            can only do that if the pixel on your website reports back. We
+            couldn&apos;t find one on this ad account, so publishing will be
+            blocked.
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-rose-800">
+            <strong>Two ways forward:</strong> set the pixel up in Meta Events
+            Manager and install it on your site, or change this campaign&apos;s
+            objective to <strong>Website Visits</strong>, which works right now.
+          </p>
+          <a
+            href="https://business.facebook.com/events_manager2"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-rose-700"
+          >
+            Open Meta Events Manager
+          </a>
+        </div>
+      )}
+
+      {pixelNeverFired && (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+          <p className="text-sm font-bold text-amber-900">
+            Your pixel hasn&apos;t recorded anything yet
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-amber-900">
+            The pixel exists so this will publish, but it has never received an
+            event — which usually means it isn&apos;t installed on your site
+            yet. Until it is, Meta has nothing to learn from and delivery will
+            be slow and expensive.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -1034,12 +1255,28 @@ function Step4Schedule({ campaign }: { campaign: Campaign }) {
 function Step5Creative({
   state,
   patch,
+  pageName,
 }: {
   state: WizardState;
   patch: (u: Partial<WizardState>) => void;
+  /** For the live preview's sender identity. */
+  pageName: string;
 }) {
   const api = useApiClient();
   const fileRef = useRef<HTMLInputElement | null>(null);
+
+  // "https://" is the seeded placeholder, so don't flag it as an error before
+  // the user has typed anything real — only complain once they've engaged.
+  const urlValid = isValidDestinationUrl(state.linkUrl);
+  const urlTouched = state.linkUrl.trim() !== "" && state.linkUrl.trim() !== "https://";
+
+  const hasAsset = Boolean(
+    state.imageHash ||
+      state.imageUrl ||
+      state.videoId ||
+      state.videoUrl ||
+      state.carouselCards.length >= 2
+  );
   // Fetch IMAGE, VIDEO, and CAROUSEL creatives. We make three calls and
   // merge — the /creatives endpoint accepts a single `type` filter, so
   // this is the simplest path until we add multi-type filtering on the
@@ -1433,20 +1670,39 @@ function Step5Creative({
       {/* Copy fields */}
       <div className="space-y-3 border-t border-slate-100 pt-4">
         <div>
-          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+          <label
+            htmlFor="ad-message"
+            className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500"
+          >
             Body copy (required)
           </label>
           <textarea
+            id="ad-message"
             value={state.message}
             onChange={(e) => patch({ message: e.target.value })}
             rows={3}
-            maxLength={2200}
+            maxLength={COPY_LIMITS.message.max}
+            aria-invalid={!state.message.trim()}
             placeholder="The main text people see above the image. Speak to your audience's pain or aspiration."
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm transition focus:border-primary focus:outline-none"
+            className={clsx(
+              "w-full rounded-xl border px-3 py-2 text-sm transition focus:outline-none",
+              !state.message.trim()
+                ? "border-slate-200 focus:border-primary"
+                : state.message.length > COPY_LIMITS.message.warn
+                  ? "border-amber-300 focus:border-amber-400"
+                  : "border-slate-200 focus:border-primary"
+            )}
           />
-          <div className="mt-1 text-right text-[11px] text-slate-400">
-            {state.message.length}/2200
-          </div>
+          <CharCounter
+            value={state.message}
+            warn={COPY_LIMITS.message.warn}
+            max={COPY_LIMITS.message.max}
+            hint={
+              state.message.length > COPY_LIMITS.message.warn
+                ? "Feed cuts off around 120 characters — the rest hides behind “See more”."
+                : "The first line is what most people read. Lead with the benefit."
+            }
+          />
           <VariantChips
             variants={state.messageVariants}
             currentValue={state.message}
@@ -1455,20 +1711,36 @@ function Step5Creative({
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+          <label
+            htmlFor="ad-headline"
+            className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500"
+          >
             Headline
           </label>
           <input
+            id="ad-headline"
             type="text"
             value={state.headline}
             onChange={(e) => patch({ headline: e.target.value })}
-            maxLength={40}
+            maxLength={COPY_LIMITS.headline.max}
             placeholder="Short bold headline (shows below image)"
-            className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
+            className={clsx(
+              "h-11 w-full rounded-xl border px-3 text-sm transition focus:outline-none",
+              state.headline.length > COPY_LIMITS.headline.warn
+                ? "border-amber-300 focus:border-amber-400"
+                : "border-slate-200 focus:border-primary"
+            )}
           />
-          <div className="mt-1 text-right text-[11px] text-slate-400">
-            {state.headline.length}/40
-          </div>
+          <CharCounter
+            value={state.headline}
+            warn={COPY_LIMITS.headline.warn}
+            max={COPY_LIMITS.headline.max}
+            hint={
+              state.headline.length > COPY_LIMITS.headline.warn
+                ? "Getting long — Meta may trim this on smaller screens."
+                : undefined
+            }
+          />
           <VariantChips
             variants={state.headlineVariants}
             currentValue={state.headline}
@@ -1477,16 +1749,35 @@ function Step5Creative({
         </div>
 
         <div>
-          <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+          <label
+            htmlFor="ad-description"
+            className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500"
+          >
             Link description (optional)
           </label>
           <input
+            id="ad-description"
             type="text"
             value={state.description}
             onChange={(e) => patch({ description: e.target.value })}
-            maxLength={120}
+            maxLength={COPY_LIMITS.description.max}
             placeholder="Subtitle below headline"
-            className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
+            className={clsx(
+              "h-11 w-full rounded-xl border px-3 text-sm transition focus:outline-none",
+              state.description.length > COPY_LIMITS.description.warn
+                ? "border-amber-300 focus:border-amber-400"
+                : "border-slate-200 focus:border-primary"
+            )}
+          />
+          <CharCounter
+            value={state.description}
+            warn={COPY_LIMITS.description.warn}
+            max={COPY_LIMITS.description.max}
+            hint={
+              state.description.length > COPY_LIMITS.description.warn
+                ? "Most placements only show the first ~28 characters."
+                : undefined
+            }
           />
           <VariantChips
             variants={state.descriptionVariants}
@@ -1497,16 +1788,32 @@ function Step5Creative({
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
+            <label
+              htmlFor="ad-link"
+              className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500"
+            >
               Destination URL (required)
             </label>
             <input
+              id="ad-link"
               type="url"
               value={state.linkUrl}
               onChange={(e) => patch({ linkUrl: e.target.value })}
+              aria-invalid={!urlValid}
               placeholder="https://your-site.com/landing"
-              className="h-11 w-full rounded-xl border border-slate-200 px-3 text-sm transition focus:border-primary focus:outline-none"
+              className={clsx(
+                "h-11 w-full rounded-xl border px-3 text-sm transition focus:outline-none",
+                urlTouched && !urlValid
+                  ? "border-rose-300 focus:border-rose-400"
+                  : "border-slate-200 focus:border-primary"
+              )}
             />
+            {urlTouched && !urlValid && (
+              <p className="mt-1 text-[11px] font-semibold text-rose-600">
+                Enter the full web address people should land on, starting with
+                https://
+              </p>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -1544,6 +1851,53 @@ function Step5Creative({
           />
         )}
       </div>
+
+      {/* Live preview — updates as they type. Seeing the real thing while
+          writing it is what stops a headline getting truncated or an image
+          getting cropped badly, so it belongs HERE, not only on Review. */}
+      <div className="border-t border-slate-100 pt-4">
+        <div className="mb-2 flex items-center gap-1.5">
+          <Eye className="h-3.5 w-3.5 text-primary" strokeWidth={2.5} />
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+            Live preview
+          </span>
+        </div>
+        {hasAsset ? (
+          <MetaAdPreview
+            pageName={pageName || "Your Page"}
+            imageUrl={state.imageUrl}
+            videoUrl={state.creativeType === "VIDEO" ? state.videoUrl : null}
+            videoThumbnailUrl={
+              state.creativeType === "VIDEO" ? state.thumbnailUrl : null
+            }
+            videoId={state.creativeType === "VIDEO" ? state.videoId : null}
+            carouselCards={
+              state.creativeType === "CAROUSEL" ? state.carouselCards : null
+            }
+            message={state.message}
+            headline={state.headline}
+            description={state.description}
+            linkUrl={state.linkUrl}
+            callToAction={
+              CTA_OPTIONS.find((c) => c.value === state.callToAction)?.label ??
+              state.callToAction
+            }
+            initialPlacement={
+              state.placement === "reels_stories" ? "reels" : "facebook"
+            }
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/70 px-6 py-10 text-center">
+            <ImageIcon className="mb-2 h-6 w-6 text-slate-300" />
+            <p className="text-sm font-semibold text-slate-600">
+              Add an image or video to see your ad
+            </p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Pick one from your library, upload a new one, or paste a URL above.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1568,8 +1922,21 @@ function Step6Review({
           Review &amp; publish
         </h3>
         <p className="text-sm text-slate-500">
-          One last look. The campaign goes live on Meta as <strong>PAUSED</strong>{" "}
-          — you control when it starts spending.
+          One last look before this goes to Meta.
+        </p>
+      </div>
+
+      {/* The single most important thing to understand before clicking the
+          button: publishing does not start spending. */}
+      <div className="rounded-xl border-l-4 border-l-emerald-500 border border-emerald-200 bg-emerald-50/70 p-4">
+        <p className="text-sm font-bold text-emerald-900">
+          Publishing does not start spending
+        </p>
+        <p className="mt-1 text-xs leading-relaxed text-emerald-800">
+          We create the campaign on Meta <strong>paused</strong>. Nothing is
+          charged and no one sees the ad until you press <strong>Resume</strong>{" "}
+          on the campaign page. You&apos;ll get a link to review it in Facebook
+          Ads Manager first.
         </p>
       </div>
 
@@ -1755,6 +2122,51 @@ function InfoCard({ label, value }: { label: string; value: string }) {
         {label}
       </div>
       <div className="mt-0.5 text-sm font-bold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+/**
+ * Character counter that turns amber as the text approaches the point where
+ * Meta starts truncating, and red once past it. A plain "n/max" counter tells
+ * the user nothing until they hit a wall they didn't know was there.
+ */
+function CharCounter({
+  value,
+  warn,
+  max,
+  hint,
+}: {
+  value: string;
+  warn: number;
+  max: number;
+  hint?: string;
+}) {
+  const len = value.length;
+  const over = len > warn;
+  const atLimit = len >= max;
+  return (
+    <div className="mt-1 flex items-start justify-between gap-3">
+      <span
+        className={clsx(
+          "text-[11px] leading-snug",
+          over ? "font-semibold text-amber-600" : "text-slate-400"
+        )}
+      >
+        {over && hint ? hint : hint && !over ? hint : ""}
+      </span>
+      <span
+        className={clsx(
+          "shrink-0 text-[11px] font-semibold tabular-nums",
+          atLimit
+            ? "text-rose-600"
+            : over
+              ? "text-amber-600"
+              : "text-slate-400"
+        )}
+      >
+        {len}/{max}
+      </span>
     </div>
   );
 }

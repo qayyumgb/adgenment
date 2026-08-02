@@ -1,6 +1,10 @@
 import { Router, Request, Response, NextFunction } from "express";
 import multer from "multer";
-import { aiService } from "../services/ai.service";
+import {
+  aiService,
+  type ChatTurn,
+  type PlannerContext,
+} from "../services/ai.service";
 import { openaiImageService } from "../services/openai-image.service";
 import { metaService, type MetaTargeting } from "../services/meta.service";
 import { requireAuth } from "../middleware/auth";
@@ -62,37 +66,184 @@ router.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", model: MODEL });
 });
 
-router.post("/plan-campaign", async (req: Request, res: Response) => {
-  const { prompt } = req.body ?? {};
+/** Longest conversation we replay to the model. Well past a normal planning
+ *  session; a guard against an unbounded transcript blowing up the request. */
+const PLANNER_MAX_TURNS = 40;
+const PLANNER_MAX_CHARS = 4000;
 
-  if (typeof prompt !== "string" || prompt.trim().length < 10) {
-    return res.status(400).json({
-      error: "Prompt must be at least 10 characters.",
-    });
-  }
-  if (prompt.length > 1000) {
-    return res.status(400).json({
-      error: "Prompt must be at most 1000 characters.",
-    });
+/**
+ * Build the account facts the planner needs to give currency-correct, honest
+ * advice. All best-effort — a workspace with nothing connected still gets a
+ * plan, it just says so.
+ */
+async function loadPlannerContext(workspaceId: string): Promise<PlannerContext> {
+  const accounts = await prisma.adAccount.findMany({
+    where: { workspaceId, isActive: true },
+    select: {
+      platform: true,
+      currency: true,
+      minDailyBudget: true,
+      accountId: true,
+      accessToken: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const meta = accounts.find((a) => a.platform === "META");
+  const primary = meta ?? accounts[0];
+
+  // Whether a pixel exists decides if we may recommend Sales / Leads at all.
+  // Never let this fail the request — an unknown pixel state is fine, the
+  // prompt handles `undefined` by staying quiet about it.
+  let hasPixel: boolean | undefined;
+  if (meta) {
+    try {
+      const pixels = await metaService.getPixels(
+        metaService.decryptToken(meta.accessToken),
+        meta.accountId
+      );
+      hasPixel = pixels.length > 0;
+    } catch {
+      hasPixel = undefined;
+    }
   }
 
-  try {
-    const { json, tokensUsed } = await aiService.planCampaign(prompt);
-    const plan = JSON.parse(json);
-    return res.json({ success: true, plan, tokensUsed });
-  } catch (err) {
-    const code = err instanceof Error ? err.message : "AI_API_ERROR";
-    if (code === "AI_PARSE_ERROR") {
-      return res.status(500).json({
-        error:
-          "AI returned an unexpected response. Try rephrasing your prompt.",
+  return {
+    currency: primary?.currency ?? null,
+    minDailyBudget: primary?.minDailyBudget ?? null,
+    connectedPlatforms: [...new Set(accounts.map((a) => a.platform))],
+    hasPixel,
+  };
+}
+
+/** Coerce the request body into a validated turn list. Accepts both the new
+ *  `{ messages }` shape and the legacy `{ prompt }` single-shot shape. */
+function parsePlannerTurns(body: unknown): ChatTurn[] | { error: string } {
+  const b = (body ?? {}) as { messages?: unknown; prompt?: unknown };
+
+  if (Array.isArray(b.messages)) {
+    const turns: ChatTurn[] = [];
+    for (const raw of b.messages) {
+      const m = (raw ?? {}) as { role?: unknown; content?: unknown };
+      if (m.role !== "user" && m.role !== "assistant") {
+        return { error: "Each message needs a role of 'user' or 'assistant'." };
+      }
+      if (typeof m.content !== "string" || !m.content.trim()) continue;
+      turns.push({
+        role: m.role,
+        content: m.content.trim().slice(0, PLANNER_MAX_CHARS),
       });
     }
-    return res.status(500).json({
-      error: "AI service is temporarily unavailable. Please try again.",
-    });
+    if (turns.length === 0) {
+      return { error: "Tell me about your business and what you want to achieve." };
+    }
+    // Trim to the window FIRST, then drop any leading assistant turns — the
+    // Messages API requires the conversation to open on a user turn, and
+    // slicing a long transcript can easily land mid-exchange on an assistant
+    // reply.
+    const windowed = turns.slice(-PLANNER_MAX_TURNS);
+    while (windowed.length > 0 && windowed[0].role === "assistant") {
+      windowed.shift();
+    }
+    if (windowed.length === 0 || windowed[windowed.length - 1].role !== "user") {
+      return { error: "The last message must come from you." };
+    }
+    return windowed;
   }
-});
+
+  if (typeof b.prompt === "string") {
+    const prompt = b.prompt.trim();
+    if (prompt.length < 10) {
+      return { error: "Tell me a bit more — at least a sentence about your business and goal." };
+    }
+    return [{ role: "user", content: prompt.slice(0, PLANNER_MAX_CHARS) }];
+  }
+
+  return { error: "Tell me about your business and what you want to achieve." };
+}
+
+/**
+ * POST /ai/plan-campaign — the conversational AI media buyer.
+ *
+ * Body: `{ messages: [{ role, content }, ...] }` (whole transcript, replayed
+ * each turn so the model keeps full context) or legacy `{ prompt }`.
+ *
+ * Returns either:
+ *   `{ mode: "clarify", reply, questions }` — needs more information, or
+ *   `{ mode: "plan",    reply, plan }`      — the full campaign plan.
+ */
+router.post(
+  "/plan-campaign",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const workspace = await requireWorkspace(req.dbUserId!);
+
+      const parsed = parsePlannerTurns(req.body);
+      if (!Array.isArray(parsed)) {
+        return res.status(400).json({ error: parsed.error });
+      }
+
+      const context = await loadPlannerContext(workspace.id);
+
+      let payload: {
+        mode?: unknown;
+        reply?: unknown;
+        questions?: unknown;
+        plan?: unknown;
+      };
+      try {
+        const { json } = await aiService.chatPlanner(parsed, context);
+        payload = JSON.parse(json);
+      } catch (err) {
+        const code = err instanceof Error ? err.message : "AI_API_ERROR";
+        if (code === "AI_PARSE_ERROR") {
+          return res.status(502).json({
+            error:
+              "I got tangled up drafting that. Try asking again, or add a bit more detail about your business.",
+          });
+        }
+        return res.status(503).json({
+          error:
+            "The AI planner is temporarily unavailable. Please try again in a moment.",
+        });
+      }
+
+      const reply =
+        typeof payload.reply === "string" && payload.reply.trim()
+          ? payload.reply.trim()
+          : null;
+
+      // A "plan" reply without a plan object is a malformed answer — treat it
+      // as clarify rather than handing the UI an undefined plan to render.
+      if (payload.mode === "plan" && payload.plan && typeof payload.plan === "object") {
+        return res.json({
+          mode: "plan" as const,
+          reply: reply ?? "Here's the plan I'd run for you.",
+          plan: payload.plan,
+          context,
+        });
+      }
+
+      const questions = Array.isArray(payload.questions)
+        ? payload.questions.filter(
+            (q): q is string => typeof q === "string" && q.trim().length > 0
+          )
+        : [];
+
+      return res.json({
+        mode: "clarify" as const,
+        reply:
+          reply ??
+          "Before I put numbers on this, tell me a little more about your business.",
+        questions,
+        context,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 router.post("/generate-copy", async (req: Request, res: Response) => {
   const { brief, platform, objective, kind, cardCount } = req.body ?? {};

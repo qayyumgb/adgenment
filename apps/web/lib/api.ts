@@ -118,6 +118,10 @@ export interface Campaign {
   adAccount?: {
     platform: Platform;
     accountName: string;
+    /** The PLATFORM's account id (Meta's numeric id, no `act_` prefix) — not
+     *  our internal `adAccountId` cuid. Deep links into Ads Manager need this
+     *  one. */
+    accountId?: string;
     currency?: string | null;
     timezone?: string | null;
     minDailyBudget?: number | null;
@@ -351,6 +355,114 @@ export interface GeneratedAudience {
   };
   approxSize: number | null;
 }
+
+/* ───────────────────────────── */
+/* AI Campaign Planner            */
+/* ───────────────────────────── */
+
+/** One turn of the planner conversation. */
+export interface PlannerTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** Real account facts the planner grounded its numbers in. Shown in the UI so
+ *  the user can see the advice is about THEIR account, not a generic one. */
+export interface PlannerContext {
+  currency: string | null;
+  minDailyBudget: number | null;
+  connectedPlatforms: string[];
+  hasPixel?: boolean;
+}
+
+export interface PlanScenario {
+  label: string;
+  detail: string;
+  metric: string;
+}
+
+export interface PlanMistake {
+  title: string;
+  detail: string;
+  fix: string;
+}
+
+export interface CampaignPlan {
+  strategy: {
+    platform: string[];
+    objective: string;
+    duration_days: number;
+    daily_budget?: number;
+    total_budget: number;
+    currency: string;
+    summary: string;
+  };
+  budget_recommendation?: {
+    amount: number;
+    period: string;
+    rationale: string;
+  };
+  budget_allocation: Array<{
+    channel: string;
+    percentage: number;
+    amount: number;
+    rationale: string;
+  }>;
+  target_audience: {
+    age_range: string;
+    genders: string[];
+    interests: string[];
+    locations: string[];
+    behaviors: string[];
+    estimated_reach: string;
+    persona?: string;
+  };
+  ad_formats: Array<{
+    format: string;
+    count: number;
+    placement: string;
+    rationale: string;
+  }>;
+  expected_results: {
+    primary_metric: string;
+    estimated_min: number;
+    estimated_max: number;
+    estimated_reach_min: number;
+    estimated_reach_max: number;
+    estimated_cpl_min: number;
+    estimated_cpl_max: number;
+    confidence: "low" | "medium" | "high";
+  };
+  realistic_expectations?: {
+    assumption: string;
+    best_case: PlanScenario;
+    realistic_case: PlanScenario;
+    worst_case: PlanScenario;
+  };
+  common_mistakes?: PlanMistake[];
+  next_steps?: {
+    first_24h: string[];
+    first_48h: string[];
+    first_7d: string[];
+  };
+  ai_insights: string[];
+  recommended_campaign_name: string;
+}
+
+/** Discriminated union — Alex either asks for more detail or produces a plan. */
+export type PlannerResponse =
+  | {
+      mode: "clarify";
+      reply: string;
+      questions: string[];
+      context: PlannerContext;
+    }
+  | {
+      mode: "plan";
+      reply: string;
+      plan: CampaignPlan;
+      context: PlannerContext;
+    };
 
 export interface ConnectAdAccountInput {
   platform: Platform;
@@ -684,7 +796,22 @@ export function useApiClient() {
         accounts: number;
         campaignsSynced: number;
         metricsSynced: number;
+        /** Per-account failures. Present (possibly empty) on partial success —
+         *  one bad account no longer aborts the whole run. */
+        errors?: Array<{ accountName: string; message: string }>;
       }>("/meta/sync", { method: "POST" }),
+    /** Meta Pixels on the connected ad account. Empty = conversion objectives
+     *  (Sales / Leads) can't be published yet. */
+    getMetaPixels: () => apiFetch<MetaPixel[]>("/meta/pixels"),
+    /**
+     * Talk to Alex, the AI media buyer. Send the WHOLE transcript every turn —
+     * that's what lets the reply reference what the user said earlier.
+     */
+    planCampaign: (messages: PlannerTurn[]) =>
+      apiFetch<PlannerResponse>("/ai/plan-campaign", {
+        method: "POST",
+        body: JSON.stringify({ messages }),
+      }),
     getMetaCustomAudiences: () =>
       apiFetch<MetaCustomAudience[]>("/meta/custom-audiences"),
     getMetaSavedAudiences: () =>
@@ -874,6 +1001,14 @@ export interface MetaPage {
   name: string;
   category?: string;
   pictureUrl?: string;
+}
+
+export interface MetaPixel {
+  id: string;
+  name: string;
+  /** Null = the pixel exists but has never received an event, i.e. it isn't
+   *  installed on the site yet. */
+  lastFiredTime: string | null;
 }
 
 export interface MetaCustomAudience {

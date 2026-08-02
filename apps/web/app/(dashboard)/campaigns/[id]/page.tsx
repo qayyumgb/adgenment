@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import toast from "react-hot-toast";
 import {
@@ -112,6 +112,11 @@ function fmtCompact(n: number): string {
 export default function CampaignDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
+  const searchParams = useSearchParams();
+  // `?publish=1` is how the create wizard hands off — the user pressed
+  // "Create & Add Creative", so drop them straight into the publish flow
+  // instead of on a detail page they'd have to find the button on.
+  const autoPublish = searchParams.get("publish") === "1";
 
   const campaignQ = useApi<Campaign>(
     (client) => client.getCampaign(id),
@@ -171,6 +176,7 @@ export default function CampaignDetailPage() {
       setTab={setTab}
       menuOpen={menuOpen}
       setMenuOpen={setMenuOpen}
+      autoPublish={autoPublish}
     />
   );
 }
@@ -203,6 +209,7 @@ function CampaignDetail({
   setTab,
   menuOpen,
   setMenuOpen,
+  autoPublish,
 }: {
   campaign: Campaign;
   metrics: CampaignMetric[];
@@ -212,6 +219,7 @@ function CampaignDetail({
   setTab: (t: Tab) => void;
   menuOpen: boolean;
   setMenuOpen: (b: boolean) => void;
+  autoPublish: boolean;
 }) {
   const router = useRouter();
   const api = useApiClient();
@@ -252,6 +260,22 @@ function CampaignDetail({
   const [publishOpen, setPublishOpen] = useState(false);
   const isPublishedToMeta = c.platform === "META" && Boolean(c.externalId);
   const canPublish = c.platform === "META" && !c.externalId;
+  // Ads Manager keys off Meta's OWN numeric account id (act_<digits>), not our
+  // internal adAccountId cuid — the old link built from the cuid always landed
+  // on an "account not found" page.
+  const adsManagerUrl =
+    isPublishedToMeta && c.adAccount?.accountId
+      ? `https://business.facebook.com/adsmanager/manage/campaigns?act=${c.adAccount.accountId}&selected_campaign_ids=${c.externalId}`
+      : null;
+
+  // Open the publish wizard automatically when we arrived via ?publish=1, and
+  // strip the param so a refresh (or a back-nav) doesn't reopen it.
+  useEffect(() => {
+    if (autoPublish && canPublish) {
+      setPublishOpen(true);
+      router.replace(`/campaigns/${c.id}`, { scroll: false });
+    }
+  }, [autoPublish, canPublish, c.id, router]);
 
   async function toggleStatus() {
     if (busy) return;
@@ -345,12 +369,12 @@ function CampaignDetail({
                 Publish to Meta
               </button>
             )}
-            {isPublishedToMeta && c.externalId && (
+            {adsManagerUrl && (
               <a
-                href={`https://business.facebook.com/adsmanager/manage/campaigns?act=${c.adAccountId}&selected_campaign_ids=${c.externalId}`}
+                href={adsManagerUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200"
+                className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200 transition hover:bg-emerald-100"
                 title="Open in Facebook Ads Manager"
               >
                 <Sparkles className="h-3 w-3" />
@@ -680,30 +704,73 @@ function OverviewTab({
         )}x is above the 2x benchmark. Consider scaling budget up by 10-20% to capture more demand.`,
       });
     }
+    const cur = campaign.adAccount?.currency;
     const ctr =
       totals.impressions > 0 ? totals.clicks / totals.impressions : 0;
     if (ctr > 0 && ctr < 0.01) {
+      const cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
       out.push({
         icon: AlertTriangle,
         color: "#f59e0b",
         bg: "rgba(245,158,11,0.12)",
         title: "CTR below 1%",
-        body: `Click-through rate is ${(ctr * 100).toFixed(
-          2
-        )}%. Creative refresh recommended — try new headlines or imagery.`,
+        body: `${totals.clicks.toLocaleString()} clicks from ${totals.impressions.toLocaleString()} impressions is ${(
+          ctr * 100
+        ).toFixed(2)}% — under the 1% bar for Meta feed ads${
+          cpc > 0 ? `, at ${fmtMoney(cpc, cur)} per click` : ""
+        }. The creative is the lever here, not the targeting: try a new opening line or a different image.`,
       });
     }
-    const budget = Number(campaign.budget) || 0;
-    if (budget > 0 && totals.spend / budget > 0.9) {
+
+    // Spend with nothing to show for it is the most expensive failure mode a
+    // beginner can sit in, so call it out explicitly rather than leaving them
+    // to infer it from a zero in the ROAS tile.
+    if (totals.spend > 0 && totals.conversions === 0) {
       out.push({
         icon: AlertTriangle,
         color: "#ef4444",
         bg: "rgba(239,68,68,0.12)",
-        title: "Budget nearly depleted",
-        body: `Spent ${fmtMoney(totals.spend, campaign.adAccount?.currency)} of ${fmtMoney(
-          budget,
-          campaign.adAccount?.currency
-        )} budget — consider increasing to maintain delivery.`,
+        title: "Spending but no conversions recorded",
+        body: `${fmtMoney(totals.spend, cur)} spent with 0 conversions tracked over ${
+          metrics.length
+        } day${metrics.length === 1 ? "" : "s"}. Either the offer isn't landing, or the Meta Pixel isn't recording the conversion event — check Events Manager before you change the budget.`,
+      });
+    } else if (totals.conversions > 0 && totals.spend > 0) {
+      const cpa = totals.spend / totals.conversions;
+      out.push({
+        icon: TrendingUp,
+        color: "#0d9488",
+        bg: "rgba(13,148,136,0.12)",
+        title: `Cost per result: ${fmtMoney(cpa, cur)}`,
+        body: `${totals.conversions.toLocaleString()} result${
+          totals.conversions === 1 ? "" : "s"
+        } from ${fmtMoney(totals.spend, cur)}. Decide your ceiling — if a customer is worth more than ${fmtMoney(
+          cpa,
+          cur
+        )} to you, this is working and you can scale it.`,
+      });
+    }
+
+    const budget = Number(campaign.budget) || 0;
+    // Daily budgets are compared to the LATEST day's spend; a lifetime budget
+    // is compared to the running total. Comparing lifetime spend to a daily
+    // budget is what made this warning fire on every healthy campaign.
+    const latestDaySpend = metrics.length > 0 ? Number(metrics[0].spend) || 0 : 0;
+    const pacingSpend =
+      campaign.budgetType === "LIFETIME" ? totals.spend : latestDaySpend;
+    if (budget > 0 && pacingSpend / budget > 0.9) {
+      out.push({
+        icon: AlertTriangle,
+        color: "#ef4444",
+        bg: "rgba(239,68,68,0.12)",
+        title:
+          campaign.budgetType === "LIFETIME"
+            ? "Lifetime budget nearly used up"
+            : "Hitting the daily budget cap",
+        body:
+          campaign.budgetType === "LIFETIME"
+            ? `${fmtMoney(totals.spend, cur)} of the ${fmtMoney(budget, cur)} lifetime budget is gone. Delivery stops when it runs out — raise it or set an end date you're happy with.`
+            : `Yesterday used ${fmtMoney(latestDaySpend, cur)} of the ${fmtMoney(budget, cur)} daily budget. Meta is capping delivery, so there's more demand than you're paying for.`,
       });
     }
     if (out.length === 0) {
@@ -716,20 +783,73 @@ function OverviewTab({
       });
     }
     return out;
-  }, [metrics.length, avgRoas, totals.clicks, totals.impressions, totals.spend, campaign.budget, campaign.adAccount?.currency]);
+  }, [
+    metrics,
+    avgRoas,
+    totals.clicks,
+    totals.impressions,
+    totals.spend,
+    totals.conversions,
+    campaign.budget,
+    campaign.budgetType,
+    campaign.adAccount?.currency,
+  ]);
 
+  // Zero data isn't an error state — a campaign published an hour ago has
+  // nothing to analyse yet. Say that plainly instead of showing an empty
+  // insights panel or a broken chart.
   if (metrics.length === 0) {
+    const published = Boolean(campaign.externalId);
     return (
-      <EmptyState
-        icon={TrendingUp}
-        title="No performance data yet"
-        description="Sync this campaign's platform to pull spend, impressions, clicks, and conversions."
-        action={{
-          label: "Go to Integrations",
-          onClick: () =>
-            (window.location.href = "/settings?tab=integrations"),
-        }}
-      />
+      <div className="space-y-6">
+        <EmptyState
+          icon={TrendingUp}
+          title={
+            published
+              ? "No performance data yet"
+              : "This campaign hasn't run yet"
+          }
+          description={
+            published
+              ? "Meta reports results a few hours after delivery starts. Hit Sync on the Campaigns page once it's been live for a day."
+              : "Publish it to Meta and let it deliver — spend, clicks and conversions will show up here once Meta starts reporting."
+          }
+          action={{
+            label: published ? "Go to Campaigns" : "Go to Integrations",
+            onClick: () =>
+              (window.location.href = published
+                ? "/campaigns"
+                : "/settings?tab=integrations"),
+          }}
+        />
+
+        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-base font-bold text-slate-900">AI Insights</h3>
+            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <Sparkles className="h-2.5 w-2.5" />
+              Waiting for data
+            </span>
+          </div>
+          <div className="flex items-start gap-3 rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Sparkles className="h-4 w-4" strokeWidth={2.25} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-slate-900">
+                Run this campaign for a few days to see AI insights
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-slate-600">
+                Insights are read off this campaign&apos;s own numbers — ROAS,
+                CTR, cost per result and budget pacing. Meta needs roughly
+                48–72 hours of delivery before those figures mean anything, so
+                there&apos;s nothing honest to say about{" "}
+                <strong>{campaign.name}</strong> yet.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 

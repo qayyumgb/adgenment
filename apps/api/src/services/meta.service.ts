@@ -129,6 +129,32 @@ export interface MetaPage {
   accessToken?: string;
 }
 
+export interface MetaPixel {
+  id: string;
+  name: string;
+  /** ISO timestamp of the last event Meta received. Null = never fired, which
+   *  means the pixel exists but isn't installed on the site yet. */
+  lastFiredTime: string | null;
+}
+
+/**
+ * What Meta requires on an ad set for a given campaign objective. Each
+ * `optimization_goal` has a mandatory `promoted_object` shape — getting it
+ * wrong is the single most common publish failure (Meta answers with a bare
+ * "Invalid parameter (code 100)").
+ *
+ *   - "none"  → omit promoted_object entirely
+ *   - "page"  → { page_id }
+ *   - "pixel" → { pixel_id, custom_event_type }
+ */
+export interface MetaOptimizationSpec {
+  optimizationGoal: string;
+  billingEvent: string;
+  promotedObject: "none" | "page" | "pixel";
+  /** Only meaningful when promotedObject === "pixel". */
+  pixelEvent?: "PURCHASE" | "LEAD" | "COMPLETE_REGISTRATION";
+}
+
 export interface MetaCustomAudience {
   id: string;
   name: string;
@@ -581,6 +607,34 @@ class MetaAdsService {
   }
 
   /**
+   * Meta Pixels on the ad account. Conversion objectives (Sales, Leads) can't
+   * be published without one — we resolve it before creating the ad set and
+   * tell the user to install the pixel when the list is empty.
+   *
+   * `lastFiredTime === null` means the pixel object exists but has never
+   * received an event, i.e. it isn't actually installed on the site yet.
+   */
+  async getPixels(
+    accessToken: string,
+    adAccountId: string
+  ): Promise<MetaPixel[]> {
+    const accountPath = this.accountPath(adAccountId);
+    const params = new URLSearchParams({
+      fields: "id,name,last_fired_time",
+      access_token: accessToken,
+      limit: "50",
+    });
+    const data = await this.graphFetch<{
+      data?: Array<{ id: string; name?: string; last_fired_time?: string }>;
+    }>(`${GRAPH_BASE}/${accountPath}/adspixels?${params.toString()}`);
+    return (data.data ?? []).map((p) => ({
+      id: p.id,
+      name: p.name || "Meta Pixel",
+      lastFiredTime: p.last_fired_time ?? null,
+    }));
+  }
+
+  /**
    * Custom audiences (including lookalikes). Filter `subtype === "LOOKALIKE"`
    * client-side to surface lookalikes separately in the wizard UI.
    */
@@ -949,12 +1003,16 @@ class MetaAdsService {
       startTime?: string;
       endTime?: string;
       promotedPageId?: string;
+      /** Required for conversion objectives (Sales / Leads). Resolve it with
+       *  `getPixels` before calling — Meta rejects OFFSITE_CONVERSIONS without
+       *  a promoted_object naming the pixel. */
+      promotedPixelId?: string;
     }
   ): Promise<{ id: string }> {
     const accountPath = this.accountPath(adAccountId);
     // Each campaign objective constrains the valid optimization_goal +
-    // billing_event combos. We pick sensible defaults.
-    const opt = this.optimizationDefaults(params.objective);
+    // billing_event + promoted_object combo.
+    const opt = this.optimizationFor(params.objective);
 
     const body = new URLSearchParams({
       name: params.name,
@@ -977,20 +1035,28 @@ class MetaAdsService {
     }
     if (params.startTime) body.set("start_time", params.startTime);
     if (params.endTime) body.set("end_time", params.endTime);
-    // `promoted_object: { page_id }` is ONLY valid for optimization goals that
-    // promote a Page. For REACH (awareness), LINK_CLICKS (traffic), and
-    // OFFSITE_CONVERSIONS (sales) Meta REJECTS an unexpected page promoted_object
-    // with "Invalid parameter (code 100)" — which broke publishing for those
-    // objectives. Only attach it for the goals that require/accept it.
-    const PAGE_PROMOTED_GOALS = new Set([
-      "PAGE_LIKES",
-      "POST_ENGAGEMENT",
-      "LEAD_GENERATION",
-    ]);
-    if (params.promotedPageId && PAGE_PROMOTED_GOALS.has(opt.optimizationGoal)) {
+
+    // promoted_object must match the optimization goal EXACTLY. Sending a
+    // page_id to a conversion goal — or omitting the pixel from one — is
+    // rejected as a bare "Invalid parameter (code 100)". `optimizationFor`
+    // is the single source of truth for which shape applies.
+    if (opt.promotedObject === "page" && params.promotedPageId) {
       body.set(
         "promoted_object",
         JSON.stringify({ page_id: params.promotedPageId })
+      );
+    } else if (opt.promotedObject === "pixel") {
+      if (!params.promotedPixelId) {
+        throw new Error(
+          `createAdSet: ${params.objective} optimizes for conversions and requires promotedPixelId`
+        );
+      }
+      body.set(
+        "promoted_object",
+        JSON.stringify({
+          pixel_id: params.promotedPixelId,
+          custom_event_type: opt.pixelEvent ?? "PURCHASE",
+        })
       );
     }
 
@@ -1166,6 +1232,21 @@ class MetaAdsService {
    * v18+ for new campaigns.
    */
   mapObjectiveToMeta(objective: string): MetaObjective {
+    // Campaigns imported by sync already carry Meta's own enum. Pass those
+    // straight through — normalizing them alongside our display labels used to
+    // send every one of them to OUTCOME_TRAFFIC.
+    const upper = objective.trim().toUpperCase();
+    if (
+      upper === "OUTCOME_SALES" ||
+      upper === "OUTCOME_AWARENESS" ||
+      upper === "OUTCOME_TRAFFIC" ||
+      upper === "OUTCOME_LEADS" ||
+      upper === "OUTCOME_ENGAGEMENT" ||
+      upper === "OUTCOME_APP_PROMOTION"
+    ) {
+      return upper as MetaObjective;
+    }
+
     const k = objective.toLowerCase().replace(/[^a-z]/g, "");
     switch (k) {
       case "conversions":
@@ -1194,43 +1275,70 @@ class MetaAdsService {
   }
 
   /**
-   * Pick sane optimization_goal + billing_event defaults per objective.
-   * Each combination is from Meta's published valid-pairs matrix. If the
-   * user wants to override later we'd expose this in an advanced sub-step.
+   * Pick the optimization_goal + billing_event + promoted_object shape for an
+   * objective. Every combination here is from Meta's valid-pairs matrix.
+   *
+   * Two mappings are deliberately NOT the "obvious" ones:
+   *
+   *   - OUTCOME_LEADS → OFFSITE_CONVERSIONS (not LEAD_GENERATION). Meta only
+   *     accepts LEAD_GENERATION when the ad points at an on-Meta Instant Form,
+   *     which we don't create. Every lead ad we publish sends traffic to the
+   *     advertiser's own site, so the correct pairing is a pixel-optimized
+   *     conversion ad with custom_event_type LEAD.
+   *   - OUTCOME_APP_PROMOTION → APP_INSTALLS needs a registered app object we
+   *     have no way to collect, so `publishable: false` marks it unsupported
+   *     (see `isPublishableObjective`) and the UI never offers it.
    */
-  private optimizationDefaults(objective: MetaObjective): {
-    optimizationGoal: string;
-    billingEvent: string;
-  } {
+  optimizationFor(objective: MetaObjective): MetaOptimizationSpec {
     switch (objective) {
       case "OUTCOME_SALES":
         return {
           optimizationGoal: "OFFSITE_CONVERSIONS",
           billingEvent: "IMPRESSIONS",
+          promotedObject: "pixel",
+          pixelEvent: "PURCHASE",
+        };
+      case "OUTCOME_LEADS":
+        return {
+          optimizationGoal: "OFFSITE_CONVERSIONS",
+          billingEvent: "IMPRESSIONS",
+          promotedObject: "pixel",
+          pixelEvent: "LEAD",
         };
       case "OUTCOME_AWARENESS":
-        return { optimizationGoal: "REACH", billingEvent: "IMPRESSIONS" };
+        return {
+          optimizationGoal: "REACH",
+          billingEvent: "IMPRESSIONS",
+          promotedObject: "none",
+        };
       case "OUTCOME_TRAFFIC":
         return {
           optimizationGoal: "LINK_CLICKS",
           billingEvent: "IMPRESSIONS",
-        };
-      case "OUTCOME_LEADS":
-        return {
-          optimizationGoal: "LEAD_GENERATION",
-          billingEvent: "IMPRESSIONS",
+          promotedObject: "none",
         };
       case "OUTCOME_ENGAGEMENT":
         return {
           optimizationGoal: "POST_ENGAGEMENT",
           billingEvent: "IMPRESSIONS",
+          promotedObject: "page",
         };
       case "OUTCOME_APP_PROMOTION":
         return {
           optimizationGoal: "APP_INSTALLS",
           billingEvent: "IMPRESSIONS",
+          promotedObject: "none",
         };
     }
+  }
+
+  /**
+   * Objectives we can actually publish end-to-end today. App Promotion needs a
+   * registered app + store URL that the wizard has no way to collect, so we
+   * exclude it rather than let a user reach the last step and fail.
+   */
+  isPublishableObjective(objective: MetaObjective): boolean {
+    return objective !== "OUTCOME_APP_PROMOTION";
   }
 
   /* ───────────────────────────────── */

@@ -2,6 +2,8 @@
 
 A multi-platform AI-powered ad management dashboard. Premium SaaS UI, Claude-powered campaign planning and creative generation, real backend with Prisma + Postgres + Clerk.
 
+postgre password:  advertix_dev
+
 > **Maintain this file.** Update the [Change Log](#change-log) (newest first) and the relevant sections any time files change, features land, or setup steps shift.
 
 > **Deferred features:** Big features that are explicitly bookmarked for "later, not now" live in [FUTURE_FEATURES.md](FUTURE_FEATURES.md). Each one has a prerequisite gate. **Do not start any of them without checking the gate first.**
@@ -471,6 +473,21 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 ## Change Log
 
 > Most recent first. Add a new dated entry for every significant change.
+
+### 2026-08-02 — Removed the temporary Meta API warmup cron
+
+The app is registered and approved on Meta, so the call-volume padding added on 2026-06-21 has served its purpose and is gone. It was firing 11 read-only Marketing API calls per connected ad account every 30 minutes — ~528 calls/day of pure noise, burning rate-limit budget that should serve real customers, and at risk of tripping Meta's abuse detection now that the review window has closed.
+
+**Removed:**
+
+- Deleted `apps/api/src/services/meta-warmup.service.ts`.
+- [apps/api/src/index.ts](apps/api/src/index.ts) — dropped the import, the `startMetaWarmupCron()` call after `app.listen()`, and the `stopMetaWarmupCron()` call in the SIGTERM handler.
+
+**Follow-up for whoever owns the deploy:** `META_WARMUP_ENABLED` is now a dead env var — drop it from Railway. Harmless if left, but it reads as live config for code that no longer exists.
+
+The 2026-06-21 entry below is marked resolved and kept for history. `startSyncScheduler()` / `stopSyncScheduler()` are untouched — that's the real periodic sync and stays.
+
+`tsc --noEmit` clean on both apps.
 
 ### 2026-06-25 — AI Insights pipeline (real Claude insights; replaces the mock Insights page)
 
@@ -1007,7 +1024,7 @@ Wired up selection state:
 
 ### 2026-06-21 â€” Meta App Review REJECTED â†’ added temporary API warmup cron
 
-âš ï¸ **This entry documents temporary code that MUST be removed once Meta App Review approves the resubmission.** See [memory: meta-api-warmup-temporary](C:/Users/Shahr/.claude/projects/c--Users-Shahr-OneDrive-Desktop-review-test-adgenius-ai/memory/meta-api-warmup-temporary.md).
+✅ **RESOLVED 2026-08-02 — the warmup cron has been removed.** The code described below no longer exists; this entry is kept for history only. See the 2026-08-02 removal entry at the top of the change log. Nothing in the "Removal (DO NOT FORGET)" checklist below is still outstanding.
 
 **Rejection reason** (from Meta App Review feedback):
 

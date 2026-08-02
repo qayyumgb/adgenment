@@ -37,6 +37,19 @@ const ADS_MANAGER_URL = "https://business.facebook.com/adsmanager";
 const BUSINESS_URL = "https://business.facebook.com";
 const RECONNECT_URL = "/settings?tab=integrations";
 
+/**
+ * Whether our Meta app is still waiting on Marketing API Standard Access.
+ *
+ * This used to be hardcoded `true`, which pinned every connection at
+ * "degraded" and `canPublish: false` forever — even after Meta approved the
+ * app — so the wizard permanently showed an amber "publishing not available"
+ * banner over a flow that actually worked. Now the app is registered, the
+ * default is approved; set `META_APP_REVIEW_PENDING=true` to bring the notice
+ * back (e.g. for a second app still under review).
+ */
+const APP_REVIEW_PENDING =
+  (process.env.META_APP_REVIEW_PENDING ?? "").toLowerCase() === "true";
+
 function metaCodeOf(err: unknown): number | undefined {
   return err instanceof Error
     ? (err as Error & { metaCode?: number }).metaCode
@@ -54,7 +67,8 @@ class MetaHealthService {
     adAccountId: string
   ): Promise<MetaHealthReport> {
     const checks: HealthCheck[] = [];
-    // App Review is OUR limitation — always surfaced, never blocking for beta.
+    // App Review is OUR limitation — surfaced only while it actually applies,
+    // never blocking. `pushAppReview` is a no-op once the app is approved.
     const appReviewCheck: HealthCheck = {
       status: "warning",
       code: "PENDING_APP_REVIEW",
@@ -64,6 +78,9 @@ class MetaHealthService {
       action: "Learn what's available now",
       blocking: false,
     };
+    const pushAppReview = () => {
+      if (APP_REVIEW_PENDING) checks.push(appReviewCheck);
+    };
 
     // ── CHECK 1 — Token valid ──────────────────────────────────────────────
     try {
@@ -71,7 +88,7 @@ class MetaHealthService {
     } catch (err) {
       const code = metaCodeOf(err);
       checks.push(this.tokenError(code));
-      checks.push(appReviewCheck);
+      pushAppReview();
       return this.report(checks, { syncTestPassed: false });
     }
 
@@ -120,7 +137,7 @@ class MetaHealthService {
             actionUrl: ADS_MANAGER_URL,
             blocking: true,
           });
-          checks.push(appReviewCheck);
+          pushAppReview();
           return this.report(checks, { syncTestPassed: false });
         }
       } else {
@@ -155,10 +172,43 @@ class MetaHealthService {
       // best-effort — funding read can fail without blocking the whole report
     }
 
-    // ── CHECK 6 — App Review (our limitation) ──────────────────────────────
-    checks.push(appReviewCheck);
+    // ── CHECK 6 — Meta Pixel ───────────────────────────────────────────────
+    // Not blocking: Traffic / Awareness / Engagement campaigns publish fine
+    // without one. But Sales and Leads can't, so surfacing it here means the
+    // user finds out on the Settings page instead of at the publish step.
+    try {
+      const pixels = await metaService.getPixels(token, adAccountId);
+      if (pixels.length === 0) {
+        checks.push({
+          status: "warning",
+          code: "NO_PIXEL",
+          title: "No Meta Pixel on this ad account",
+          message:
+            "Traffic, Awareness and Engagement campaigns work without a pixel. Sales and Lead campaigns need one — it's how Meta learns who converts.",
+          action: "Create a pixel in Meta Events Manager",
+          actionUrl: "https://business.facebook.com/events_manager2",
+          blocking: false,
+        });
+      } else if (pixels.every((p) => p.lastFiredTime === null)) {
+        checks.push({
+          status: "warning",
+          code: "PIXEL_NEVER_FIRED",
+          title: "Your Meta Pixel hasn't received any events",
+          message:
+            "The pixel exists but has never fired, which usually means it isn't installed on your website yet. Sales and Lead campaigns will barely deliver until it is.",
+          action: "Finish pixel setup in Meta Events Manager",
+          actionUrl: "https://business.facebook.com/events_manager2",
+          blocking: false,
+        });
+      }
+    } catch {
+      // best-effort — a pixel read failure shouldn't fail the whole report
+    }
 
-    // ── CHECK 7 — Sync test ────────────────────────────────────────────────
+    // ── CHECK 7 — App Review (our limitation, when it applies) ─────────────
+    pushAppReview();
+
+    // ── CHECK 8 — Sync test ────────────────────────────────────────────────
     let syncTestPassed = false;
     try {
       await metaService.testReadCampaigns(token, adAccountId);
@@ -301,8 +351,9 @@ class MetaHealthService {
     // canSync: no blocking errors on the connection/account checks AND we could
     // actually read campaigns.
     const canSync = !hasBlocking && opts.syncTestPassed;
-    // canPublish: requires sync to work AND no pending App Review (so always
-    // false until Meta approves us — remove the PENDING_APP_REVIEW check then).
+    // canPublish: requires sync to work AND no pending App Review. The review
+    // check is only pushed when META_APP_REVIEW_PENDING is set, so with the app
+    // approved this reduces to canSync.
     const hasPendingAppReview = checks.some(
       (c) => c.code === "PENDING_APP_REVIEW"
     );

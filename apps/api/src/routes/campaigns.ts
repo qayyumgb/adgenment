@@ -50,6 +50,24 @@ function parseDate(value: unknown): Date | null {
 }
 
 /**
+ * Is this a destination Meta will accept? Meta rejects anything that isn't
+ * http(s) with a hostname, and answers with a generic code-100 that gives the
+ * user no idea the URL was the problem — so we check it ourselves first.
+ */
+function isValidDestinationUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  // Reject "https://" with nothing after it, and bare hostnames with no dot
+  // ("https://localhost" can't be crawled by Meta's link checker).
+  return url.hostname.includes(".") && !url.hostname.endsWith(".");
+}
+
+/**
  * Safe ad-account fields to embed in client-facing campaign responses. NEVER
  * include accessToken/refreshToken — those must not leave the server. Use this
  * everywhere a campaign is returned to the browser with its adAccount.
@@ -518,6 +536,12 @@ router.post(
     if (typeof creative.linkUrl !== "string" || !creative.linkUrl.trim()) {
       return res.status(400).json({ error: "creative.linkUrl is required" });
     }
+    if (!isValidDestinationUrl(creative.linkUrl)) {
+      return res.status(400).json({
+        error:
+          "The destination URL isn't valid. It needs to be a full web address starting with https:// — for example https://yoursite.com/offer",
+      });
+    }
     const hasCarouselCards = (creative.cards?.length ?? 0) >= 2;
     if (
       !creative.imageUrl &&
@@ -544,6 +568,76 @@ router.post(
     const token = metaService.decryptToken(campaign.adAccount.accessToken);
     const adAccountId = campaign.adAccount.accountId;
     const objective = metaService.mapObjectiveToMeta(campaign.objective);
+
+    // ── Pre-flight: catch everything Meta would reject, in plain English ──
+    // These checks all run BEFORE we create anything on Meta, so a failure
+    // here leaves the user's ad account untouched — no rollback needed and no
+    // cryptic code-100 to decode.
+    if (!metaService.isPublishableObjective(objective)) {
+      return res.status(400).json({
+        error:
+          "App Promotion campaigns can't be published from Advertix yet — they need an app registered with Meta. Change the campaign objective to Traffic, Leads, Sales, Awareness or Engagement.",
+      });
+    }
+
+    const budgetNumber = Number(campaign.budget) || 0;
+    if (budgetNumber <= 0) {
+      return res.status(400).json({
+        error:
+          "This campaign has no budget set. Add a daily or lifetime budget in the campaign's Settings tab before publishing.",
+      });
+    }
+
+    // Meta requires an end date on any ad set carrying a lifetime budget —
+    // without one it can't work out the daily pacing.
+    if (campaign.budgetType === "LIFETIME" && !campaign.endDate) {
+      return res.status(400).json({
+        error:
+          "Lifetime-budget campaigns need an end date so Meta knows how to pace the spend. Add one in the campaign's Settings tab.",
+      });
+    }
+
+    // Daily budget below the account's real floor is rejected by Meta with a
+    // message that doesn't name the actual minimum. We know it from sync.
+    const minDaily = campaign.adAccount.minDailyBudget;
+    if (
+      campaign.budgetType === "DAILY" &&
+      typeof minDaily === "number" &&
+      minDaily > 0 &&
+      budgetNumber < minDaily
+    ) {
+      const cur = campaign.adAccount.currency ?? "";
+      return res.status(400).json({
+        error: `Your daily budget is below this ad account's minimum of ${minDaily} ${cur}. Raise the budget in the campaign's Settings tab and publish again.`,
+      });
+    }
+
+    // Conversion objectives optimize against a pixel. Meta rejects the ad set
+    // outright without one, so resolve it up front and give the user the real
+    // instruction instead of "Invalid parameter".
+    const optimization = metaService.optimizationFor(objective);
+    let promotedPixelId: string | undefined;
+    if (optimization.promotedObject === "pixel") {
+      let pixels;
+      try {
+        pixels = await metaService.getPixels(token, adAccountId);
+      } catch (err) {
+        const friendly = isMetaError(err)
+          ? friendlyMetaError(err)
+          : { status: 502, message: "Couldn't check your Meta Pixel. Try again." };
+        return res.status(friendly.status).json({ error: friendly.message });
+      }
+      if (pixels.length === 0) {
+        return res.status(400).json({
+          error:
+            "This objective optimizes for conversions, which needs a Meta Pixel on your website. Create one in Meta Events Manager and install it on your site, then publish again. If you just want clicks to your site, switch the campaign objective to Traffic.",
+        });
+      }
+      // Prefer a pixel that has actually received events — a pixel object that
+      // has never fired isn't installed, and Meta will barely deliver the ad.
+      const live = pixels.find((p) => p.lastFiredTime !== null);
+      promotedPixelId = (live ?? pixels[0]).id;
+    }
 
     // ── Rollback bookkeeping ────────────────────────────────────────────
     // We track what we created on Meta so we can clean up if a later
@@ -782,7 +876,6 @@ router.post(
       void libCreativeType;
 
       // ── 2. Create Campaign on Meta ───────────────────────────────────
-      const budgetNumber = Number(campaign.budget) || 0;
       const dailyBudget =
         campaign.budgetType === "DAILY" ? budgetNumber : undefined;
       const lifetimeBudget =
@@ -813,9 +906,16 @@ router.post(
         status: "PAUSED",
         dailyBudget,
         lifetimeBudget,
-        startTime: campaign.startDate?.toISOString(),
+        // Meta rejects a start_time in the past. A campaign drafted last week
+        // and published today would fail on its own stored start date, so
+        // clamp to "now" and let Meta schedule from publish time.
+        startTime:
+          campaign.startDate && campaign.startDate.getTime() > Date.now()
+            ? campaign.startDate.toISOString()
+            : undefined,
         endTime: campaign.endDate?.toISOString(),
         promotedPageId: pageId,
+        promotedPixelId,
       });
       created.adSetId = adSet.id;
 
@@ -938,26 +1038,42 @@ router.post(
       }
 
       const token = metaService.decryptToken(campaign.adAccount.accessToken);
+      const previous: "ACTIVE" | "PAUSED" =
+        target === "ACTIVE" ? "PAUSED" : "ACTIVE";
 
-      // Flip campaign → ad set → ad. All three must match for delivery.
-      await metaService.updateCampaignStatus(
-        token,
+      // Flip campaign → ad set → ad. All three must match for delivery: a
+      // campaign set ACTIVE while its ad set is still PAUSED serves nothing,
+      // and a PAUSE that only lands on the campaign keeps spending. So if any
+      // step fails we put the ones we already flipped back, rather than
+      // leaving the user in a half-on state their dashboard can't describe.
+      const flipped: string[] = [];
+      const ids = [
         campaign.externalId,
-        target
-      );
-      if (campaign.externalAdSetId) {
-        await metaService.updateCampaignStatus(
-          token,
-          campaign.externalAdSetId,
-          target
-        );
-      }
-      if (campaign.externalAdId) {
-        await metaService.updateCampaignStatus(
-          token,
-          campaign.externalAdId,
-          target
-        );
+        campaign.externalAdSetId,
+        campaign.externalAdId,
+      ].filter((id): id is string => typeof id === "string" && id !== "");
+
+      try {
+        for (const id of ids) {
+          await metaService.updateCampaignStatus(token, id, target);
+          flipped.push(id);
+        }
+      } catch (err) {
+        for (const id of flipped.reverse()) {
+          await metaService
+            .updateCampaignStatus(token, id, previous)
+            .catch(() => undefined);
+        }
+        const friendly = isMetaError(err)
+          ? friendlyMetaError(err)
+          : {
+              status: 502,
+              message:
+                target === "ACTIVE"
+                  ? "Meta wouldn't start this campaign. Nothing was changed — check your ad account in Meta Ads Manager and try again."
+                  : "Meta wouldn't pause this campaign. Nothing was changed — try again in a moment.",
+            };
+        return res.status(friendly.status).json({ error: friendly.message });
       }
 
       const updated = await prisma.campaign.update({
