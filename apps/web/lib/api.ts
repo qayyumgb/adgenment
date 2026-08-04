@@ -1094,6 +1094,10 @@ export interface MetaTargetingSpec {
     | "igtv"
     | "shop"
   >;
+  /** Advantage+ audience opt-in. Meta requires an explicit 1 or 0 on every ad
+   *  set. Leave unset — the API defaults it to 0 (deliver strictly inside the
+   *  targeting above) so the wizard's audience step means what it says. */
+  targeting_automation?: { advantage_audience?: 0 | 1 };
 }
 
 export interface PublishCampaignPayload {

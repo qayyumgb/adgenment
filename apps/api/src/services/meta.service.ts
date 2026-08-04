@@ -235,6 +235,18 @@ export interface MetaTargeting {
     | "shop"
   >;
   flexible_spec?: Array<{ interests?: Array<{ id: string }>; behaviors?: Array<{ id: string }> }>;
+  /**
+   * Advantage+ audience opt-in. Meta now REQUIRES an explicit decision on every
+   * new ad set — omitting it fails with "Advantage Audience Flag Required".
+   *
+   *   1 — Meta may deliver beyond the targeting below when it predicts better
+   *       results (your interests/audiences become a suggestion).
+   *   0 — deliver strictly inside the targeting below.
+   *
+   * `createAdSet` defaults this to 0 when the caller doesn't set it, so the
+   * audience the user built in the wizard is the audience they get.
+   */
+  targeting_automation?: { advantage_audience?: 0 | 1 };
 }
 
 class MetaAdsService {
@@ -1014,6 +1026,19 @@ class MetaAdsService {
     // billing_event + promoted_object combo.
     const opt = this.optimizationFor(params.objective);
 
+    // Meta rejects any ad set that doesn't state an Advantage+ audience
+    // preference ("Advantage Audience Flag Required", code 100). It has to be
+    // an explicit 1 or 0 — there is no server-side default. We choose 0 so the
+    // audience the user assembled in the wizard is honoured exactly; letting
+    // Meta expand past it would quietly make the targeting step decorative.
+    const targeting: MetaTargeting = {
+      ...params.targeting,
+      targeting_automation: {
+        advantage_audience:
+          params.targeting.targeting_automation?.advantage_audience ?? 0,
+      },
+    };
+
     const body = new URLSearchParams({
       name: params.name,
       campaign_id: params.campaignId,
@@ -1021,7 +1046,7 @@ class MetaAdsService {
       billing_event: opt.billingEvent,
       optimization_goal: opt.optimizationGoal,
       bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-      targeting: JSON.stringify(params.targeting),
+      targeting: JSON.stringify(targeting),
       access_token: accessToken,
     });
     if (params.dailyBudget !== undefined) {
