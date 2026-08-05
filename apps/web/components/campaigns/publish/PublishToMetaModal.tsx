@@ -1478,7 +1478,12 @@ function Step5Creative({
                           creativeType: "IMAGE",
                           carouselCards: [],
                           imageUrl: previewUrl,
-                          imageHash: null,
+                          // Carry the stored Meta image_hash through. Without
+                          // it we send only the preview URL, and for anything
+                          // already on Meta that URL is a signed, expiring
+                          // scontent.fbcdn.net link — publish then asks Meta to
+                          // re-download its own CDN asset, which it refuses.
+                          imageHash: extractImageHash(c),
                           videoId: null,
                           videoUrl: null,
                           thumbnailUrl: null,
@@ -2384,6 +2389,27 @@ function extractImageUrl(c: Creative): string | null {
   if (typeof obj.url === "string") return obj.url;
   if (typeof obj.image === "string") return obj.image;
   return null;
+}
+
+/**
+ * The Meta `image_hash` stored on a library creative, if it has one.
+ *
+ * Creatives that were uploaded to (or generated on) Meta save their hash —
+ * see the Creatives page, which notes it exists so "the publish wizard can
+ * skip re-uploading to Meta". The wizard previously never read it back, so it
+ * fell through to the URL path and asked Meta to fetch its own
+ * scontent.fbcdn.net URL. Those are signed, referrer-protected and expiring,
+ * and Meta rejects the attempt outright.
+ *
+ * Returns null for creatives that only ever had a plain hosted URL (e.g. a
+ * pasted third-party image) — those legitimately need the upload path.
+ */
+function extractImageHash(c: Creative): string | null {
+  if (!c.content || typeof c.content !== "object") return null;
+  const obj = c.content as Record<string, unknown>;
+  return typeof obj.imageHash === "string" && obj.imageHash.trim() !== ""
+    ? obj.imageHash
+    : null;
 }
 
 /**

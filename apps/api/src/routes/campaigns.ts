@@ -761,12 +761,22 @@ router.post(
               : typeof content.url === "string"
                 ? content.url
                 : null;
-          if (!url) {
+          // Prefer the stored Meta handle over the URL. Creatives that were
+          // uploaded to or generated on Meta already have an image_hash; using
+          // it skips a re-upload entirely. Falling through to the URL for one
+          // of these means handing Meta its own signed CDN link, which it
+          // refuses to fetch.
+          const storedHash =
+            typeof content.imageHash === "string" && content.imageHash.trim()
+              ? content.imageHash
+              : null;
+          if (libCreative.type !== "VIDEO" && storedHash) {
+            imageHash = storedHash;
+          } else if (!url) {
             return res
               .status(400)
               .json({ error: "Library creative has no media URL" });
-          }
-          if (libCreative.type === "VIDEO") {
+          } else if (libCreative.type === "VIDEO") {
             videoUrlForResolution = url;
           } else {
             imageUrlForResolution = url;
@@ -823,6 +833,19 @@ router.post(
 
       // Resolve to image_hash for image ads.
       if (!videoId && !imageHash && imageUrlForResolution) {
+        // Meta will not re-ingest its own CDN assets: scontent.*.fbcdn.net URLs
+        // are signed, referrer-protected and short-lived, and /adimages rejects
+        // them (observed as a bare code 3, which reads like a permissions
+        // problem and sent us down the wrong path entirely). If we've reached
+        // here with one, the creative's stored image_hash went missing upstream
+        // — say that, rather than making a call that cannot succeed.
+        if (/(^|\.)fbcdn\.net|scontent[-.]/i.test(imageUrlForResolution)) {
+          return res.status(400).json({
+            error:
+              "This image is already hosted on Meta but its image reference is missing, so it can't be re-uploaded. Re-select the image in the Creative step (or upload it again) and publish once more.",
+            step: "preparing",
+          });
+        }
         const uploaded = await metaService.uploadImageFromUrl(
           token,
           adAccountId,
