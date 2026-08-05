@@ -674,15 +674,17 @@ function useCampaignActions(c: Campaign, onMutate: () => void) {
     );
 
   const remove = () => {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        `Delete "${c.name}"? This also removes its metrics and creative links. This cannot be undone.`
-      )
-    ) {
-      return;
-    }
-    return wrap("delete", () => client.deleteCampaign(c.id), "Campaign deleted");
+    // Say plainly that this reaches Meta. Deleting a live campaign stops real
+    // spend, so the confirmation shouldn't imply it's only a local tidy-up.
+    const warning = isLiveOnMeta
+      ? `Delete "${c.name}"?\n\nThis deletes the campaign ON META too — its ad set and ad stop delivering immediately — along with its metrics here. This cannot be undone.`
+      : `Delete "${c.name}"? This also removes its metrics and creative links. This cannot be undone.`;
+    if (typeof window !== "undefined" && !window.confirm(warning)) return;
+    return wrap(
+      "delete",
+      () => client.deleteCampaign(c.id),
+      isLiveOnMeta ? "Campaign deleted here and on Meta" : "Campaign deleted"
+    );
   };
 
   const edit = () => router.push(`/campaigns/${c.id}`);

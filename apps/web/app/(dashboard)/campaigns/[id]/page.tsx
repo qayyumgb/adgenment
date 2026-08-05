@@ -309,16 +309,21 @@ function CampaignDetail({
 
   async function handleDelete() {
     if (busy) return;
+    // Deleting a published campaign stops real spend on Meta — say so.
     if (
       !window.confirm(
-        `Delete "${c.name}"? This removes its metrics and creatives.`
+        isPublishedToMeta
+          ? `Delete "${c.name}"?\n\nThis deletes the campaign ON META too — its ad set and ad stop delivering immediately — along with its metrics here. This cannot be undone.`
+          : `Delete "${c.name}"? This removes its metrics and creatives.`
       )
     )
       return;
     setBusy(true);
     try {
       await api.deleteCampaign(c.id);
-      toast.success("Campaign deleted");
+      toast.success(
+        isPublishedToMeta ? "Campaign deleted here and on Meta" : "Campaign deleted"
+      );
       router.push("/campaigns");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed");
@@ -1043,16 +1048,21 @@ function SettingsTab({
   }
 
   async function deleteCampaign() {
+    const liveOnMeta = c.platform === "META" && Boolean(c.externalId);
     if (
       !window.confirm(
-        `Delete "${c.name}"? This removes all its metrics and creatives.`
+        liveOnMeta
+          ? `Delete "${c.name}"?\n\nThis deletes the campaign ON META too — its ad set and ad stop delivering immediately — along with all its metrics here. This cannot be undone.`
+          : `Delete "${c.name}"? This removes all its metrics and creatives.`
       )
     )
       return;
     setBusy(true);
     try {
       await api.deleteCampaign(c.id);
-      toast.success("Campaign deleted");
+      toast.success(
+        liveOnMeta ? "Campaign deleted here and on Meta" : "Campaign deleted"
+      );
       window.location.href = "/campaigns";
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed");

@@ -10,6 +10,52 @@ import { encryptToken, decryptToken } from "../lib/crypto";
 const GRAPH_BASE = "https://graph.facebook.com/v19.0";
 const FB_DIALOG = "https://www.facebook.com/v19.0/dialog/oauth";
 
+/** Matches the multer cap on the device-upload route so both paths agree. */
+const MAX_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Is this IP in a range we must never fetch from a user-supplied URL?
+ * Covers loopback, RFC1918 private space, link-local (incl. cloud metadata at
+ * 169.254.169.254), carrier-grade NAT, and the IPv6 equivalents.
+ */
+function isPrivateAddress(ip: string): boolean {
+  if (ip === "::1" || ip === "0.0.0.0" || ip.startsWith("fe80:")) return true;
+  // fc00::/7 — IPv6 unique-local
+  if (/^f[cd][0-9a-f]{2}:/i.test(ip)) return true;
+  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  const parts = v4.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n))) return false;
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}
+
+/**
+ * Identify an image from its magic bytes. Needed because image hosts routinely
+ * serve the wrong content-type — Google's `encrypted-tbn0.gstatic.com`
+ * thumbnail proxy is a common offender — and Meta rejects a mislabelled upload.
+ */
+function sniffImageMime(buf: Buffer): string | null {
+  if (buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
+    return "image/png";
+  if (buf.subarray(0, 6).toString("ascii").startsWith("GIF8")) return "image/gif";
+  if (
+    buf.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buf.subarray(8, 12).toString("ascii") === "WEBP"
+  )
+    return "image/webp";
+  return null;
+}
+
 // `pages_show_list` lets us list the user's Pages via /me/accounts (the
 //   getPages endpoint). Without it, /me/accounts returns empty even for
 //   users who do admin Pages.
@@ -565,6 +611,73 @@ class MetaAdsService {
   }
 
   /**
+   * Rename a campaign on Meta (and optionally flip its status).
+   *
+   * Objective is deliberately absent: Meta won't let you change a campaign's
+   * objective after creation, so an "edit" that appears to change it has to be
+   * a new campaign.
+   */
+  async updateCampaign(
+    accessToken: string,
+    metaCampaignId: string,
+    fields: { name?: string; status?: "ACTIVE" | "PAUSED" }
+  ): Promise<{ success: boolean }> {
+    const body = new URLSearchParams({ access_token: accessToken });
+    if (fields.name) body.set("name", fields.name);
+    if (fields.status) body.set("status", fields.status);
+    // Nothing to send — don't burn a call (or a rate-limit slot) on a no-op.
+    if ([...body.keys()].length <= 1) return { success: true };
+
+    await this.graphFetch<{ success?: boolean }>(
+      `${GRAPH_BASE}/${metaCampaignId}`,
+      { method: "POST", body }
+    );
+    return { success: true };
+  }
+
+  /**
+   * Update an existing ad set.
+   *
+   * This is where budget and schedule edits have to go. Our publish flow
+   * creates the campaign with no budget and puts it on the ad set (campaign
+   * budget optimisation is opt-in and we don't use it), so pushing a budget
+   * change to the campaign object would silently do nothing.
+   *
+   * Budgets are sent in minor units, matching `createAdSet`.
+   */
+  async updateAdSet(
+    accessToken: string,
+    adSetId: string,
+    fields: {
+      name?: string;
+      status?: "ACTIVE" | "PAUSED";
+      dailyBudget?: number;
+      lifetimeBudget?: number;
+      startTime?: string;
+      endTime?: string;
+    }
+  ): Promise<{ success: boolean }> {
+    const body = new URLSearchParams({ access_token: accessToken });
+    if (fields.name) body.set("name", fields.name);
+    if (fields.status) body.set("status", fields.status);
+    if (fields.dailyBudget !== undefined) {
+      body.set("daily_budget", String(Math.round(fields.dailyBudget * 100)));
+    }
+    if (fields.lifetimeBudget !== undefined) {
+      body.set("lifetime_budget", String(Math.round(fields.lifetimeBudget * 100)));
+    }
+    if (fields.startTime) body.set("start_time", fields.startTime);
+    if (fields.endTime) body.set("end_time", fields.endTime);
+    if ([...body.keys()].length <= 1) return { success: true };
+
+    await this.graphFetch<{ success?: boolean }>(`${GRAPH_BASE}/${adSetId}`, {
+      method: "POST",
+      body,
+    });
+    return { success: true };
+  }
+
+  /**
    * Generic delete — used by the publish-rollback path when ad set / creative
    * / ad creation fails partway through. Best-effort: errors are swallowed
    * by the caller so the rollback continues.
@@ -809,22 +922,125 @@ class MetaAdsService {
     adAccountId: string,
     imageUrl: string
   ): Promise<{ hash: string; url: string }> {
-    const accountPath = this.accountPath(adAccountId);
-    const body = new URLSearchParams({
-      url: imageUrl,
-      access_token: accessToken,
-    });
-    const data = await this.graphFetch<{
-      images?: Record<string, { hash: string; url: string }>;
-    }>(`${GRAPH_BASE}/${accountPath}/adimages`, {
-      method: "POST",
-      body,
-    });
-    const entry = Object.values(data.images ?? {})[0];
-    if (!entry) {
-      throw new Error("Meta API: adimages response had no image entry");
+    // Fetch the bytes ourselves rather than passing `url` to /adimages.
+    //
+    // Meta documents a `url` parameter on /adimages, but gates it behind an app
+    // capability that ordinary apps don't hold: it fails with a bare
+    // "(#3) Application does not have the capability to make this API call",
+    // which is indistinguishable from a permissions/access-tier problem and
+    // cost us two rounds of misdiagnosis. Downloading and posting the bytes
+    // uses the same multipart path as a device upload — no special capability,
+    // and real error messages when something is genuinely wrong.
+    const { buffer, mimeType, filename } = await this.fetchRemoteImage(imageUrl);
+    return this.uploadImageFromBytes(
+      accessToken,
+      adAccountId,
+      buffer,
+      filename,
+      mimeType
+    );
+  }
+
+  /**
+   * Download a remote image for re-upload to Meta.
+   *
+   * Guards, in order of how likely they are to save us:
+   *  - http/https only (no file:, data:, gopher: …)
+   *  - the host must not resolve to a private/loopback/link-local address —
+   *    this endpoint fetches a user-supplied URL from our server, so without
+   *    it we'd be an SSRF gadget pointed at the Railway network
+   *  - 15s timeout and a 10MB cap (matching the multer limit on the device
+   *    upload route) so a slow or enormous asset can't wedge the request
+   *  - the response must actually be an image
+   *
+   * Known residual risk: redirects are followed by fetch, and we only vet the
+   * initial host, so a redirect to an internal address isn't caught. Meta's own
+   * CDN is blocked earlier in the publish route, which is the case that
+   * actually bit us.
+   */
+  private async fetchRemoteImage(imageUrl: string): Promise<{
+    buffer: Buffer;
+    mimeType: string;
+    filename: string;
+  }> {
+    let parsed: URL;
+    try {
+      parsed = new URL(imageUrl);
+    } catch {
+      throw new Error("The image URL isn't a valid web address.");
     }
-    return { hash: entry.hash, url: entry.url };
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("The image URL must start with http:// or https://");
+    }
+
+    const { lookup } = await import("node:dns/promises");
+    try {
+      const { address } = await lookup(parsed.hostname);
+      if (isPrivateAddress(address)) {
+        throw new Error("That image URL points to a private network address.");
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("That image URL")) {
+        throw err;
+      }
+      throw new Error(`Couldn't resolve the image host "${parsed.hostname}".`);
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    let res: Response;
+    try {
+      res = await fetch(parsed.toString(), {
+        signal: controller.signal,
+        // Some CDNs 403 an unknown agent; present as a normal browser.
+        headers: {
+          accept: "image/*,*/*;q=0.8",
+          "user-agent":
+            "Mozilla/5.0 (compatible; Advertix/1.0; +https://advertix.io)",
+        },
+      });
+    } catch (err) {
+      const reason =
+        err instanceof Error && err.name === "AbortError"
+          ? "it took too long to respond"
+          : "we couldn't reach it";
+      throw new Error(`Couldn't download that image — ${reason}.`);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!res.ok) {
+      throw new Error(
+        `Couldn't download that image — the server returned HTTP ${res.status}.`
+      );
+    }
+
+    const declared = (res.headers.get("content-type") ?? "").split(";")[0].trim();
+    const size = Number(res.headers.get("content-length") ?? 0);
+    if (size > MAX_REMOTE_IMAGE_BYTES) {
+      throw new Error("That image is larger than 10MB — use a smaller one.");
+    }
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.byteLength === 0) {
+      throw new Error("That image URL returned an empty file.");
+    }
+    if (buffer.byteLength > MAX_REMOTE_IMAGE_BYTES) {
+      throw new Error("That image is larger than 10MB — use a smaller one.");
+    }
+
+    // Trust the magic bytes over the header: image hosts (Google's thumbnail
+    // proxy among them) often serve a generic or missing content-type.
+    const sniffed = sniffImageMime(buffer);
+    const mimeType = sniffed ?? (declared.startsWith("image/") ? declared : null) ?? "";
+    if (!mimeType) {
+      throw new Error(
+        "That URL doesn't point to an image file. Use a direct link to a .jpg or .png."
+      );
+    }
+
+    const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "jpg";
+    return { buffer, mimeType, filename: `remote-${Date.now()}.${ext}` };
   }
 
   /**

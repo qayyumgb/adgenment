@@ -316,6 +316,7 @@ router.put("/:id", async (req: Request, res: Response, next: NextFunction) => {
     const workspace = await requireWorkspace(req.dbUserId!);
     const existing = await prisma.campaign.findFirst({
       where: { id: req.params.id, workspaceId: workspace.id },
+      include: { adAccount: true },
     });
     if (!existing) {
       return res.status(404).json({ error: "Campaign not found" });
@@ -343,6 +344,84 @@ router.put("/:id", async (req: Request, res: Response, next: NextFunction) => {
       data.targeting = targeting === null ? Prisma.JsonNull : targeting;
     }
 
+    // Push the edit to Meta BEFORE committing locally, so a rejection leaves
+    // our row matching what Meta actually has. Writing locally first would let
+    // the UI report a budget Meta never accepted — the user then believes they
+    // changed their spend and they haven't.
+    //
+    // Which object takes which field matters: name and status live on the
+    // campaign, but budget and schedule live on the AD SET, because publish
+    // deliberately creates the campaign without a budget.
+    if (existing.platform === "META" && existing.externalId) {
+      const token = metaService.decryptToken(existing.adAccount.accessToken);
+      const nextName = typeof data.name === "string" ? data.name : undefined;
+      // DRAFT/ENDED have no Meta equivalent — only ACTIVE/PAUSED map across.
+      const nextStatus =
+        status === "ACTIVE" || status === "PAUSED"
+          ? (status as "ACTIVE" | "PAUSED")
+          : undefined;
+
+      const budgetChanged =
+        budget !== undefined && Number(budget) !== Number(existing.budget);
+      const effectiveBudgetType = isBudgetType(budgetType)
+        ? budgetType
+        : existing.budgetType;
+      const startChanged =
+        startDate !== undefined &&
+        parseDate(startDate)?.getTime() !== existing.startDate?.getTime();
+      const endChanged =
+        endDate !== undefined &&
+        parseDate(endDate)?.getTime() !== existing.endDate?.getTime();
+
+      try {
+        if (nextName || nextStatus) {
+          await metaService.updateCampaign(token, existing.externalId, {
+            name: nextName,
+            status: nextStatus,
+          });
+        }
+
+        if (existing.externalAdSetId) {
+          const n = Number(budget);
+          await metaService.updateAdSet(token, existing.externalAdSetId, {
+            name: nextName ? `${nextName} — Ad Set` : undefined,
+            status: nextStatus,
+            ...(budgetChanged && effectiveBudgetType === "DAILY"
+              ? { dailyBudget: n }
+              : {}),
+            ...(budgetChanged && effectiveBudgetType === "LIFETIME"
+              ? { lifetimeBudget: n }
+              : {}),
+            ...(startChanged
+              ? { startTime: parseDate(startDate)?.toISOString() }
+              : {}),
+            ...(endChanged
+              ? { endTime: parseDate(endDate)?.toISOString() }
+              : {}),
+          });
+        } else if (budgetChanged) {
+          // Published before we tracked the ad set id — we can't reach the
+          // object that owns the budget, so don't pretend the change landed.
+          return res.status(409).json({
+            error:
+              "This campaign was published before Advertix started tracking its ad set, so the budget can't be changed from here. Update it in Meta Ads Manager, then run a sync.",
+          });
+        }
+      } catch (err) {
+        const friendly = isMetaError(err)
+          ? friendlyMetaError(err)
+          : {
+              status: 502,
+              message: "Couldn't save this change on Meta — nothing was changed.",
+              detail: err instanceof Error ? err.message : String(err),
+            };
+        console.error(`[campaigns/update] Meta update failed: ${friendly.detail}`);
+        return res
+          .status(friendly.status)
+          .json({ error: friendly.message, detail: friendly.detail });
+      }
+    }
+
     const updated = await prisma.campaign.update({
       where: { id: existing.id },
       data,
@@ -363,10 +442,61 @@ router.delete(
       const workspace = await requireWorkspace(req.dbUserId!);
       const existing = await prisma.campaign.findFirst({
         where: { id: req.params.id, workspaceId: workspace.id },
+        include: { adAccount: true },
       });
       if (!existing) {
         return res.status(404).json({ error: "Campaign not found" });
       }
+
+      // Delete on Meta FIRST, then locally.
+      //
+      // Deleting only our row leaves the campaign live on Meta, still
+      // spending, and now invisible in Advertix — so the user can't even pause
+      // it. Meta's delete cascades to the ad sets and ads beneath it, so this
+      // one call cleans up the whole hierarchy we created at publish.
+      if (existing.platform === "META" && existing.externalId) {
+        const token = metaService.decryptToken(existing.adAccount.accessToken);
+        try {
+          await metaService.deleteObject(token, existing.externalId);
+        } catch (err) {
+          // Already gone on Meta (deleted in Ads Manager, or a half-finished
+          // publish) — nothing to orphan, so let the local delete proceed.
+          const goneOnMeta =
+            isMetaError(err) &&
+            (err.metaCode === 803 ||
+              /does not exist|cannot be loaded|unsupported get request/i.test(
+                err.metaUserMessage ?? ""
+              ));
+          if (!goneOnMeta) {
+            // `?force=true` is the escape hatch for a Meta object that can
+            // never be deleted (revoked token, closed account). It removes our
+            // row knowingly, leaving the campaign on Meta — the response says
+            // so so the caller can warn the user.
+            if (req.query.force !== "true") {
+              const friendly = isMetaError(err)
+                ? friendlyMetaError(err)
+                : {
+                    status: 502,
+                    message:
+                      "Couldn't delete this campaign on Meta, so it wasn't deleted here either — it would keep spending with no way to reach it.",
+                    detail: err instanceof Error ? err.message : String(err),
+                  };
+              console.error(
+                `[campaigns/delete] Meta delete failed for ${existing.externalId}: ${friendly.detail}`
+              );
+              return res.status(friendly.status).json({
+                error: friendly.message,
+                detail: friendly.detail,
+                canForce: true,
+              });
+            }
+            console.warn(
+              `[campaigns/delete] FORCED local delete of ${existing.id}; Meta campaign ${existing.externalId} still exists`
+            );
+          }
+        }
+      }
+
       await prisma.campaign.delete({ where: { id: existing.id } });
       res.json({ success: true });
     } catch (err) {
