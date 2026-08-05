@@ -3,6 +3,34 @@
 import { useMemo } from "react";
 import { useAuth } from "@clerk/nextjs";
 
+/**
+ * An error from our API that preserves the server's diagnostic fields.
+ *
+ * A plain `Error` keeps only the friendly message, which for Meta failures is
+ * a *guess at the cause* for several error codes. `detail` carries Meta's
+ * verbatim response and `step` names which of the five publish calls failed —
+ * without them, a wrong guess is indistinguishable from a right one and the
+ * only way to diagnose is to read server logs.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  /** Verbatim upstream detail, e.g. "Meta code 3: (#3) Application does not…". */
+  readonly detail?: string;
+  /** Which server-side step failed, e.g. "create ad set". */
+  readonly step?: string;
+
+  constructor(
+    message: string,
+    opts: { status: number; detail?: string; step?: string }
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.status = opts.status;
+    this.detail = opts.detail;
+    this.step = opts.step;
+  }
+}
+
 /* ───────────────────────────── */
 /* Types — mirror Prisma schema  */
 /* ───────────────────────────── */
@@ -594,7 +622,11 @@ export function useApiClient() {
         const err = await res
           .json()
           .catch(() => ({ error: `Request failed (${res.status})` }));
-        throw new Error(err.error ?? `HTTP ${res.status}`);
+        throw new ApiError(err.error ?? `HTTP ${res.status}`, {
+          status: res.status,
+          detail: typeof err.detail === "string" ? err.detail : undefined,
+          step: typeof err.step === "string" ? err.step : undefined,
+        });
       }
       if (res.status === 204) return undefined as T;
       return res.json() as Promise<T>;

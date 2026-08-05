@@ -26,7 +26,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
-import { useApiClient } from "@/lib/api";
+import { useApiClient, ApiError } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
 import { MetaAdPreview } from "./MetaAdPreview";
 import MetaErrorCard from "@/components/ui/MetaErrorCard";
@@ -330,7 +330,11 @@ export default function PublishToMetaModal({
   const [step, setStep] = useState(0);
   const [state, setState] = useState<WizardState>(() => initialState(campaign));
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<{
+    message: string;
+    detail?: string;
+    step?: string;
+  } | null>(null);
   // Set once the publish succeeds. The modal switches to a success screen
   // instead of vanishing — closing instantly gave no confirmation that
   // anything reached Meta, and no route to go look at it.
@@ -519,11 +523,16 @@ export default function PublishToMetaModal({
       setPublished(result);
       onPublished(result);
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "Publishing failed. Nothing was created on Meta — try again.";
-      setSubmitError(msg);
+      setSubmitError({
+        message:
+          err instanceof Error
+            ? err.message
+            : "Publishing failed. Nothing was created on Meta — try again.",
+        // Carried through from the API so the card can show Meta's own words
+        // and the exact step that failed, not just our interpretation.
+        detail: err instanceof ApiError ? err.detail : undefined,
+        step: err instanceof ApiError ? err.step : undefined,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -619,10 +628,15 @@ export default function PublishToMetaModal({
           )}
         </div>
 
-        {/* Error — friendly Meta error card (message already humanised server-side) */}
+        {/* Error — friendly Meta error card (message already humanised
+            server-side; detail/step expose Meta's verbatim response) */}
         {submitError && (
           <div className="mx-7 mb-3">
-            <MetaErrorCard message={submitError} />
+            <MetaErrorCard
+              message={submitError.message}
+              detail={submitError.detail}
+              step={submitError.step}
+            />
           </div>
         )}
 

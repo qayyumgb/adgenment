@@ -13,11 +13,17 @@ import { translateMetaError } from "@/lib/meta-errors";
 export default function MetaErrorCard({
   code,
   message,
+  detail,
+  step,
   onRetry,
   onReconnect,
 }: {
   code?: number;
   message: string;
+  /** Meta's verbatim response, when the server passed it through. */
+  detail?: string;
+  /** Which server-side step failed, e.g. "create ad set". */
+  step?: string;
   onRetry?: () => void;
   onReconnect?: () => void;
 }) {
@@ -77,6 +83,31 @@ export default function MetaErrorCard({
               Need help?
             </a>
           </div>
+
+          {/* Exactly what the platform said. Collapsed so it doesn't compete
+              with the plain-English message, but present — the friendly text
+              is an interpretation, and when it's wrong this is the only way to
+              tell without server logs. */}
+          {(detail || step) && (
+            <details className="mt-3 group">
+              <summary className="cursor-pointer list-none text-[11px] font-semibold text-slate-400 transition hover:text-slate-600">
+                <span className="group-open:hidden">▸ Technical details</span>
+                <span className="hidden group-open:inline">▾ Technical details</span>
+              </summary>
+              <div className="mt-1.5 space-y-1 rounded-lg bg-slate-900/[0.04] p-2.5">
+                {step && (
+                  <p className="text-[11px] text-slate-600">
+                    <span className="font-semibold">Failed at:</span> {step}
+                  </p>
+                )}
+                {detail && (
+                  <p className="break-words font-mono text-[11px] leading-relaxed text-slate-600">
+                    {detail}
+                  </p>
+                )}
+              </div>
+            </details>
+          )}
         </div>
       </div>
     </div>

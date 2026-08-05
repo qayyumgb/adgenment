@@ -985,7 +985,7 @@ router.post(
       // …but show the user a plain, actionable message.
       const friendly = isMetaError(err)
         ? friendlyMetaError(err)
-        : { status: 502, message: stepRaw };
+        : { status: 502, message: stepRaw, detail: raw };
       try {
         await prisma.campaign.update({
           where: { id: campaign.id },
@@ -994,8 +994,19 @@ router.post(
       } catch {
         // ignore — error logging is best-effort
       }
-      console.error("[campaigns/publish] failed:", stepRaw);
-      return res.status(friendly.status).json({ error: friendly.message });
+      // Log the full picture: which of the five Meta calls failed, and Meta's
+      // verbatim response. The friendly message is a guess at the cause for
+      // some codes; this line is the ground truth when one is wrong.
+      console.error(
+        `[campaigns/publish] FAILED at step "${publishStep}" — ${friendly.detail}\n  raw: ${raw}`
+      );
+      // `detail` + `step` let the UI show exactly what Meta said and which of
+      // the five publish calls failed, without the user digging in server logs.
+      return res.status(friendly.status).json({
+        error: friendly.message,
+        detail: friendly.detail,
+        step: publishStep,
+      });
     }
     void next; // satisfies lint when no fall-through next() is used
   }
