@@ -657,6 +657,29 @@ router.post(
     if (!targeting || typeof targeting !== "object") {
       return res.status(400).json({ error: "targeting is required" });
     }
+    // Meta rejects an ad set with no geography ("A location is missing…")
+    // unless a custom or saved audience supplies its own. Catch it here so the
+    // caller gets a message naming the step to fix, rather than Meta's version
+    // three API calls later — and so a direct API consumer gets the same
+    // guardrail the wizard has.
+    {
+      const geo = targeting.geo_locations;
+      const hasGeo =
+        (geo?.countries?.length ?? 0) > 0 ||
+        (geo?.cities?.length ?? 0) > 0 ||
+        (geo?.regions?.length ?? 0) > 0 ||
+        (geo?.zips?.length ?? 0) > 0;
+      const hasAudience =
+        (targeting.custom_audiences?.length ?? 0) > 0 ||
+        (targeting.saved_audiences?.length ?? 0) > 0;
+      if (!hasGeo && !hasAudience) {
+        return res.status(400).json({
+          error:
+            "Add at least one location (country or city) in the Audience step, or pick a saved/custom audience — Meta won't run an ad set without knowing where to show it.",
+          step: "audience",
+        });
+      }
+    }
     if (!creative || typeof creative !== "object") {
       return res.status(400).json({ error: "creative is required" });
     }

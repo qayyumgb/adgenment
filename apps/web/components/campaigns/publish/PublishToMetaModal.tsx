@@ -24,12 +24,19 @@ import {
   Plus,
   Minus,
   ExternalLink,
+  AlertCircle,
 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient, ApiError } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
 import { MetaAdPreview } from "./MetaAdPreview";
 import MetaErrorCard from "@/components/ui/MetaErrorCard";
+import { Modal } from "@/components/ui/Modal";
+import {
+  WizardRail,
+  WizardProgressBar,
+  type WizardStep,
+} from "@/components/ui/WizardRail";
 import type {
   Campaign,
   MetaPage,
@@ -228,14 +235,68 @@ function placementToTargeting(
   }
 }
 
-const STEP_LABELS = [
-  { key: "page", label: "Page", icon: Sparkles },
-  { key: "objective", label: "Objective", icon: Target },
-  { key: "audience", label: "Audience", icon: Users },
-  { key: "schedule", label: "Schedule", icon: CalendarRange },
-  { key: "creative", label: "Creative", icon: ImageIcon },
-  { key: "review", label: "Review", icon: Eye },
-] as const;
+/** Rail entries. The hint is what the step is *for* — six bare nouns don't
+ *  tell a first-time advertiser what's coming. */
+const STEP_LABELS: readonly WizardStep[] = [
+  { key: "page", label: "Page", hint: "Who the ad comes from", icon: Sparkles },
+  { key: "objective", label: "Objective", hint: "What you want it to do", icon: Target },
+  { key: "audience", label: "Audience", hint: "Who should see it", icon: Users },
+  { key: "schedule", label: "Schedule", hint: "Budget and dates", icon: CalendarRange },
+  { key: "creative", label: "Creative", hint: "Image, copy and link", icon: ImageIcon },
+  { key: "review", label: "Review", hint: "Check, then publish", icon: Eye },
+];
+
+/**
+ * Validate the Audience step the way Meta will.
+ *
+ * Meta rejects an ad set whose targeting has no geography — "A location is
+ * missing: Add at least one location or choose a custom audience." A custom or
+ * saved audience satisfies it instead, because those carry their own
+ * definition of who to reach.
+ *
+ * This used to surface only at publish, five steps after the field that caused
+ * it. Checking here means the user fixes it where they set it.
+ */
+function validateAudience(s: WizardState): { ok: boolean; reason: string | null } {
+  if (s.ageMin < 13) {
+    return { ok: false, reason: "Minimum age must be 13 or older." };
+  }
+  if (s.ageMin >= s.ageMax) {
+    return {
+      ok: false,
+      reason: "The maximum age has to be higher than the minimum age.",
+    };
+  }
+  const hasGeo = s.countries.length > 0 || s.cities.length > 0;
+  const hasAudience = s.customAudiences.length > 0 || s.savedAudiences.length > 0;
+  if (!hasGeo && !hasAudience) {
+    return {
+      ok: false,
+      reason:
+        "Meta needs to know where to show your ad. Add at least one country or city — or pick a saved/custom audience, which brings its own targeting.",
+    };
+  }
+  return { ok: true, reason: null };
+}
+
+/** Short version for the footer, next to the disabled Continue button. */
+function blockedHintFor(step: number, s: WizardState): string {
+  switch (step) {
+    case 0:
+      return "Pick a Page to continue";
+    case 2:
+      return s.countries.length === 0 &&
+        s.cities.length === 0 &&
+        s.customAudiences.length === 0 &&
+        s.savedAudiences.length === 0
+        ? "Add a location to continue"
+        : "Check the age range";
+    case 4:
+      return "Add an image, body copy and a valid link";
+    default:
+      return "";
+  }
+}
 
 const CTA_OPTIONS: { value: MetaCallToAction; label: string }[] = [
   { value: "LEARN_MORE", label: "Learn More" },
@@ -354,6 +415,14 @@ export default function PublishToMetaModal({
     }
   }, [open, campaign]);
 
+  // Clear a failed-publish error as soon as the user moves to another step.
+  // Otherwise the card follows them around the wizard — "A location is
+  // missing" stayed pinned under the Schedule step long after they'd gone back
+  // and fixed the audience, reading as a fresh failure on the wrong screen.
+  useEffect(() => {
+    setSubmitError(null);
+  }, [step]);
+
   // ESC to close (only when not submitting)
   useEffect(() => {
     if (!open) return;
@@ -372,7 +441,7 @@ export default function PublishToMetaModal({
       case 1:
         return true; // objective is locked from the campaign
       case 2:
-        return state.ageMin < state.ageMax && state.ageMin >= 13;
+        return validateAudience(state).ok;
       case 3:
         return true; // schedule is locked from the campaign
       case 4: {
@@ -539,13 +608,16 @@ export default function PublishToMetaModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !submitting) onClose();
-      }}
+    <Modal
+      open={open}
+      onClose={onClose}
+      position="right"
+      ariaLabel="Publish campaign to Meta"
+      // Don't let a stray backdrop click or ESC abandon an in-flight publish —
+      // Meta objects are being created and rolled back behind this.
+      closeOnBackdrop={!submitting}
+      closeOnEscape={!submitting}
     >
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
       {published ? (
         <PublishSuccess
           campaign={campaign}
@@ -553,144 +625,149 @@ export default function PublishToMetaModal({
           onClose={onClose}
         />
       ) : (
-      <div className="relative z-10 flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-7 py-4">
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary">
-              Publish to Meta — Step {step + 1} of {STEP_LABELS.length}
+        <>
+          {/* ── Header ── */}
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-6 py-3.5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 shadow-glow">
+                <Rocket className="h-4 w-4 text-white" strokeWidth={2.5} />
+              </div>
+              <div className="min-w-0">
+                <h2 className="truncate text-base font-bold text-slate-900">
+                  Publish to Meta
+                </h2>
+                <p className="truncate text-[11px] font-medium text-slate-500">
+                  {campaign.name}
+                </p>
+              </div>
             </div>
-            <h2 className="text-base font-bold text-slate-900">
-              {STEP_LABELS[step].label}
-            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              aria-label="Close"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            aria-label="Close"
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
 
-        {/* Step indicator */}
-        <div className="px-7 pt-4">
-          <div className="flex items-center gap-1.5">
-            {STEP_LABELS.map((s, i) => {
-              const done = i < step;
-              const current = i === step;
-              const Icon = s.icon;
-              return (
-                <div key={s.key} className="flex flex-1 items-center gap-1.5">
-                  <div
-                    className={clsx(
-                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition",
-                      done
-                        ? "bg-primary text-white"
-                        : current
-                          ? "bg-primary/15 text-primary ring-2 ring-primary"
-                          : "bg-slate-100 text-slate-400"
-                    )}
-                  >
-                    {done ? <Check className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
-                  </div>
-                  {i < STEP_LABELS.length - 1 && (
-                    <div
-                      className={clsx(
-                        "h-px flex-1 transition",
-                        done ? "bg-primary" : "bg-slate-200"
-                      )}
+          {/* ── Body: step rail + content ── */}
+          <div className="flex flex-1 overflow-hidden">
+            <WizardRail
+              steps={STEP_LABELS}
+              current={step}
+              disabled={submitting}
+              onStepClick={(i) => setStep(i)}
+            />
+
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-gradient-to-b from-slate-50/40 via-white to-white">
+              <WizardProgressBar steps={STEP_LABELS} current={step} />
+
+              {/* Content is capped and centred so a 90vw panel doesn't
+                  stretch form fields to an unreadable line length. */}
+              <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-10">
+                <div className="mx-auto w-full max-w-3xl">
+                  {step === 0 && <Step1Page state={state} patch={patch} />}
+                  {step === 1 && <Step2Objective campaign={campaign} />}
+                  {step === 2 && <Step3Audience state={state} patch={patch} />}
+                  {step === 3 && <Step4Schedule campaign={campaign} />}
+                  {step === 4 && (
+                    <Step5Creative
+                      state={state}
+                      patch={patch}
+                      pageName={state.pageName}
                     />
                   )}
+                  {step === 5 && (
+                    <Step6Review campaign={campaign} state={state} />
+                  )}
                 </div>
-              );
-            })}
+              </div>
+            </div>
           </div>
-        </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-7 py-5">
-          {step === 0 && <Step1Page state={state} patch={patch} />}
-          {step === 1 && <Step2Objective campaign={campaign} />}
-          {step === 2 && <Step3Audience state={state} patch={patch} />}
-          {step === 3 && <Step4Schedule campaign={campaign} />}
-          {step === 4 && (
-            <Step5Creative
-              state={state}
-              patch={patch}
-              pageName={state.pageName}
-            />
+          {/* ── Error — friendly message + Meta's verbatim detail ── */}
+          {submitError && (
+            <div className="border-t border-slate-100 px-6 py-3">
+              <div className="mx-auto w-full max-w-3xl">
+                <MetaErrorCard
+                  message={submitError.message}
+                  detail={submitError.detail}
+                  step={submitError.step}
+                />
+              </div>
+            </div>
           )}
-          {step === 5 && (
-            <Step6Review campaign={campaign} state={state} />
-          )}
-        </div>
 
-        {/* Error — friendly Meta error card (message already humanised
-            server-side; detail/step expose Meta's verbatim response) */}
-        {submitError && (
-          <div className="mx-7 mb-3">
-            <MetaErrorCard
-              message={submitError.message}
-              detail={submitError.detail}
-              step={submitError.step}
-            />
-          </div>
-        )}
+          {/* ── Footer — actions grouped right: Close · Back · Continue ── */}
+          <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/60 px-6 py-3.5">
+            {/* Tell the user why Continue is dead rather than leaving them
+                clicking a greyed-out button. */}
+            {!canAdvance && step < STEP_LABELS.length - 1 && (
+              <span className="mr-auto hidden text-[11px] font-medium text-slate-400 sm:block">
+                {blockedHintFor(step, state)}
+              </span>
+            )}
 
-        {/* Footer */}
-        <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/50 px-7 py-4">
-          <button
-            type="button"
-            disabled={submitting || step === 0}
-            onClick={() => setStep((s) => Math.max(0, s - 1))}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Back
-          </button>
-
-          {step < STEP_LABELS.length - 1 ? (
             <button
               type="button"
-              disabled={!canAdvance}
-              onClick={() => setStep((s) => s + 1)}
-              className={clsx(
-                "btn-brand",
-                !canAdvance && "pointer-events-none opacity-50"
-              )}
-            >
-              Continue
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          ) : (
-            // The final action of the whole wizard — sized and coloured to be
-            // unmistakably the thing to click.
-            <button
-              type="button"
+              onClick={onClose}
               disabled={submitting}
-              onClick={handleSubmit}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-7 py-3.5 text-base font-bold text-white shadow-lg shadow-indigo-500/25 transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-indigo-500/30 disabled:pointer-events-none disabled:opacity-60"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {submitting ? (
-                <>
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  Publishing to Meta…
-                </>
-              ) : (
-                <>
-                  <Rocket className="h-5 w-5" strokeWidth={2.5} />
-                  Publish to Meta
-                </>
-              )}
+              Close
             </button>
-          )}
-        </div>
-      </div>
+
+            <button
+              type="button"
+              disabled={submitting || step === 0}
+              onClick={() => setStep((s) => Math.max(0, s - 1))}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Back
+            </button>
+
+            {step < STEP_LABELS.length - 1 ? (
+              <button
+                type="button"
+                disabled={!canAdvance}
+                onClick={() => setStep((s) => s + 1)}
+                className={clsx(
+                  "btn-brand",
+                  !canAdvance && "pointer-events-none opacity-50"
+                )}
+              >
+                Continue
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            ) : (
+              // The final action of the whole wizard — sized and coloured to
+              // be unmistakably the thing to click.
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={handleSubmit}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-3 text-base font-bold text-white shadow-lg shadow-indigo-500/25 transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-indigo-500/30 disabled:pointer-events-none disabled:opacity-60"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Publishing to Meta…
+                  </>
+                ) : (
+                  <>
+                    <Rocket className="h-5 w-5" strokeWidth={2.5} />
+                    Publish to Meta
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </>
       )}
-    </div>
+    </Modal>
   );
 }
 
@@ -718,8 +795,11 @@ function PublishSuccess({
     : "https://business.facebook.com/adsmanager";
 
   return (
-    <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
-      <div className="px-8 pb-6 pt-9 text-center">
+    // Centres the success card inside the full-height panel. Without this it
+    // would cling to the top-left corner of a 90vw sheet.
+    <div className="flex flex-1 items-center justify-center overflow-y-auto bg-gradient-to-b from-slate-50/60 via-white to-white p-6">
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-xl">
+        <div className="px-8 pb-6 pt-9 text-center">
         <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/25">
           <Check className="h-8 w-8" strokeWidth={3} />
         </div>
@@ -762,6 +842,7 @@ function PublishSuccess({
           >
             Back to the campaign
           </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1089,6 +1170,11 @@ function Step3Audience({
   state: WizardState;
   patch: (u: Partial<WizardState>) => void;
 }) {
+  const audience = validateAudience(state);
+  const hasLocation = state.countries.length > 0 || state.cities.length > 0;
+  const coveredByAudience =
+    state.customAudiences.length > 0 || state.savedAudiences.length > 0;
+
   return (
     <div className="space-y-5">
       <div>
@@ -1096,14 +1182,40 @@ function Step3Audience({
           Who should see this ad?
         </h3>
         <p className="text-sm text-slate-500">
-          Targeting is granular. Skip what you don&apos;t need — empty fields
-          mean &ldquo;Meta defaults&rdquo; (broad).
+          Location is required — everything else is optional, and leaving a
+          field empty just means Meta targets broadly.
         </p>
       </div>
 
+      {/* The one rule Meta enforces here. Shown as guidance up front, and only
+          turns amber once it's actually unmet, so a fresh step doesn't open
+          looking like an error. */}
+      {!audience.ok && audience.reason && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/80 p-3.5">
+          <AlertCircle
+            className="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
+            strokeWidth={2.25}
+          />
+          <p className="text-xs leading-relaxed text-amber-900">
+            {audience.reason}
+          </p>
+        </div>
+      )}
+
       <LoadSavedAudience patch={patch} />
 
-      <Section label="Location" icon={MapPin}>
+      <Section
+        label={
+          coveredByAudience ? "Location" : "Location (required)"
+        }
+        icon={MapPin}
+      >
+        {coveredByAudience && !hasLocation && (
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+            Your saved/custom audience already defines who to reach, so a
+            location isn&apos;t required. Add one to narrow it further.
+          </p>
+        )}
         <CountryPicker
           values={state.countries}
           onChange={(v) => patch({ countries: v })}
@@ -1989,7 +2101,11 @@ function Step6Review({
           <ReviewRow
             label="Countries"
             value={
-              state.countries.length > 0 ? state.countries.join(", ") : "Any"
+              state.countries.length > 0
+                ? state.countries.join(", ")
+                : // "Any" would be wrong — Meta requires a location, so an
+                  // empty list here means the audience supplies the geography.
+                  "From your selected audience"
             }
           />
           <ReviewRow

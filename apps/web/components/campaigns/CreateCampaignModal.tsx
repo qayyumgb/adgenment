@@ -14,12 +14,21 @@ import {
   Calendar,
   AlertCircle,
   Loader2,
+  Megaphone,
+  Target,
+  Eye,
   type LucideIcon,
 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
 import { currencySymbol } from "@/lib/money";
 import MetaHealthStatus from "@/components/settings/MetaHealthStatus";
+import { Modal } from "@/components/ui/Modal";
+import {
+  WizardRail,
+  WizardProgressBar,
+  type WizardStep,
+} from "@/components/ui/WizardRail";
 import type { AdAccount, MetaPixel, Platform as ApiPlatform } from "@/lib/api";
 
 type PlatformUI = {
@@ -157,7 +166,12 @@ interface CreateCampaignModalProps {
   prefill?: CampaignPrefill | null;
 }
 
-const STEP_LABELS = ["Platform", "Objective", "Budget & Schedule", "Review"];
+const STEP_LABELS: readonly WizardStep[] = [
+  { key: "platform", label: "Platform", hint: "Where the ad runs", icon: Megaphone },
+  { key: "objective", label: "Objective", hint: "What you want it to do", icon: Target },
+  { key: "budget", label: "Budget & Schedule", hint: "Spend and dates", icon: Calendar },
+  { key: "review", label: "Review", hint: "Name it and create", icon: Eye },
+];
 
 export default function CreateCampaignModal({
   open,
@@ -524,94 +538,65 @@ export default function CreateCampaignModal({
   const hasMetaSelected = selectedPlatforms.includes("META");
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-in"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !submitting) onClose();
-      }}
+    <Modal
+      open={open}
+      onClose={onClose}
+      position="right"
+      ariaLabel="Create a campaign"
+      closeOnBackdrop={!submitting}
+      closeOnEscape={!submitting}
     >
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
-      <div className="relative z-10 w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-8 py-5">
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary">
-              Step {step} of 4
-            </div>
-            <h2 className="text-lg font-bold text-slate-900">
-              {STEP_LABELS[step - 1]}
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-6 py-3.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 shadow-glow">
+            <Rocket className="h-4 w-4 text-white" strokeWidth={2.5} />
+          </div>
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-bold text-slate-900">
+              New campaign
             </h2>
+            <p className="truncate text-[11px] font-medium text-slate-500">
+              Set the goal and budget — creative comes next
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={!!submitting}
-            aria-label="Close"
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
-          >
-            <X className="h-4 w-4" />
-          </button>
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={!!submitting}
+          aria-label="Close"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
 
-        {/* Step indicator */}
-        <div className="px-8 pt-5">
-          <div className="flex items-center gap-2">
-            {STEP_LABELS.map((label, i) => {
-              const n = i + 1;
-              const done = step > n;
-              const current = step === n;
-              return (
-                <div key={label} className="flex flex-1 items-center gap-2">
-                  <div
-                    className={clsx(
-                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition",
-                      done
-                        ? "bg-primary text-white"
-                        : current
-                          ? "bg-primary/15 text-primary ring-2 ring-primary"
-                          : "bg-slate-100 text-slate-400"
-                    )}
-                  >
-                    {done ? <Check className="h-3.5 w-3.5" /> : n}
-                  </div>
-                  <div
-                    className={clsx(
-                      "hidden truncate text-xs font-semibold sm:block",
-                      current
-                        ? "text-slate-900"
-                        : done
-                          ? "text-slate-600"
-                          : "text-slate-400"
-                    )}
-                  >
-                    {label}
-                  </div>
-                  {n < STEP_LABELS.length && (
-                    <div
-                      className={clsx(
-                        "h-px flex-1 transition",
-                        done ? "bg-primary" : "bg-slate-200"
-                      )}
-                    />
-                  )}
+      {/* ── Body: step rail + content ── */}
+      <div className="flex flex-1 overflow-hidden">
+        <WizardRail
+          steps={STEP_LABELS}
+          current={step - 1}
+          disabled={!!submitting}
+          onStepClick={(i) => setStep(i + 1)}
+        />
+
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-gradient-to-b from-slate-50/40 via-white to-white">
+          <WizardProgressBar steps={STEP_LABELS} current={step - 1} />
+
+          <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-10">
+            {/* Content capped so form fields don't stretch across 90vw. */}
+            <div className="mx-auto w-full max-w-3xl">
+              {/* Heads-up if the Meta account isn't publish-ready (hidden when OK). */}
+              {accountsByPlatform.get("META")?.[0]?.id && (
+                <div className="mb-5">
+                  <MetaHealthStatus
+                    adAccountId={accountsByPlatform.get("META")![0].id}
+                    hideWhenHealthy
+                  />
                 </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Body */}
-        <div className="max-h-[60vh] overflow-y-auto px-8 py-6">
-          {/* Heads-up if the Meta account isn't publish-ready (hidden when OK). */}
-          {accountsByPlatform.get("META")?.[0]?.id && (
-            <div className="mb-5">
-              <MetaHealthStatus
-                adAccountId={accountsByPlatform.get("META")![0].id}
-                hideWhenHealthy
-              />
-            </div>
-          )}
-          {step === 1 && (
+              )}
+              {step === 1 && (
             <StepPlatform
               platforms={PLATFORMS_UI}
               accountsByPlatform={accountsByPlatform}
@@ -670,80 +655,94 @@ export default function CreateCampaignModal({
               currency={budgetCurrency}
             />
           )}
+            </div>
+          </div>
         </div>
+      </div>
 
-        {submitError && (
-          <div className="mx-8 mb-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700">
+      {submitError && (
+        <div className="border-t border-slate-100 px-6 py-3">
+          <div className="mx-auto flex w-full max-w-3xl items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{submitError}</span>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Footer */}
-        <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/50 px-8 py-4">
+      {/* ── Footer — actions grouped right: Close · Back · Next ── */}
+      <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/60 px-6 py-3.5">
+        {/* Secondary "save as draft" sits left of the group so it reads as an
+            alternative to the primary action, not a step control. */}
+        {step === 4 && hasMetaSelected && (
           <button
             type="button"
-            disabled={!!submitting}
-            onClick={() => (step === 1 ? onClose() : setStep((s) => s - 1))}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+            disabled={!!submitting || !canAdvance}
+            onClick={() => handleSubmit("draft")}
+            className="mr-auto text-xs font-semibold text-slate-500 transition hover:text-primary disabled:opacity-50"
           >
-            <ChevronLeft className="h-4 w-4" />
-            {step === 1 ? "Cancel" : "Back"}
+            {submitting === "draft" ? "Saving…" : "Just save as a draft"}
           </button>
+        )}
 
-          {step < 4 ? (
-            <button
-              type="button"
-              disabled={!canAdvance}
-              onClick={() => setStep((s) => s + 1)}
-              className={clsx(
-                "btn-brand",
-                !canAdvance && "pointer-events-none opacity-50"
-              )}
-            >
-              Next
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          ) : (
-            <div className="flex flex-col items-end gap-2">
-              <button
-                type="button"
-                disabled={!!submitting || !canAdvance}
-                className="btn-brand disabled:pointer-events-none disabled:opacity-60"
-                onClick={() => handleSubmit(hasMetaSelected ? "publish" : "draft")}
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Creating…
-                  </>
-                ) : hasMetaSelected ? (
-                  <>
-                    <Rocket className="h-4 w-4" strokeWidth={2.5} />
-                    Create &amp; Add Creative
-                  </>
-                ) : (
-                  <>
-                    <Rocket className="h-4 w-4" strokeWidth={2.5} />
-                    Create Campaign
-                  </>
-                )}
-              </button>
-              {hasMetaSelected && (
-                <button
-                  type="button"
-                  disabled={!!submitting || !canAdvance}
-                  onClick={() => handleSubmit("draft")}
-                  className="text-xs font-semibold text-slate-500 transition hover:text-primary disabled:opacity-50"
-                >
-                  {submitting === "draft" ? "Saving…" : "Just save as a draft"}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={!!submitting}
+          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Close
+        </button>
+
+        <button
+          type="button"
+          disabled={!!submitting || step === 1}
+          onClick={() => setStep((s) => Math.max(1, s - 1))}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ChevronLeft className="h-4 w-4" />
+          Back
+        </button>
+
+        {step < 4 ? (
+          <button
+            type="button"
+            disabled={!canAdvance}
+            onClick={() => setStep((s) => s + 1)}
+            className={clsx(
+              "btn-brand",
+              !canAdvance && "pointer-events-none opacity-50"
+            )}
+          >
+            Next
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={!!submitting || !canAdvance}
+            className="btn-brand disabled:pointer-events-none disabled:opacity-60"
+            onClick={() => handleSubmit(hasMetaSelected ? "publish" : "draft")}
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Creating…
+              </>
+            ) : hasMetaSelected ? (
+              <>
+                <Rocket className="h-4 w-4" strokeWidth={2.5} />
+                Create &amp; Add Creative
+              </>
+            ) : (
+              <>
+                <Rocket className="h-4 w-4" strokeWidth={2.5} />
+                Create Campaign
+              </>
+            )}
+          </button>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 
