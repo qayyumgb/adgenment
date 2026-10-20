@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LegalLayout, LegalSection as Section } from "@/components/marketing/legal/Legal";
 
 export const metadata = {
   title: "Terms of Service",
@@ -11,9 +12,8 @@ const CONTACT_EMAIL = "support@advertix.io";
 
 export default function TermsPage() {
   return (
-    <main className="bg-white text-slate-900">
-      <LegalHero title="Terms of Service" effectiveDate={EFFECTIVE_DATE} />
-      <article className="mx-auto max-w-3xl px-6 py-12 lg:px-8">
+    <LegalLayout title="Terms of" accent="Service" effectiveDate={EFFECTIVE_DATE} current="/terms">
+      <div className="mk-legal-body pb-8">
         <p className="text-sm leading-relaxed text-slate-700">
           These Terms of Service (&ldquo;Terms&rdquo;) form a binding agreement
           between you and Advertix (operated by Abdul Qayyum,
@@ -22,6 +22,7 @@ export default function TermsPage() {
           (the &ldquo;Service&rdquo;). By creating an account or using the
           Service, you agree to these Terms.
         </p>
+      </div>
 
         <Section title="1. The Service">
           <p>
@@ -277,58 +278,7 @@ export default function TermsPage() {
           </p>
           <p className="mt-2">Operator: Advertix (operated by Abdul Qayyum)</p>
         </Section>
-      </article>
-    </main>
+    </LegalLayout>
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="mt-8">
-      <h2 className="text-xl font-bold tracking-tight text-slate-900">
-        {title}
-      </h2>
-      <div className="mt-3 space-y-2 text-sm leading-relaxed text-slate-700">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-function LegalHero({
-  title,
-  effectiveDate,
-}: {
-  title: string;
-  effectiveDate: string;
-}) {
-  return (
-    <section className="relative overflow-hidden bg-gradient-to-br from-[#0B1319] via-indigo-950 to-[#0B1319] pb-16 pt-32 sm:pt-36">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-32 top-0 h-72 w-72 rounded-full bg-indigo-600/25 blur-3xl"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-32 bottom-0 h-72 w-72 rounded-full bg-violet-600/25 blur-3xl"
-      />
-      <div className="relative mx-auto max-w-3xl px-6 text-center lg:px-8">
-        <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-xs font-semibold text-white/85 backdrop-blur">
-          Legal
-        </div>
-        <h1 className="mt-4 text-4xl font-bold tracking-tight text-white sm:text-5xl">
-          {title}
-        </h1>
-        <p className="mt-3 text-sm font-medium text-slate-400">
-          Effective date: {effectiveDate}
-        </p>
-      </div>
-    </section>
-  );
-}

@@ -485,6 +485,15 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-20 — Marketing site redesign ("Option C")
+
+New marketing site from the 2026 mockups. Plan, decisions and progress: [docs/MARKETING_REDESIGN_PLAN.md](docs/MARKETING_REDESIGN_PLAN.md).
+
+- **Pages:** Home, How it works (new), Product (was Features; `/features` permanently redirects to `/product`), For agencies (new), Pricing (new), About, Contact. Privacy and Terms restyled with their text unchanged; Data deletion untouched.
+- **Foundation:** marketing-only tokens on `.mk` (`mk-*` Tailwind colours and `mk-sm…mk-2xl` screens), Geist + Instrument Serif scoped to the marketing layout, GSAP + Lenis motion that never runs in the dashboard, new header and footer, `sitemap.xml` + `robots.txt`.
+- **Contact:** new public `POST /api/contact` (Resend REST, honeypot, per-IP rate limit). New env vars: `RESEND_API_KEY`, `CONTACT_TO`, `CONTACT_FROM`, `NEXT_PUBLIC_CAL_LINK`.
+- **Deps:** added `gsap`, `@gsap/react`, `lenis`, `geist`; removed unused `framer-motion`. Deleted `MarketingNav`, `MarketingFooter`, `GradientMesh`, `DashboardMockup`, the old contact form and the marketing `loading.tsx`.
+
 ### 2026-08-02 — Removed the temporary Meta API warmup cron
 
 The app is registered and approved on Meta, so the call-volume padding added on 2026-06-21 has served its purpose and is gone. It was firing 11 read-only Marketing API calls per connected ad account every 30 minutes — ~528 calls/day of pure noise, burning rate-limit budget that should serve real customers, and at risk of tripping Meta's abuse detection now that the review window has closed.

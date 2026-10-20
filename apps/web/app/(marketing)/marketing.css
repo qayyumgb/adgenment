@@ -1,0 +1,189 @@
+/*
+ * Marketing site ("Option C") tokens and motion gates.
+ * Scoped to `.mk` (the marketing layout wrapper) so nothing here reaches the
+ * dashboard. Tailwind maps these to `mk-*` colours (tailwind.config.ts).
+ * Values are RGB channels so Tailwind opacity modifiers work.
+ * Spec: docs/MARKETING_REDESIGN_PLAN.md
+ */
+.mk {
+  --mk-paper: 248 246 241;
+  --mk-paper2: 255 253 248;
+  --mk-s2: 241 238 230;
+  --mk-s3: 231 227 216;
+  --mk-ink: 21 19 26;
+  --mk-ink2: 90 86 100;
+  /* Mockup uses #8e8a97 (3.1:1 on paper); darkened to pass WCAG AA. */
+  --mk-ink3: 108 104 117;
+  --mk-brand: 100 72 242;
+  --mk-brand-hover: 85 55 230;
+  --mk-brand-ink: 68 40 214;
+  --mk-soft: 239 234 253;
+  --mk-pos: 11 125 80;
+  --mk-neg: 194 58 63;
+  --mk-warn: 154 92 0;
+  --mk-night: 13 11 23;
+  --mk-on-dark: 244 242 250;
+  --mk-on-dark2: 170 166 186;
+  /* Mockup uses #7d798f (4.4:1 on ink); lightened to pass WCAG AA. */
+  --mk-on-dark3: 142 138 159;
+  --mk-lav: 199 188 255;
+  --mk-lav-ink: 185 171 255;
+  --mk-pos-on-dark: 65 211 154;
+  --mk-grad: linear-gradient(115deg, #8a3ffc, #5d5cff 50%, #2d8cff);
+
+  background: rgb(var(--mk-paper));
+  color: rgb(var(--mk-ink));
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: normal;
+}
+
+/* Overscroll / rubber-band area matches the paper instead of the root white. */
+html:has(.mk),
+html:has(.mk) body {
+  background: rgb(248 246 241);
+}
+
+.mk input[type="range"] {
+  accent-color: #8b73ff;
+}
+
+.mk [id] {
+  scroll-margin-top: 80px;
+}
+
+.mk .mk-grad-text {
+  background: var(--mk-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.mk .mk-dot-grid {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+@keyframes mk-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+/*
+ * ── Legal pages (Privacy, Terms) ──────────────────────────────────────────
+ * The legal copy keeps its original markup and utility classes; these
+ * selectors (more specific than single utilities) give it the new look.
+ */
+.mk .mk-legal h2 {
+  margin: 0 0 14px;
+  font-size: clamp(22px, 2.4vw, 28px);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: rgb(var(--mk-ink));
+}
+.mk .mk-legal h3 {
+  margin: 22px 0 6px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: rgb(var(--mk-ink));
+}
+.mk .mk-legal .mk-legal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 16px;
+  line-height: 1.7;
+  color: rgb(var(--mk-ink2));
+}
+.mk .mk-legal .mk-legal-body p,
+.mk .mk-legal .mk-legal-body ul,
+.mk .mk-legal .mk-legal-body ol {
+  margin: 0;
+  color: rgb(var(--mk-ink2));
+}
+.mk .mk-legal .mk-legal-body ul,
+.mk .mk-legal .mk-legal-body ol {
+  padding-left: 1.25rem;
+}
+.mk .mk-legal .mk-legal-body li + li {
+  margin-top: 6px;
+}
+.mk .mk-legal .mk-legal-body li::marker {
+  color: rgb(var(--mk-brand));
+}
+.mk .mk-legal .mk-legal-body strong,
+.mk .mk-legal .mk-legal-body b {
+  color: rgb(var(--mk-ink));
+  font-weight: 600;
+}
+.mk .mk-legal .mk-legal-body a {
+  color: rgb(var(--mk-brand-ink));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.mk .mk-legal .mk-legal-body a:hover {
+  color: rgb(var(--mk-brand));
+}
+
+/* ── Lenis (smooth scroll) ─────────────────────────────────────────────── */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+/*
+ * ── Scroll reveals ────────────────────────────────────────────────────────
+ * Server markup marks elements with data-reveal="line | up | rise".
+ * The hidden "before" state applies ONLY when <html> has `mk-motion`, which
+ * an inline script sets before first paint (and never under reduced motion).
+ * No JS → no class → everything visible. MarketingMotion animates each
+ * element in and marks it data-reveal-done; if that never happens (script
+ * error), the fallback animation reveals it after 2.5s.
+ */
+.mk-motion .mk [data-reveal="up"],
+.mk-motion .mk [data-reveal="rise"] {
+  opacity: 0;
+  visibility: hidden;
+}
+.mk-motion .mk [data-reveal="line"] {
+  transform: translateY(108%);
+}
+/* Progress bars that fill from the left when scrolled into view. */
+.mk-motion .mk [data-reveal="grow"] {
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+.mk-motion .mk [data-reveal]:not([data-reveal-done]) {
+  animation: mk-reveal-fallback 0s linear 2.5s forwards;
+}
+@keyframes mk-reveal-fallback {
+  to {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk *,
+  .mk *::before,
+  .mk *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

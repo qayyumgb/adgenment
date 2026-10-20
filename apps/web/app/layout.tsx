@@ -50,7 +50,9 @@ export default function RootLayout({
 }) {
   return (
     <ClerkProvider>
-      <html lang="en" className="h-full">
+      {/* suppressHydrationWarning: the marketing layout's inline script adds
+          the `mk-motion` class to <html> before hydration. */}
+      <html lang="en" className="h-full" suppressHydrationWarning>
         <body className="h-full bg-white text-slate-900 dark:bg-dark-bg dark:text-slate-100">
           {children}
         </body>

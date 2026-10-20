@@ -29,6 +29,12 @@ const nextConfig = {
     ];
   },
 
+  // The marketing "Features" page became "Product" in the 2026 redesign
+  // (docs/MARKETING_REDESIGN_PLAN.md). 301 keeps old links and rankings.
+  async redirects() {
+    return [{ source: "/features", destination: "/product", permanent: true }];
+  },
+
   // Trusted external image hosts. `remotePatterns` is the Next 14 recommended
   // shape (replaces the deprecated `images.domains`).
   images: {

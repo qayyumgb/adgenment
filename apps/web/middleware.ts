@@ -9,7 +9,10 @@ import { NextResponse } from "next/server";
  * - `/sign-in/*`            Clerk sign-in pages
  * - `/sign-up/*`            Clerk sign-up pages
  * - `/api/webhooks/*`       external services posting to us (Stripe, Clerk, etc.)
- * - marketing pages         /privacy, /terms, /features, /about, /contact
+ * - marketing pages         /product, /how-it-works, /agencies, /pricing,
+ *                           /about, /contact, /privacy, /terms, /data-deletion
+ *                           (/features 301s to /product via next.config.js)
+ * - `/api/contact`          public contact-form endpoint
  *
  * Signed-in but workspace-less users land on `/onboarding`. That route
  * REQUIRES auth (so it stays out of this matcher) but does NOT require a
@@ -25,15 +28,26 @@ const isPublicRoute = createRouteMatcher([
   "/privacy",
   "/terms",
   "/features",
+  "/product",
+  "/how-it-works",
+  "/agencies",
+  "/pricing",
   "/about",
   "/contact",
   "/data-deletion",
+  "/api/contact",
+  "/sitemap.xml",
+  "/robots.txt",
 ]);
 
 // Paths that exist only on the marketing site. Hitting these on `app.` should
 // send the visitor over to the apex (where they're meant to live).
 const MARKETING_ONLY_PATHS = [
   "/features",
+  "/product",
+  "/how-it-works",
+  "/agencies",
+  "/pricing",
   "/about",
   "/contact",
   "/privacy",
