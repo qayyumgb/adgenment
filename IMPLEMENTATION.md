@@ -407,6 +407,16 @@ All tokens live in [apps/web/app/globals.css](apps/web/app/globals.css) and [app
 
 The read/sync path is shipped and verified end-to-end (PKR campaign syncing with correct currency, status, and totals as of 2026-06-08). What's still missing for "100% complete":
 
+- 🔴 **HIGH PRIORITY — Creative previews break after a few days (expired Meta CDN URLs)** *(reported 2026-10-20)*
+  - **Symptom:** images, carousel cards and video thumbnails in the Creatives library show as broken a few days after upload. The live ads on Meta are **not** affected; only our in-app previews are.
+  - **Cause:** we persist the temporary `scontent…fbcdn.net` URL that Meta returns: the `/adimages` upload response `url` ([meta.service.ts](apps/api/src/services/meta.service.ts) `uploadImageFromBytes`) and the video `picture` thumbnail ([creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) upload/edit flows). These URLs are signed and carry an expiry timestamp (the `oe=` hex param). The stable identifiers are `image_hash` / `video_id`, which we already store in `Creative.content`. Video *playback* already works because `/meta/video-source` fetches a fresh URL on demand.
+  - **Fix (refresh-on-read in `GET /api/creatives`, [creatives.ts](apps/api/src/routes/creatives.ts)):**
+    1. For each creative, parse `oe=` from the stored URL(s) (`url`, `thumbnailUrl`, `cards[].imageUrl`) and flag any that are expired or expire within ~1h.
+    2. Batch-fetch fresh URLs from Meta: images and carousel cards via `GET /act_{id}/adimages?hashes=[…]&fields=hash,url,permalink_url`; video thumbnails via `GET /?ids={videoIds}&fields=picture`. Use the workspace's active Meta ad account, since image hashes are per ad account.
+    3. Write the refreshed URLs back into `Creative.content`, so Meta is only called again after the new URLs expire.
+    4. Fail soft: if Meta errors or the account is disconnected, return the stored URLs unchanged and never fail the list request.
+  - **Try first (may shrink the work):** AdImage `permalink_url` is documented by Meta as a *permanent* URL. If it renders reliably in an `<img>`, persist it at upload time (`/meta/upload-image`, `/ai/generate-image`) and keep refresh-on-read only for video thumbnails.
+  - No schema change; frontend unchanged. Estimated effort: **~0.5 day**.
 - **Publish-to-Meta path** â€” full ad-authoring flow, not just campaign-shell publish. Build campaign â†’ ad set (targeting/budget/schedule/placement) â†’ ad creative (image upload + copy + link) â†’ ad object. Multi-step wizard UI. Real `OUTCOME_*` objective mapping. After clicking Publish in Advertix, a fully-running ad should appear in Facebook within ~30 seconds.
   - Estimated effort: **2-3 days focused work** for Meta alone.
   - Pre-existing scaffolding: `metaService.createCampaign()` already exists in [meta.service.ts](apps/api/src/services/meta.service.ts) but is currently dead code (no route calls it).
@@ -457,6 +467,7 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 | Area | Item |
 |---|---|
+| 🔴 Creatives / Meta media | **HIGH PRIORITY.** Creative previews break after a few days because stored Meta CDN URLs expire. Refresh them from `image_hash` / `video_id` in `GET /api/creatives`. Full plan in Roadmap → Phase 1 |
 | Auth | Onboarding wizard removed. Workspace is auto-provisioned in `requireAuth` middleware on first authenticated request. The Clerk-metadata-driven redirect path in middleware was also removed; reintroduce if/when we add a paid-tier or compliance-gated step that must come before dashboard access |
 | Invites | Wire `POST /api/workspace/invite` to Resend (email) + a pending `Invite` model |
 | AI / Audiences | "Build with AI" modal still uses `setTimeout` mock â€” add `/api/ai/build-audience` proxy + route |
