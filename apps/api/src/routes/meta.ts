@@ -98,6 +98,8 @@ router.get("/callback", async (req: Request, res: Response) => {
     const short = await metaService.exchangeCodeForToken(code);
     const long = await metaService.getLongLivedToken(short.accessToken);
     const encryptedToken = metaService.encryptToken(long.accessToken);
+    // Long-lived user tokens last ~60 days; the user must reconnect after that.
+    const tokenExpiresAt = long.expiresIn > 0 ? new Date(Date.now() + long.expiresIn * 1000) : null;
 
     // Pull ad accounts and upsert each.
     const accounts = await metaService.getAdAccounts(long.accessToken);
@@ -121,6 +123,7 @@ router.get("/callback", async (req: Request, res: Response) => {
           currency: acct.currency || null,
           timezone: acct.timezone || null,
           accessToken: encryptedToken,
+          tokenExpiresAt,
           isActive: acct.accountStatus === 1,
         },
         update: {
@@ -128,6 +131,7 @@ router.get("/callback", async (req: Request, res: Response) => {
           currency: acct.currency || null,
           timezone: acct.timezone || null,
           accessToken: encryptedToken,
+          tokenExpiresAt,
           isActive: acct.accountStatus === 1,
         },
       });

@@ -59,6 +59,8 @@ router.get("/callback", async (req: Request, res: Response) => {
       );
     }
     const encryptedAccess = encryptToken(tokens.access_token);
+    // TikTok business tokens usually don't expire (expires_in 0); store it when they do.
+    const tokenExpiresAt = tokens.expires_in > 0 ? new Date(Date.now() + tokens.expires_in * 1000) : null;
 
     const advertisers = await tiktokService.getAdvertiserInfo(
       tokens.access_token,
@@ -82,6 +84,7 @@ router.get("/callback", async (req: Request, res: Response) => {
           currency: adv.currency || null,
           timezone: adv.timezone || null,
           accessToken: encryptedAccess,
+          tokenExpiresAt,
           isActive: adv.status === "STATUS_ENABLE" || adv.status === "ACTIVE",
         },
         update: {
@@ -89,6 +92,7 @@ router.get("/callback", async (req: Request, res: Response) => {
           currency: adv.currency || null,
           timezone: adv.timezone || null,
           accessToken: encryptedAccess,
+          tokenExpiresAt,
           isActive: adv.status === "STATUS_ENABLE" || adv.status === "ACTIVE",
         },
       });

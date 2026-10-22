@@ -38,6 +38,8 @@ const isPublicRoute = createRouteMatcher([
   "/api/contact",
   "/sitemap.xml",
   "/robots.txt",
+  // Dev-only UI kit (/dev/ui). The page itself 404s in production.
+  ...(process.env.NODE_ENV !== "production" ? ["/dev(.*)"] : []),
 ]);
 
 // Paths that exist only on the marketing site. Hitting these on `app.` should
@@ -68,6 +70,7 @@ const APP_ONLY_PREFIXES = [
   "/audiences",
   "/creatives",
   "/insights",
+  "/budget-optimizer",
   "/ai-planner",
   "/billing",
   "/settings",

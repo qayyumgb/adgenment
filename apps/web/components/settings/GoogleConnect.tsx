@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import clsx from "clsx";
@@ -43,9 +43,9 @@ export default function GoogleConnect({
         toast.success("Google Ads account connected");
         onChange?.();
       } else if (result.error === "popup_blocked") {
-        toast.error("Popup blocked â€” please allow popups and try again");
+        toast.error("Popup blocked — please allow popups and try again");
       } else if (result.error === "google_cancelled") {
-        toast("Cancelled â€” connect again when you're ready");
+        toast("Cancelled — connect again when you're ready");
       } else if (result.error === "popup_closed") {
         // user dismissed silently
       } else if (result.error) {
@@ -62,7 +62,7 @@ export default function GoogleConnect({
   async function syncNow() {
     if (!adAccountId) return;
     setSyncing(true);
-    const t = toast.loading("Syncing Google Ads campaignsâ€¦");
+    const t = toast.loading("Syncing Google Ads campaigns…");
     try {
       const res = await fetch(`${apiBase()}/api/google/sync/${adAccountId}`, {
         method: "POST",
@@ -73,7 +73,7 @@ export default function GoogleConnect({
         throw new Error(data?.error ?? `HTTP ${res.status}`);
       }
       toast.success(
-        `Synced ${data.campaignsSynced} campaigns Â· ${data.metricsSynced} metric rows`,
+        `Synced ${data.campaignsSynced} campaigns · ${data.metricsSynced} metric rows`,
         { id: t }
       );
       onChange?.();
@@ -116,7 +116,7 @@ export default function GoogleConnect({
               </span>
             </div>
             <p className="truncate text-[11px] text-slate-500">
-              {accountName ?? "â€”"}
+              {accountName ?? "—"}
             </p>
           </div>
         </div>
@@ -137,7 +137,7 @@ export default function GoogleConnect({
               ) : (
                 <RefreshCw className="h-3 w-3" />
               )}
-              {syncing ? "Syncingâ€¦" : "Sync Now"}
+              {syncing ? "Syncing…" : "Sync Now"}
             </button>
             <button
               type="button"
@@ -220,7 +220,7 @@ export default function GoogleConnect({
         {connecting ? (
           <>
             <Loader2 className="h-4 w-4 animate-spin" />
-            Opening Googleâ€¦
+            Opening Google…
           </>
         ) : (
           <>

@@ -13,6 +13,11 @@ import metaRouter from "./meta";
 import googleRouter from "./google";
 import tiktokRouter from "./tiktok";
 import linkedinRouter from "./linkedin";
+import clientRouter from "./clients";
+import budgetsRouter from "./budgets";
+import suggestionsRouter from "./suggestions";
+import plansRouter from "./plans";
+import changeLogRouter from "./change-log";
 
 const router = Router();
 
@@ -30,5 +35,10 @@ router.use("/meta", metaRouter);
 router.use("/google", googleRouter);
 router.use("/tiktok", tiktokRouter);
 router.use("/linkedin", linkedinRouter);
+router.use("/clients", clientRouter);
+router.use("/budgets", budgetsRouter);
+router.use("/suggestions", suggestionsRouter);
+router.use("/plans", plansRouter);
+router.use("/change-log", changeLogRouter);
 
 export default router;

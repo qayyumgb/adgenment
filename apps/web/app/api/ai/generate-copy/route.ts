@@ -1,8 +1,19 @@
 import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export async function POST(request: Request) {
+  // The backend route requires a session; forward the caller's Clerk token.
+  const { getToken, userId } = auth();
+  if (!userId) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+  const token = await getToken();
+  if (!token) {
+    return NextResponse.json({ error: "No session token" }, { status: 401 });
+  }
+
   let body: {
     brief?: unknown;
     platform?: unknown;
@@ -39,7 +50,10 @@ export async function POST(request: Request) {
   try {
     const upstream = await fetch(`${API_BASE}/api/ai/generate-copy`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify({
         brief,
         platform,

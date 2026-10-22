@@ -1,5 +1,6 @@
-import { GeistSans } from "geist/font/sans";
-import { GeistMono } from "geist/font/mono";
+// Geist (sans + mono) is loaded once in the root layout and inherited from
+// <html>; importing it here too makes Next put its CSS in this layout's chunk
+// only, breaking the font on non-marketing routes.
 import { Instrument_Serif } from "next/font/google";
 import { SiteHeader } from "@/components/marketing/site/SiteHeader";
 import { SiteFooter } from "@/components/marketing/site/SiteFooter";
@@ -24,7 +25,7 @@ export default function MarketingLayout({
 }) {
   return (
     <div
-      className={`mk min-h-screen ${GeistSans.variable} ${GeistMono.variable} ${instrumentSerif.variable}`}
+      className={`mk min-h-screen ${instrumentSerif.variable}`}
     >
       {/* Sets the scroll-reveal gate before first paint (see marketing.css). */}
       <script dangerouslySetInnerHTML={{ __html: MOTION_GATE_SCRIPT }} />

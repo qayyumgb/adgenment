@@ -407,7 +407,7 @@ All tokens live in [apps/web/app/globals.css](apps/web/app/globals.css) and [app
 
 The read/sync path is shipped and verified end-to-end (PKR campaign syncing with correct currency, status, and totals as of 2026-06-08). What's still missing for "100% complete":
 
-- 🔴 **HIGH PRIORITY — Creative previews break after a few days (expired Meta CDN URLs)** *(reported 2026-10-20)*
+- ✅ **DONE 2026-10-21: Creative previews break after a few days (expired Meta CDN URLs)** *(reported 2026-10-20)*. Implemented as refresh-on-read in [meta-media-refresh.service.ts](apps/api/src/services/meta-media-refresh.service.ts), called from `GET /api/creatives`. It tries every active Meta account for a hash, caches misses for 30 min and fails soft. The `permalink_url` shortcut below was not needed. Original plan kept for reference:
   - **Symptom:** images, carousel cards and video thumbnails in the Creatives library show as broken a few days after upload. The live ads on Meta are **not** affected; only our in-app previews are.
   - **Cause:** we persist the temporary `scontent…fbcdn.net` URL that Meta returns: the `/adimages` upload response `url` ([meta.service.ts](apps/api/src/services/meta.service.ts) `uploadImageFromBytes`) and the video `picture` thumbnail ([creatives/page.tsx](apps/web/app/(dashboard)/creatives/page.tsx) upload/edit flows). These URLs are signed and carry an expiry timestamp (the `oe=` hex param). The stable identifiers are `image_hash` / `video_id`, which we already store in `Creative.content`. Video *playback* already works because `/meta/video-source` fetches a fresh URL on demand.
   - **Fix (refresh-on-read in `GET /api/creatives`, [creatives.ts](apps/api/src/routes/creatives.ts)):**
@@ -467,7 +467,7 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 | Area | Item |
 |---|---|
-| 🔴 Creatives / Meta media | **HIGH PRIORITY.** Creative previews break after a few days because stored Meta CDN URLs expire. Refresh them from `image_hash` / `video_id` in `GET /api/creatives`. Full plan in Roadmap → Phase 1 |
+| ✅ Creatives / Meta media | **Done 2026-10-21.** Expired Meta CDN preview URLs are refreshed from `imageHash` / `videoId` in `GET /api/creatives` ([meta-media-refresh.service.ts](apps/api/src/services/meta-media-refresh.service.ts)) |
 | Auth | Onboarding wizard removed. Workspace is auto-provisioned in `requireAuth` middleware on first authenticated request. The Clerk-metadata-driven redirect path in middleware was also removed; reintroduce if/when we add a paid-tier or compliance-gated step that must come before dashboard access |
 | Invites | Wire `POST /api/workspace/invite` to Resend (email) + a pending `Invite` model |
 | AI / Audiences | "Build with AI" modal still uses `setTimeout` mock â€” add `/api/ai/build-audience` proxy + route |
@@ -484,6 +484,89 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 ## Change Log
 
 > Most recent first. Add a new dated entry for every significant change.
+
+### 2026-10-22 — Dashboard redesign A7 (New campaign wizard)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- New full-page wizard at `/campaigns/new`: Goal → Platforms & budget → Audience → Ads → Review & launch. It has a forecast side panel, setup strength, autosave with resume, and launch paused / start now / save as draft. Retrying after a Meta error never creates duplicates.
+- It replaces `CreateCampaignModal` and `PublishToMetaModal`, both deleted. Every "New campaign" and "Publish to Meta" entry point now opens the wizard, including `?new=1`, `?publish=1` and the AI Planner prefill.
+
+### 2026-10-22 — Dashboard redesign A10 (Analytics, absorbs Insights)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `/analytics` rebuilt: clickable KPI cards driving a trend chart with previous-period compare, share by platform / client, funnel, "Advertix read" (insights with Check again / Mark done / Dismiss / Restore), breakdown grid by platform / client / campaign, CSV export.
+- `/insights` redirects to `/analytics`; the temporary Insights nav item is removed.
+
+### 2026-10-21 — Dashboard redesign B3 (Change log & undo)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- New `ChangeLog` model + `/api/change-log` (list, undo). Every campaign change is recorded with who made it (a person, an applied suggestion, or detected on Meta sync), before / after and whether it reached the platform. Budget, status and name changes can be undone for 7 days.
+- Campaign detail: real Change log tab with Undo; chart markers for budget / status / publish events.
+- **Run `prisma db push` on production before deploying the API.**
+
+### 2026-10-21 — Dashboard redesign A6 (Campaign detail)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `/campaigns/[id]` rebuilt: header with status switch, Duplicate, Ads Manager, Publish / Edit; tabs Overview / Ad sets / Ads / Change log / Settings; 6 KPIs vs the previous 30 days, daily metric chart, campaign suggestions with Apply / Undo, Ask about this campaign, daily breakdown grid. Publish flow, error card, rename / budget / delete kept.
+
+### 2026-10-21 — Dashboard redesign B5 (API exposures)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `GET /ad-accounts` adds `tokenExpiresAt`, a health summary and 30-day spend; OAuth callbacks record token expiry.
+- `/analytics/timeseries` adds `metric=cpa` and `compare=previous`.
+- New: `POST /campaigns/:id/duplicate` (local draft copy), `POST /ai/campaigns/:id/ask` (campaign Q&A from its own data), `/plans` (saved AI plans with versions).
+- **Run `prisma db push` on production before deploying the API.**
+
+### 2026-10-21 — Dashboard redesign A5 (Campaigns)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `/campaigns` rebuilt on the DataGrid: KPI strip, AI banner + "Only show these", status / platform filters, toggles, suggestion column with real Apply / Undo, row menu, bulk Pause / Resume / Edit budgets / Duplicate, footer totals, CSV export.
+- API: `GET /campaigns` accepts `days` (totals over the last N days), allows `limit` up to 500 and returns `adAccount.clientId` (all additive).
+- Synced Google / TikTok / LinkedIn campaigns are view-only for status and budget (changes there never reached the platform).
+- Review fixes: table / cards view switch (saved per table), menus open as floating panels that stay on screen and never push the page down, header text aligned with numeric columns.
+
+### 2026-10-21 — Dashboard redesign B2 (Suggestions with real Apply / Undo)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- New `Suggestion` model + `/api/suggestions` (list, refresh, apply, snooze, undo). Budget changes and pause / resume run on Meta and can be undone for 7 days; everything else is Review. Insights and budget analyses feed it; the Overview uses it.
+- Fix: Meta sync no longer zeroes the stored budget of campaigns published from Advertix.
+- **Run `prisma db push` on production before deploying the API.**
+
+### 2026-10-21 — Dashboard redesign A4 (Overview)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `/dashboard` rebuilt per the Overview mockup: 5 KPI cards with sparklines, spend & revenue chart (7/14/30D, hover readout), Advertix suggests (Insights + budget analysis, Review / Not now / Undo), client pacing table. Follows the client switcher.
+- API: `GET /analytics/overview` also returns `previous` period totals (additive, backwards compatible).
+
+### 2026-10-21 — Dashboard redesign A2 (app shell) + A3 (DataGrid)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- **A2:** new app shell in `components/app/shell/` (sidebar with client switcher and ad-accounts box, top bar, mobile app bar + drawer + bottom tab bar, `PageHeader`/`PageTabs`/`PageBody`), client scope via `?client=` + localStorage. Old `components/layout/Sidebar.tsx` and `Header.tsx` removed. Pages not yet rebuilt keep their old padding.
+- **A3:** shared `DataGrid` in `components/app/grid/` (Sort / Columns / Row height menus, sticky Action column, selection + bulk bar, footer totals, per-table prefs in localStorage). Dev previews at `/dev/shell` and `/dev/grid` (development only).
+
+### 2026-10-21 — Dashboard redesign A1 (UI foundation) + B1 (Clients)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- **A1:** guide design tokens (light + dark) in `globals.css` + Tailwind, Geist font app-wide (Plus Jakarta removed), `ThemeProvider`, primitives in `components/app/ui/`, dev-only `/dev/ui` kit, SWR caching behind `useApi` (opt-in `{ key }`).
+- **B1:** new `Client` model + `clientId` on ad accounts, creatives and audiences; `/api/clients` CRUD, `PATCH /api/ad-accounts/:id`, `/api/analytics/by-client`, `/api/budgets/pacing`; `?clientId=` on campaigns, analytics, ad accounts, creatives and audiences. **Run `prisma db push` on production before deploying the API.**
+
+### 2026-10-21 — Dashboard redesign Phase 0 (security + fixes)
+
+Plan: [docs/DASHBOARD_REDESIGN_PLAN.md](docs/DASHBOARD_REDESIGN_PLAN.md).
+
+- **Security:** `POST /api/ai/generate-copy` now requires auth (it was callable without a session directly on the API host). The Next proxy forwards the Clerk token.
+- **Creatives:** expired Meta CDN preview URLs are refreshed from `imageHash` / `videoId` on `GET /api/creatives` (new `meta-media-refresh.service.ts`, new `metaService.getAdImagesByHash` / `getVideoPictures`).
+- **Cleanup:** fixed garbled text and BOMs in the Google / LinkedIn / TikTok connect components; `/budget-optimizer` added to the app-only routes; deleted the unused `components/dashboard/CampaignTable.tsx` and `app/api/ai/plan-campaign` proxy.
 
 ### 2026-10-20 — Marketing site redesign ("Option C")
 

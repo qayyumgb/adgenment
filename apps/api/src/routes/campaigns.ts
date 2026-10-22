@@ -8,8 +8,10 @@ import {
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
+import { campaignClientWhere, parseClientScope } from "../lib/clients";
 import { metaService, type MetaTargeting } from "../services/meta.service";
 import { isMetaError, friendlyMetaError } from "../lib/meta-errors";
+import { changeLog } from "../services/change-log.service";
 
 const router = Router();
 router.use(requireAuth);
@@ -79,6 +81,7 @@ const AD_ACCOUNT_PUBLIC_SELECT = {
   currency: true,
   timezone: true,
   minDailyBudget: true,
+  clientId: true,
 } as const;
 
 /**
@@ -89,12 +92,24 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
     const workspace = await requireWorkspace(req.dbUserId!);
     const { platform, status, search } = req.query;
     const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+    // Up to 500 so the Campaigns grid can load a workspace in one request and
+    // filter / sort / count client-side.
     const limit = Math.min(
-      100,
+      500,
       Math.max(1, parseInt(String(req.query.limit ?? "12"), 10) || 12)
     );
+    // ?days=N → totals cover the last N days instead of the campaign's lifetime.
+    const daysRaw = parseInt(String(req.query.days ?? ""), 10);
+    const totalsSince =
+      Number.isFinite(daysRaw) && daysRaw > 0
+        ? new Date(Date.now() - Math.min(365, daysRaw) * 24 * 60 * 60 * 1000)
+        : null;
 
-    const where: Prisma.CampaignWhereInput = { workspaceId: workspace.id };
+    const clientScope = await parseClientScope(req, workspace.id);
+    const where: Prisma.CampaignWhereInput = {
+      workspaceId: workspace.id,
+      ...campaignClientWhere(clientScope),
+    };
     if (isPlatform(platform)) where.platform = platform;
     if (isStatus(status)) where.status = status;
     if (typeof search === "string" && search.trim() !== "") {
@@ -143,7 +158,10 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
     if (campaigns.length > 0) {
       const agg = await prisma.campaignMetrics.groupBy({
         by: ["campaignId"],
-        where: { campaignId: { in: campaigns.map((c) => c.id) } },
+        where: {
+          campaignId: { in: campaigns.map((c) => c.id) },
+          ...(totalsSince ? { date: { gte: totalsSince } } : {}),
+        },
         _sum: {
           spend: true,
           impressions: true,
@@ -258,6 +276,15 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
       },
     });
 
+    await changeLog.record({
+      workspaceId: workspace.id,
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      clientId: account.clientId,
+      actorType: "USER",
+      userId: req.dbUserId,
+      action: "campaign.create",
+    });
     res.status(201).json(campaign);
   } catch (err) {
     next(err);
@@ -426,7 +453,78 @@ router.put("/:id", async (req: Request, res: Response, next: NextFunction) => {
       where: { id: existing.id },
       data,
     });
+    await changeLog.recordCampaignUpdate(
+      existing,
+      updated,
+      { actorType: "USER", userId: req.dbUserId, platformPushed: existing.platform === "META" && Boolean(existing.externalId) },
+      { clientId: existing.adAccount.clientId, currency: existing.adAccount.currency }
+    );
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /campaigns/:id/duplicate  { name?, budget? }
+ *
+ * Copies a campaign as a local DRAFT in the same ad account — nothing is
+ * created on the platform until the copy is published, so a duplicate never
+ * spends by surprise. Settings, budget and targeting are copied; schedule
+ * dates already in the past are dropped (the platforms reject them).
+ * Creatives belong to one campaign each, so they're not carried over.
+ */
+router.post("/:id/duplicate", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const source = await prisma.campaign.findFirst({
+      where: { id: req.params.id, workspaceId: workspace.id },
+    });
+    if (!source) {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+
+    const { name, budget } = (req.body ?? {}) as { name?: unknown; budget?: unknown };
+    const copyName =
+      typeof name === "string" && name.trim() ? name.trim().slice(0, 200) : `${source.name} (copy)`.slice(0, 200);
+    let copyBudget = source.budget;
+    if (budget !== undefined && budget !== null && budget !== "") {
+      const n = Number(budget);
+      if (!Number.isFinite(n) || n <= 0) {
+        return res.status(400).json({ error: "budget must be a positive number" });
+      }
+      copyBudget = new Prisma.Decimal(n.toFixed(2));
+    }
+    const now = Date.now();
+    const keepFuture = (d: Date | null) => (d && d.getTime() > now ? d : null);
+
+    const copy = await prisma.campaign.create({
+      data: {
+        workspaceId: workspace.id,
+        adAccountId: source.adAccountId,
+        platform: source.platform,
+        name: copyName,
+        status: "DRAFT",
+        objective: source.objective,
+        budget: copyBudget,
+        budgetType: source.budgetType,
+        startDate: keepFuture(source.startDate),
+        endDate: keepFuture(source.endDate),
+        targeting: source.targeting === null ? Prisma.JsonNull : (source.targeting as Prisma.InputJsonValue),
+      },
+      include: { adAccount: { select: AD_ACCOUNT_PUBLIC_SELECT } },
+    });
+    await changeLog.record({
+      workspaceId: workspace.id,
+      campaignId: copy.id,
+      campaignName: copy.name,
+      clientId: copy.adAccount.clientId,
+      actorType: "USER",
+      userId: req.dbUserId,
+      action: "campaign.duplicate",
+      before: { id: source.id, name: source.name },
+    });
+    res.status(201).json(copy);
   } catch (err) {
     next(err);
   }
@@ -498,6 +596,17 @@ router.delete(
       }
 
       await prisma.campaign.delete({ where: { id: existing.id } });
+      await changeLog.record({
+        workspaceId: workspace.id,
+        campaignId: null,
+        campaignName: existing.name,
+        clientId: existing.adAccount.clientId,
+        actorType: "USER",
+        userId: req.dbUserId,
+        action: "campaign.delete",
+        before: { id: existing.id, name: existing.name, platform: existing.platform, externalId: existing.externalId },
+        platformPushed: existing.platform === "META" && Boolean(existing.externalId),
+      });
       res.json({ success: true });
     } catch (err) {
       next(err);
@@ -1141,6 +1250,17 @@ router.post(
           targeting: targeting as Prisma.InputJsonValue,
         },
       });
+      await changeLog.record({
+        workspaceId: workspace.id,
+        campaignId: campaign.id,
+        campaignName: updated.name,
+        clientId: campaign.adAccount.clientId,
+        actorType: "USER",
+        userId: req.dbUserId,
+        action: "campaign.publish",
+        after: { externalId: metaCampaign.id, status: "PAUSED" },
+        platformPushed: true,
+      });
 
       return res.status(201).json({
         success: true,
@@ -1267,6 +1387,20 @@ router.post(
         where: { id: campaign.id },
         data: { status: target },
       });
+      if (campaign.status !== target) {
+        await changeLog.record({
+          workspaceId: workspace.id,
+          campaignId: campaign.id,
+          campaignName: campaign.name,
+          clientId: campaign.adAccount.clientId,
+          actorType: "USER",
+          userId: req.dbUserId,
+          action: "campaign.status",
+          before: { status: campaign.status },
+          after: { status: target },
+          platformPushed: true,
+        });
+      }
       res.json({ success: true, campaign: updated });
     } catch (err) {
       next(err);

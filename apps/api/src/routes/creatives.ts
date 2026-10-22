@@ -8,6 +8,8 @@ import {
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
+import { ownedOrSharedWhere, parseBodyClientId, parseClientScope } from "../lib/clients";
+import { refreshExpiredMetaMedia } from "../services/meta-media-refresh.service";
 
 const router = Router();
 router.use(requireAuth);
@@ -63,7 +65,11 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       Math.max(1, parseInt(String(req.query.limit ?? "12"), 10) || 12)
     );
 
-    const where: Prisma.CreativeWhereInput = { workspaceId: workspace.id };
+    const clientScope = await parseClientScope(req, workspace.id);
+    const where: Prisma.CreativeWhereInput = {
+      workspaceId: workspace.id,
+      ...ownedOrSharedWhere(clientScope),
+    };
     if (isCreativeType(type)) where.type = type;
     if (isCreativeStatus(status)) where.status = status;
     if (typeof search === "string" && search.trim() !== "") {
@@ -86,6 +92,10 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       }),
     ]);
 
+    // Meta CDN preview URLs expire after a few days; re-resolve stale ones
+    // from the stored imageHash / videoId (no-op when nothing is stale).
+    await refreshExpiredMetaMedia(workspace.id, creatives);
+
     res.json({
       creatives,
       total,
@@ -105,6 +115,7 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
     const workspace = await requireWorkspace(req.dbUserId!);
     const { name, type, content, campaignId, aiGenerated, status } =
       req.body ?? {};
+    const clientId = await parseBodyClientId(req.body?.clientId, workspace.id);
 
     if (typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "name is required" });
@@ -140,6 +151,7 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
             : null,
         aiGenerated: aiGenerated === true,
         status: isCreativeStatus(status) ? status : "DRAFT",
+        clientId: clientId ?? null,
       },
     });
     res.status(201).json(creative);
@@ -168,6 +180,10 @@ router.put("/:id", async (req: Request, res: Response, next: NextFunction) => {
       data.content = content as Prisma.InputJsonValue;
     }
     if (isCreativeStatus(status)) data.status = status;
+    const clientId = await parseBodyClientId(req.body?.clientId, workspace.id);
+    if (clientId !== undefined) {
+      data.client = clientId ? { connect: { id: clientId } } : { disconnect: true };
+    }
 
     const updated = await prisma.creative.update({
       where: { id: existing.id },

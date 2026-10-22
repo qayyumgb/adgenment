@@ -97,7 +97,8 @@ router.post("/apply", async (req: Request, res: Response, next: NextFunction) =>
       const result = await budgetOptimizerService.applyRecommendations(
         workspace.id,
         recommendationId,
-        ids
+        ids,
+        req.dbUserId ?? null
       );
       res.json(result);
     } catch (err) {

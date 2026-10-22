@@ -1,44 +1,26 @@
-import {
-  SkeletonMetricCard,
-  SkeletonChartCard,
-} from "@/components/ui/Skeleton";
+import { Skeleton } from "@/components/app/ui";
 
+/** Route-level skeleton for /campaigns/[id]: header with tabs, 6 KPIs, chart + side panel. */
 export default function CampaignDetailLoading() {
   return (
-    <div className="space-y-6">
-      {/* Back link */}
-      <div className="h-4 w-24 animate-pulse rounded bg-slate-200/70" />
-
-      {/* Hero */}
-      <div className="rounded-2xl border border-slate-200/70 bg-white p-6 shadow-card">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-3">
-            <div className="h-6 w-20 animate-pulse rounded-full bg-slate-200/70" />
-            <div className="h-8 w-72 animate-pulse rounded bg-slate-200/70" />
-            <div className="h-4 w-96 animate-pulse rounded bg-slate-200/70" />
-          </div>
-          <div className="flex gap-2">
-            <div className="h-9 w-24 animate-pulse rounded-xl bg-slate-200/70" />
-            <div className="h-9 w-32 animate-pulse rounded-xl bg-slate-200/70" />
-          </div>
+    <>
+      <div className="flex flex-col gap-2 border-b border-line bg-surface px-[clamp(16px,4vw,32px)] pb-3 pt-3">
+        <Skeleton className="h-3 w-48" />
+        <Skeleton className="h-7 w-72 max-w-full" />
+        <Skeleton className="h-3.5 w-96 max-w-full" />
+        <Skeleton className="mt-2 h-5 w-80 max-w-full" />
+      </div>
+      <div className="flex flex-col gap-5 px-[clamp(16px,4vw,32px)] pb-10 pt-6">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-[110px] rounded-card" />
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <Skeleton className="h-[340px] min-w-0 flex-[1.6_1_520px] rounded-card" />
+          <Skeleton className="h-[340px] min-w-0 flex-[1_1_320px] rounded-card" />
         </div>
       </div>
-
-      {/* KPI tiles */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <SkeletonMetricCard key={i} />
-        ))}
-      </div>
-
-      {/* Chart */}
-      <SkeletonChartCard height={360} />
-
-      {/* Insights / breakdown */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <SkeletonChartCard height={280} />
-        <SkeletonChartCard height={280} />
-      </div>
-    </div>
+    </>
   );
 }

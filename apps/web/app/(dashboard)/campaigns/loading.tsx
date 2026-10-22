@@ -1,31 +1,23 @@
-import { SkeletonCampaignCard } from "@/components/ui/Skeleton";
+import { Skeleton } from "@/components/app/ui";
 
+/** Route-level skeleton for /campaigns: page header, KPI strip, banner, grid. */
 export default function CampaignsLoading() {
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-2">
-          <div className="h-7 w-40 animate-pulse rounded bg-slate-200/70" />
-          <div className="h-4 w-72 animate-pulse rounded bg-slate-200/70" />
+    <>
+      <div className="flex flex-col gap-2 border-b border-line bg-surface px-[clamp(16px,4vw,32px)] pb-3.5 pt-3">
+        <Skeleton className="h-3 w-40" />
+        <Skeleton className="h-7 w-44" />
+        <Skeleton className="h-3.5 w-72 max-w-full" />
+      </div>
+      <div className="flex flex-col gap-5 px-[clamp(16px,4vw,32px)] pb-10 pt-6">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-[86px] rounded-card" />
+          ))}
         </div>
-        <div className="h-10 w-36 animate-pulse rounded-xl bg-slate-200/70" />
+        <Skeleton className="h-[60px] rounded-menu" />
+        <Skeleton className="h-[480px] rounded-card" />
       </div>
-
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/70 bg-white p-3 shadow-card">
-        <div className="h-10 flex-1 min-w-[200px] animate-pulse rounded-xl bg-slate-100" />
-        <div className="h-10 w-28 animate-pulse rounded-xl bg-slate-100" />
-        <div className="h-10 w-28 animate-pulse rounded-xl bg-slate-100" />
-        <div className="h-10 w-20 animate-pulse rounded-xl bg-slate-100" />
-      </div>
-
-      {/* Cards grid */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <SkeletonCampaignCard key={i} />
-        ))}
-      </div>
-    </div>
+    </>
   );
 }

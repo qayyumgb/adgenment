@@ -12,6 +12,7 @@ import {
 } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { decryptToken, encryptToken } from "../lib/crypto";
+import { changeLog } from "./change-log.service";
 import { metaService, type MetaCampaign } from "./meta.service";
 import { googleService, isGoogleAuthError } from "./google.service";
 import { tiktokService } from "./tiktok.service";
@@ -197,6 +198,17 @@ class SyncService {
     const metaCampaigns = await metaService.getCampaigns(token, accountId);
     const idMap: Record<string, string> = {}; // metaId → our DB cuid
     let campaignsSynced = 0;
+    // What we had before this sync, to log changes made outside Advertix
+    // (Ads Manager). Our own edits update the row immediately, so they don't
+    // show up as differences here.
+    const known = new Map(
+      (
+        await prisma.campaign.findMany({
+          where: { adAccountId: adAccount.id, externalId: { not: null } },
+          select: { id: true, externalId: true, name: true, status: true, budget: true, budgetType: true },
+        })
+      ).map((c) => [c.externalId as string, c])
+    );
 
     for (const mc of metaCampaigns) {
       const status = mapMetaStatus(mc.status, mc.effective_status, mc.stop_time);
@@ -227,14 +239,46 @@ class SyncService {
           name: mc.name,
           status,
           objective: mc.objective ?? "UNKNOWN",
-          budget: new Prisma.Decimal(amount.toFixed(2)),
-          budgetType,
+          // No campaign-level budget means it lives on the ad set(s) — always
+          // the case for campaigns published from Advertix. Keep the budget we
+          // stored instead of overwriting it with 0.
+          ...(amount > 0 ? { budget: new Prisma.Decimal(amount.toFixed(2)), budgetType } : {}),
           startDate: mc.start_time ? new Date(mc.start_time) : null,
           endDate: mc.stop_time ? new Date(mc.stop_time) : null,
         },
       });
       idMap[mc.id] = campaign.id;
       campaignsSynced++;
+
+      const prev = known.get(mc.id);
+      if (prev) {
+        const base = {
+          workspaceId: adAccount.workspaceId,
+          campaignId: campaign.id,
+          campaignName: campaign.name,
+          clientId: adAccount.clientId,
+          currency: adAccount.currency,
+          actorType: "SYNC" as const,
+          platformPushed: true,
+          note: "(outside Advertix)",
+        };
+        if (prev.name !== campaign.name) {
+          await changeLog.record({ ...base, action: "campaign.rename", before: { name: prev.name }, after: { name: campaign.name } });
+        }
+        if (amount > 0 && Math.abs(Number(prev.budget) - amount) >= 0.01) {
+          await changeLog.record({
+            ...base,
+            action: "campaign.budget",
+            before: { budget: Number(prev.budget), budgetType: prev.budgetType },
+            after: { budget: amount, budgetType },
+          });
+        }
+        // Only deliberate on / off flips; review or billing states would be noise.
+        const flip = (a: string, b: string) => (a === "ACTIVE" && b === "PAUSED") || (a === "PAUSED" && b === "ACTIVE");
+        if (flip(prev.status, campaign.status)) {
+          await changeLog.record({ ...base, action: "campaign.status", before: { status: prev.status }, after: { status: campaign.status } });
+        }
+      }
     }
 
     // 2. Pull last-30d insights with daily breakdown and upsert metrics.

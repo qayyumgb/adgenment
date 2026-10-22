@@ -83,9 +83,9 @@ model User {
   plan      PlanType @default(FREE)
   createdAt DateTime @default(now())
 
-  ownedWorkspaces    Workspace[]       @relation("WorkspaceOwner")
-  workspaceMembers   WorkspaceMember[]
-  aiSessions         AiSession[]
+  ownedWorkspaces  Workspace[]       @relation("WorkspaceOwner")
+  workspaceMembers WorkspaceMember[]
+  aiSessions       AiSession[]
 }
 
 model Workspace {
@@ -100,8 +100,8 @@ model Workspace {
 
   /// Reserved for the deferred auto-optimize mode (auto-applying budget
   /// recommendations). Dormant for now — no cron consumes these yet.
-  autoOptimize          Boolean @default(false)
-  autoOptimizeThreshold Decimal @default(2.0) @db.Decimal(6, 2)
+  autoOptimize           Boolean   @default(false)
+  autoOptimizeThreshold  Decimal   @default(2.0) @db.Decimal(6, 2)
   /// Last time AI insights were generated for this workspace (1-hour refresh
   /// gate lives off this).
   lastInsightGeneratedAt DateTime?
@@ -115,8 +115,45 @@ model Workspace {
   audiences             Audience[]
   budgetRecommendations BudgetRecommendation[]
   insights              Insight[]
+  clients               Client[]
+  suggestions           Suggestion[]
+  plans                 Plan[]
+  changeLogs            ChangeLog[]
 
   @@index([ownerId])
+}
+
+/// An agency's client (a brand the workspace runs ads for). Ad accounts are
+/// assigned to a client; campaigns and metrics inherit it through their ad
+/// account. Single-brand workspaces get one default client (`isDefault`), and
+/// the UI hides the client switcher when there's only one.
+/// See docs/DASHBOARD_REDESIGN_PLAN.md (B1).
+model Client {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String
+  /// 1–3 letter mark shown in avatars ("LS"). Derived from the name if null.
+  short         String?
+  /// Free-text vertical shown under the name ("Beauty · DTC").
+  vertical      String?
+  logoUrl       String?
+  /// Monthly spend cap used for pacing, in `currency`. Null = no cap set.
+  monthlyBudget Decimal? @db.Decimal(14, 2)
+  /// ISO 4217 currency of `monthlyBudget` (defaults to the first account's).
+  currency      String?
+  /// The auto-created client for single-brand workspaces.
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adAccounts  AdAccount[]
+  creatives   Creative[]
+  audiences   Audience[]
+  suggestions Suggestion[]
+  plans       Plan[]
+
+  @@index([workspaceId])
 }
 
 model WorkspaceMember {
@@ -134,44 +171,52 @@ model WorkspaceMember {
 }
 
 model AdAccount {
-  id           String   @id @default(cuid())
-  workspaceId  String
-  platform     Platform
-  accountId    String
-  accountName  String
+  id              String    @id @default(cuid())
+  workspaceId     String
+  platform        Platform
+  accountId       String
+  accountName     String
   // ISO 4217 code captured from the ad platform at OAuth / sync time. Used
   // to render all money values (budget, spend, revenue) in the account's
   // native currency instead of forcing USD display.
-  currency     String?
+  currency        String?
   // IANA tz name (e.g. "Asia/Karachi") for displaying campaign timestamps
   // in the account's local time. Display-only today.
-  timezone     String?
+  timezone        String?
   /// The platform's minimum daily budget for this account, in the account's
   /// own currency (e.g. 1.00 = PKR 1.00). Captured from Meta on each sync and
   /// used to ground budget recommendations without any FX conversion. Null
   /// until first sync.
-  minDailyBudget Float?
+  minDailyBudget  Float?
   /// Meta account_status (1 = active, 2 = disabled, 3 = unsettled, 7 = pending
   /// risk review, 9 = grace period, 101 = closed…). Used to warn the user when
   /// their ad account can't run ads. Null until first sync.
-  accountStatus  Int?
+  accountStatus   Int?
   /// Last Meta health-check report (MetaHealthReport JSON) + when it ran. Lets
   /// the UI show connection health without re-running all checks every load.
   metadata        Json?
   lastHealthCheck DateTime?
-  accessToken  String
-  refreshToken String?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  accessToken     String
+  refreshToken    String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
   /// Timestamp of the last successful platform sync. Drives the "Last synced"
   /// label and lets the scheduler skip recently-synced accounts. Null = never.
-  lastSyncedAt DateTime?
+  lastSyncedAt    DateTime?
+  /// The agency client this account belongs to. Null = not assigned yet.
+  clientId        String?
+  /// When the stored token stops working and the user has to reconnect (Meta
+  /// long-lived tokens ≈ 60 days, LinkedIn refresh tokens ≈ 1 year). Set at
+  /// OAuth time. Null = no known expiry (Google refresh tokens, TikTok).
+  tokenExpiresAt  DateTime?
 
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
   campaigns Campaign[]
 
   @@unique([workspaceId, platform, accountId])
   @@index([workspaceId])
+  @@index([clientId])
 }
 
 model Campaign {
@@ -201,22 +246,24 @@ model Campaign {
   /// On Meta, every ad needs Campaign + AdSet + AdCreative + Ad. We store
   /// each so we can edit / delete / report on them later. Null until
   /// publish, equivalent for Google/TikTok/LinkedIn once those land.
-  externalAdSetId   String?
-  externalAdId      String?
+  externalAdSetId    String?
+  externalAdId       String?
   externalCreativeId String?
   /// FB Page that owns the ad's creative (the "sender" identity).
-  externalPageId    String?
+  externalPageId     String?
   /// Timestamp of last successful publish. Lets the UI surface "Published
   /// 2 days ago" without crawling the audit log.
-  publishedAt       DateTime?
+  publishedAt        DateTime?
   /// Last publish error message if the most recent attempt failed. Cleared
   /// on next successful publish.
-  publishError      String?
+  publishError       String?
 
-  workspace Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  adAccount AdAccount          @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
-  metrics   CampaignMetrics[]
-  creatives Creative[]
+  workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adAccount   AdAccount         @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  metrics     CampaignMetrics[]
+  creatives   Creative[]
+  suggestions Suggestion[]
+  changeLogs  ChangeLog[]
 
   @@unique([adAccountId, externalId])
   @@index([workspaceId])
@@ -250,21 +297,25 @@ model CampaignMetrics {
 }
 
 model Creative {
-  id           String         @id @default(cuid())
-  workspaceId  String
-  campaignId   String?
-  name         String
-  type         CreativeType
-  content      Json
-  status       CreativeStatus @default(DRAFT)
-  aiGenerated  Boolean        @default(false)
-  createdAt    DateTime       @default(now())
+  id          String         @id @default(cuid())
+  workspaceId String
+  campaignId  String?
+  name        String
+  type        CreativeType
+  content     Json
+  status      CreativeStatus @default(DRAFT)
+  aiGenerated Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  /// Owning client. Null = shared library item, shown for every client.
+  clientId    String?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([campaignId])
+  @@index([clientId])
 }
 
 model AiSession {
@@ -308,11 +359,15 @@ model Audience {
   approxSize  Int?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+  /// Owning client. Null = shared template, shown for every client.
+  clientId    String?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([workspaceId, type])
+  @@index([clientId])
 }
 
 enum BudgetRecommendationStatus {
@@ -387,4 +442,177 @@ model Insight {
   @@index([workspaceId, status])
   @@index([workspaceId, type])
   @@index([workspaceId, createdAt])
+}
+
+// ─── Suggestions (plan B2) ───────────────────────────────────────────────────
+// One model for everything Advertix suggests. Replaces Insight and
+// BudgetRecommendation once the Insights and Budgets pages are rebuilt (A10,
+// A11); until then those generators write here too. A suggestion either
+// carries an executable action (actionType + actionPayload) that Apply really
+// performs on the ad platform and Undo reverts, or it is review-only
+// (reviewHref).
+
+enum SuggestionStatus {
+  OPEN
+  APPLIED
+  SNOOZED
+  DISMISSED
+  EXPIRED
+}
+
+enum SuggestionSource {
+  INSIGHT
+  BUDGET_OPTIMIZER
+  RULE
+}
+
+model Suggestion {
+  id            String           @id @default(cuid())
+  workspaceId   String
+  /// From the campaign's ad account. Null = workspace-wide.
+  clientId      String?
+  campaignId    String?
+  source        SuggestionSource
+  /// Id of the Insight / BudgetRecommendation it came from.
+  sourceRef     String?
+  /// Same key = same suggestion across regenerations ("budget:<campaignId>").
+  dedupeKey     String
+  /// Card tag: "Budget shift", "Pacing", "Creative fatigue", "Opportunity", …
+  kind          String
+  title         String
+  reason        String           @db.Text
+  /// Short, right-aligned impact ("+$3,100 / week").
+  impact        String?
+  priority      Int              @default(5)
+  confidence    String?
+  /// "SET_DAILY_BUDGET" | "SET_STATUS". Null = review-only.
+  actionType    String?
+  actionLabel   String
+  doneLabel     String?
+  actionPayload Json?
+  /// Filled on apply: what Undo restores.
+  revertPayload Json?
+  /// Where Review goes (also the fallback when the action can't run).
+  reviewHref    String?
+  status        SuggestionStatus @default(OPEN)
+  snoozedUntil  DateTime?
+  /// Don't propose this dedupeKey again before this time (set by Undo).
+  suppressUntil DateTime?
+  appliedAt     DateTime?
+  appliedById   String?
+  undoneAt      DateTime?
+  expiresAt     DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, clientId])
+  @@index([workspaceId, dedupeKey])
+  @@index([campaignId])
+}
+
+// ─── Saved AI plans (plan B5, used by the AI Planner in A12) ─────────────────
+// A plan keeps every version the planner produced, so refinements ("make it
+// cheaper", "add TikTok") can be compared and rolled back.
+
+enum PlanStatus {
+  DRAFT
+  /// Campaigns were created from it.
+  USED
+  ARCHIVED
+}
+
+model Plan {
+  id            String     @id @default(cuid())
+  workspaceId   String
+  clientId      String?
+  createdById   String
+  title         String
+  /// The brief the user typed (first message).
+  brief         String     @db.Text
+  status        PlanStatus @default(DRAFT)
+  /// Number of the newest version (versions are 1, 2, 3, …).
+  latestVersion Int        @default(1)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  versions  PlanVersion[]
+
+  @@index([workspaceId, updatedAt])
+  @@index([clientId])
+}
+
+model PlanVersion {
+  id        String   @id @default(cuid())
+  planId    String
+  version   Int
+  /// The planner's plan object, as returned by POST /ai/plan-campaign.
+  plan      Json
+  /// What changed ("Cheaper — $40/day cap"). Optional.
+  note      String?
+  createdAt DateTime @default(now())
+
+  parent Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, version])
+}
+
+// ─── Change log (plan B3) ────────────────────────────────────────────────────
+// Append-only record of every change to a campaign: who (a person, an
+// Advertix suggestion someone approved, a rule, or a change detected by sync),
+// what (before / after), and whether it reached the ad platform. Budget,
+// status and name changes can be undone for 7 days; an undo is itself a new
+// entry that points back at the one it reverses.
+
+enum ChangeActor {
+  /// A person in the workspace.
+  USER
+  /// An Advertix suggestion, applied by `actorUserId`.
+  AI
+  /// An automation rule (reserved for automation levels / F2).
+  RULE
+  /// Detected by sync: changed outside Advertix (e.g. in Ads Manager).
+  SYNC
+}
+
+model ChangeLog {
+  id             String      @id @default(cuid())
+  workspaceId    String
+  clientId       String?
+  /// Null once the campaign is deleted; `campaignName` keeps the label.
+  campaignId     String?
+  campaignName   String
+  actorType      ChangeActor
+  /// Who made it, or who approved the suggestion. Null for SYNC.
+  actorUserId    String?
+  /// "campaign.budget" | "campaign.status" | "campaign.rename" | "campaign.schedule" |
+  /// "campaign.targeting" | "campaign.create" | "campaign.duplicate" |
+  /// "campaign.publish" | "campaign.delete"
+  action         String
+  /// Human-readable line ("Raised daily budget from $480 to $550").
+  summary        String
+  before         Json?
+  after          Json?
+  /// The change was made on the ad platform, not only in Advertix.
+  platformPushed Boolean     @default(false)
+  suggestionId   String?
+  /// Set on an undo entry: the entry it reverses.
+  revertOfId     String?
+  /// Set on the original entry once it's undone.
+  undoneAt       DateTime?
+  undoneById     String?
+  createdAt      DateTime    @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([campaignId, createdAt])
+  @@index([suggestionId])
 }

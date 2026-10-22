@@ -3,6 +3,11 @@ const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@advertix/shared"],
 
+  // Dev server only: keep compiled pages for an hour. The defaults drop a
+  // page after ~1 minute unvisited (beyond the last 5), so moving around the
+  // app kept recompiling pages, at several seconds each.
+  onDemandEntries: { maxInactiveAge: 60 * 60 * 1000, pagesBufferLength: 100 },
+
   // Security headers — applied to every route. CSP intentionally omitted here
   // because Clerk + Next streaming + popup OAuth all interact with it; add
   // one via a separate header rule only after testing the auth flow end to

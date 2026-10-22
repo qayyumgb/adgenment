@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import toast from "react-hot-toast";
-import { useRouter } from "next/navigation";
+import { useAppRouter } from "@/hooks/useAppRouter";
 import {
   Sparkles,
   Plus,
@@ -341,7 +341,7 @@ function MyAudienceCard({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const router = useRouter();
+  const router = useAppRouter();
   const tm = TYPE_META[a.type];
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card-hover">

@@ -3,6 +3,7 @@ import type { Platform } from "@prisma/client";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
+import { ensureClients, parseClientScope } from "../lib/clients";
 
 const router = Router();
 router.use(requireAuth);
@@ -35,20 +36,76 @@ const PUBLIC_AD_ACCOUNT_SELECT = {
   accountStatus: true,
   isActive: true,
   createdAt: true,
+  lastSyncedAt: true,
+  clientId: true,
+  tokenExpiresAt: true,
 } as const;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type StoredHealth = { overall?: string; checks?: { status?: string; title?: string }[] };
+
 /**
- * GET /ad-accounts
+ * Compact health summary from the stored Meta health report (metadata +
+ * lastHealthCheck). Null when no check has run (non-Meta accounts today).
+ */
+function healthSummary(metadata: unknown, checkedAt: Date | null) {
+  const report = metadata as StoredHealth | null;
+  if (!report || typeof report !== "object" || !report.overall) return null;
+  const problems = (report.checks ?? []).filter((c) => c.status === "error" || c.status === "warning");
+  const worst = problems.find((c) => c.status === "error") ?? problems[0];
+  return {
+    overall: report.overall as "healthy" | "degraded" | "blocked",
+    issues: problems.length,
+    topIssue: worst?.title ?? null,
+    checkedAt,
+  };
+}
+
+/**
+ * GET /ad-accounts?clientId=
  */
 router.get("/", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const workspace = await requireWorkspace(req.dbUserId!);
+    await ensureClients(workspace.id);
+    const clientId = await parseClientScope(req, workspace.id);
     const accounts = await prisma.adAccount.findMany({
-      where: { workspaceId: workspace.id },
-      select: PUBLIC_AD_ACCOUNT_SELECT,
+      where: { workspaceId: workspace.id, ...(clientId ? { clientId } : {}) },
+      select: { ...PUBLIC_AD_ACCOUNT_SELECT, metadata: true, lastHealthCheck: true },
       orderBy: { createdAt: "desc" },
     });
-    res.json(accounts);
+
+    // Last-30-day spend per account (one query over the accounts' campaigns).
+    const since = new Date(Date.now() - 30 * DAY_MS);
+    const ids = accounts.map((a) => a.id);
+    const spendByAccount = new Map<string, number>();
+    if (ids.length) {
+      const campaigns = await prisma.campaign.findMany({
+        where: { adAccountId: { in: ids } },
+        select: { id: true, adAccountId: true },
+      });
+      const accountOf = new Map(campaigns.map((c) => [c.id, c.adAccountId]));
+      if (campaigns.length) {
+        const sums = await prisma.campaignMetrics.groupBy({
+          by: ["campaignId"],
+          where: { campaignId: { in: campaigns.map((c) => c.id) }, date: { gte: since } },
+          _sum: { spend: true },
+        });
+        for (const row of sums) {
+          const acct = accountOf.get(row.campaignId);
+          if (acct) spendByAccount.set(acct, (spendByAccount.get(acct) ?? 0) + Number(row._sum.spend ?? 0));
+        }
+      }
+    }
+
+    res.json(
+      accounts.map(({ metadata, lastHealthCheck, ...a }) => ({
+        ...a,
+        health: healthSummary(metadata, lastHealthCheck),
+        spend30d: +(spendByAccount.get(a.id) ?? 0).toFixed(2),
+      }))
+    );
   } catch (err) {
     next(err);
   }
@@ -135,6 +192,40 @@ router.delete(
     }
   }
 );
+
+/**
+ * PATCH /ad-accounts/:id — assign to a client: { clientId: string | null }.
+ */
+router.patch("/:id", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const existing = await prisma.adAccount.findFirst({
+      where: { id: req.params.id, workspaceId: workspace.id },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: "Ad account not found" });
+    }
+    const { clientId } = req.body ?? {};
+    if (clientId !== null && typeof clientId !== "string") {
+      return res.status(400).json({ error: "clientId must be a client id or null" });
+    }
+    if (clientId) {
+      const client = await prisma.client.findFirst({
+        where: { id: clientId, workspaceId: workspace.id },
+        select: { id: true },
+      });
+      if (!client) return res.status(404).json({ error: "Client not found" });
+    }
+    const updated = await prisma.adAccount.update({
+      where: { id: existing.id },
+      data: { clientId: clientId ?? null },
+      select: PUBLIC_AD_ACCOUNT_SELECT,
+    });
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * PATCH /ad-accounts/:id/toggle

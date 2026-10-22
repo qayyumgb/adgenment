@@ -15,6 +15,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { aiService } from "./ai.service";
+import { suggestionsService } from "./suggestions.service";
+import { changeLog } from "./change-log.service";
 
 export interface CampaignPerformance {
   id: string;
@@ -208,6 +210,7 @@ class BudgetOptimizerService {
       },
     });
 
+    await suggestionsService.syncFromBudgetRecommendations(workspaceId);
     return { ...fullAnalysis, recommendationId: saved.id };
   }
 
@@ -219,7 +222,8 @@ class BudgetOptimizerService {
   async applyRecommendations(
     workspaceId: string,
     recommendationId: string,
-    campaignIds?: string[]
+    campaignIds?: string[],
+    userId: string | null = null
   ): Promise<{ applied: number; skipped: number }> {
     const rec = await prisma.budgetRecommendation.findFirst({
       where: { id: recommendationId, workspaceId },
@@ -240,12 +244,38 @@ class BudgetOptimizerService {
           skipped++;
           continue;
         }
+        const before = await prisma.campaign.findFirst({
+          where: { id: r.campaignId, workspaceId },
+          include: { adAccount: { select: { clientId: true, currency: true } } },
+        });
+        if (!before) {
+          skipped++;
+          continue;
+        }
+        const log = (action: string, from: Record<string, unknown>, to: Record<string, unknown>) =>
+          changeLog.record({
+            workspaceId,
+            campaignId: before.id,
+            campaignName: before.name,
+            clientId: before.adAccount.clientId,
+            currency: before.adAccount.currency,
+            actorType: "AI",
+            userId,
+            action,
+            before: from,
+            after: to,
+            platformPushed: false,
+            note: "(in Advertix only — not sent to the platform)",
+          });
         if (r.action === "PAUSE") {
           const res = await prisma.campaign.updateMany({
             where: { id: r.campaignId, workspaceId },
             data: { status: "PAUSED" },
           });
-          res.count > 0 ? applied++ : skipped++;
+          if (res.count > 0) {
+            applied++;
+            if (before.status !== "PAUSED") await log("campaign.status", { status: before.status }, { status: "PAUSED" });
+          } else skipped++;
           continue;
         }
         // INCREASE / DECREASE → set budget, but only if it's a sane positive value.
@@ -261,7 +291,14 @@ class BudgetOptimizerService {
           where: { id: r.campaignId, workspaceId },
           data: { budget: new Prisma.Decimal(r.recommendedBudget.toFixed(2)) },
         });
-        res.count > 0 ? applied++ : skipped++;
+        if (res.count > 0) {
+          applied++;
+          await log(
+            "campaign.budget",
+            { budget: Number(before.budget), budgetType: before.budgetType },
+            { budget: r.recommendedBudget, budgetType: before.budgetType }
+          );
+        } else skipped++;
       } catch {
         skipped++;
       }
@@ -277,6 +314,7 @@ class BudgetOptimizerService {
       },
     });
 
+    await suggestionsService.syncFromBudgetRecommendations(workspaceId);
     return { applied, skipped };
   }
 
@@ -285,10 +323,12 @@ class BudgetOptimizerService {
       where: { id: recommendationId, workspaceId },
     });
     if (!rec) throw new Error("RECOMMENDATION_NOT_FOUND");
-    return prisma.budgetRecommendation.update({
+    const updated = await prisma.budgetRecommendation.update({
       where: { id: recommendationId },
       data: { status: "DISMISSED", dismissedAt: new Date() },
     });
+    await suggestionsService.syncFromBudgetRecommendations(workspaceId);
+    return updated;
   }
 
   getHistory(workspaceId: string, limit = 10) {

@@ -1,18 +1,75 @@
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * App design tokens — docs/Advertix UI Guide.md §2.1 (values from the
+ * mockups). Each colour has an RGB-channel variable (--c-*) so Tailwind can
+ * apply opacity, plus a ready-to-use var (--brand etc.) for raw CSS.
+ * Dark theme: the `.dark` class on <html> (ThemeProvider). The marketing
+ * site uses its own --mk-* tokens and is unaffected.
+ */
 :root {
+  --c-bg: 246 246 249;
+  --c-surface: 255 255 255;
+  --c-surface-2: 243 242 248;
+  --c-surface-3: 235 233 243;
+  --c-ink: 22 20 31;
+  --c-ink-2: 89 86 105;
+  --c-ink-3: 133 130 154;
+  --c-line: 232 230 239;
+  --c-line-2: 217 214 228;
+  --c-brand: 100 72 242;
+  --c-brand-hover: 85 55 230;
+  --c-brand-soft: 239 235 255;
+  --c-brand-soft-2: 224 217 255;
+  --c-brand-ink: 75 47 208;
+  --c-brand-mid: 169 152 255;
+  --c-on-mid: 29 20 70;
+  --c-pos: 13 143 90;
+  --c-pos-soft: 227 246 236;
+  --c-neg: 210 60 66;
+  --c-neg-soft: 253 236 235;
+  --c-warn: 168 100 0;
+  --c-warn-soft: 253 242 223;
+
+  --bg: rgb(var(--c-bg));
+  --surface: rgb(var(--c-surface));
+  --surface-2: rgb(var(--c-surface-2));
+  --surface-3: rgb(var(--c-surface-3));
+  --ink: rgb(var(--c-ink));
+  --ink-2: rgb(var(--c-ink-2));
+  --ink-3: rgb(var(--c-ink-3));
+  --line: rgb(var(--c-line));
+  --line-2: rgb(var(--c-line-2));
+  --brand-hover: rgb(var(--c-brand-hover));
+  --brand-soft-2: rgb(var(--c-brand-soft-2));
+  --brand-ink: rgb(var(--c-brand-ink));
+  --brand-mid: rgb(var(--c-brand-mid));
+  --pos: rgb(var(--c-pos));
+  --pos-soft: rgb(var(--c-pos-soft));
+  --neg: rgb(var(--c-neg));
+  --neg-soft: rgb(var(--c-neg-soft));
+  --warn: rgb(var(--c-warn));
+  --warn-soft: rgb(var(--c-warn-soft));
+  --grad: linear-gradient(135deg, #8a3ffc 0%, #5a62ff 55%, #2d8cff 100%);
+  --shadow: 0 1px 2px rgba(22, 20, 40, 0.04), 0 2px 8px rgba(22, 20, 40, 0.04);
+  --shadow-lg: 0 16px 40px rgba(22, 20, 40, 0.14), 0 2px 6px rgba(22, 20, 40, 0.06);
+  /* Platform colours — platform badges only. */
+  --p-meta: #1877f2;
+  --p-google: #ea4335;
+  --p-snap: #fffc00;
+  --p-li: #0a66c2;
+
+  /* Legacy tokens (old sidebar/header/pages) — removed with them (plan A15). */
   --background: #f8fafc;
   --foreground: #0f172a;
   --card: #ffffff;
   --card-border: #e2e8f0;
   --muted: #64748b;
   --muted-foreground: #94a3b8;
-  --brand: #6366f1;
-  --brand-soft: rgba(99, 102, 241, 0.12);
+  --brand: rgb(var(--c-brand));
+  --brand-soft: rgb(var(--c-brand-soft));
   --brand-glow: rgba(99, 102, 241, 0.45);
 
   --sidebar-bg: #0f172a;
@@ -31,13 +88,38 @@
 }
 
 .dark {
+  --c-bg: 12 11 18;
+  --c-surface: 21 19 29;
+  --c-surface-2: 28 26 39;
+  --c-surface-3: 37 35 49;
+  --c-ink: 243 242 248;
+  --c-ink-2: 174 171 191;
+  --c-ink-3: 127 124 146;
+  --c-line: 37 35 49;
+  --c-line-2: 52 49 63;
+  --c-brand: 124 100 255;
+  --c-brand-hover: 144 121 255;
+  --c-brand-soft: 34 28 64;
+  --c-brand-soft-2: 46 38 86;
+  --c-brand-ink: 194 182 255;
+  --c-brand-mid: 90 72 184;
+  --c-on-mid: 255 255 255;
+  --c-pos: 65 211 154;
+  --c-pos-soft: 15 42 31;
+  --c-neg: 255 113 117;
+  --c-neg-soft: 49 22 24;
+  --c-warn: 242 180 78;
+  --c-warn-soft: 45 34 19;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+
   --background: #0b1120;
   --foreground: #f8fafc;
   --card: #111827;
   --card-border: #1f2937;
   --muted: #94a3b8;
   --muted-foreground: #64748b;
-  --brand-soft: rgba(99, 102, 241, 0.18);
 }
 
 html,
@@ -46,33 +128,52 @@ body {
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: "Plus Jakarta Sans", Inter, system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "cv11", "ss01";
 }
 
-/* ─────────── Scrollbar ─────────── */
+/* ─────────── Scrollbar (guide §2.3) ─────────── */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.25);
+  background: rgba(120, 116, 140, 0.32);
   border-radius: 999px;
-  transition: background 0.2s ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.5);
+  background: rgba(120, 116, 140, 0.55);
 }
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
+  scrollbar-color: rgba(120, 116, 140, 0.32) transparent;
+}
+
+/* AI generation shimmer (guide §6) */
+@keyframes adx-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+/* Dialog / bottom sheet and drawer entrances (components/app/ui/Overlays). */
+@keyframes adx-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+@keyframes adx-drawer-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
 }
 
 /* ─────────── Components ─────────── */

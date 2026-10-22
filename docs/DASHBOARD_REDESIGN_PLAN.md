@@ -1,0 +1,407 @@
+# Dashboard redesign — implementation plan
+
+**Status (2026-10-22):** **Phase 0, A1, B1, A2, A3, A4, B2, A5, B5, A6, B3, A10 and A7 done** in the working copy (see [§ 11](#11-progress)). Next: B4 (ad sets & ads). A10 was done ahead of A7 (it doesn't depend on it). Pre-launch items (OAuth nonce, Clerk production) stay on their own track.
+
+**Goal:** rebuild the logged-in product (`app.advertix.io`) to the new design, keep every feature that works today, and add the new agency features from the mockups. Do it in an order where no button pretends to do something it doesn't.
+
+**Sources of truth** (`F:\prev-desktop\proexe\advertix-repo\Advertix UI Redesign mockup\`):
+
+| File | Role |
+|---|---|
+| `docs/Advertix UI Guide.md` | Design system: tokens, type, shell, components, data-grid rules, interaction rules. **Wins over the mockups and the code if they disagree.** |
+| `docs/Claude Agent Prompt.md` | Build order and ground rules (Step 1 foundations → Step 2 shell → Step 3 DataGrid → Step 4 pages) and the per-page acceptance checklist |
+| `Overview`, `Campaigns v2`, `Campaign Detail v2`, `New Campaign`, `Creatives`, `Audiences`, `Analytics`, `Budgets`, `AI Planner`, `Connections`, `Settings` `.dc.html` | Page targets (inline styles are the spec) |
+| `Modals.dc.html` | Dialogs D1–D7 |
+| `Feature Proposals.dc.html` | Product review: 12 recommendations, new features F1–F8 |
+| `Mobile.dc.html`, `_parts/shell-gen.js` | Mobile shell and the shared sidebar / top bar / page header |
+
+**Ignore:** `Dashboard.dc.html`, `Campaigns.dc.html`, `Campaign Detail.dc.html` (v1 — built on the separate "Modernist" design system in `_ds/`, superseded by v2), `Dashboard v2` options 2b and 2c (Overview is option 2a), `uploads/` (feedback screenshots, not specs), `marketing/` (already shipped — [MARKETING_REDESIGN_PLAN.md](MARKETING_REDESIGN_PLAN.md)).
+
+---
+
+## 1. Summary
+
+The new design is an **agency product**: one workspace runs many **clients**, every page filters by client, and the AI's suggestions sit next to the data with *Apply → Applied → Undo*. Today's backend is a **single-brand product** where:
+
+- there is **no Client entity**: ad accounts, campaigns, creatives and audiences belong straight to the workspace;
+- **"Apply" doesn't apply.** `insights/:id/apply` only flips a status, and the budget optimizer's apply writes our database, not Meta. There's no change log and no undo;
+- a campaign has **one ad set and one ad** (IDs on the Campaign row). There are no ad-set or ad tables and no ad-level metrics, frequency or fatigue;
+- there are **no alerts, approvals, team invites (stubbed), notification channels, scheduled jobs (besides a 6-hour Meta sync), billing or Snapchat**.
+
+So this is **two projects running side by side**:
+
+1. **UI revamp (Track A).** Mostly frontend. Every page is rebuilt on new tokens, primitives, shell and a shared DataGrid, wired to today's API wherever the data exists.
+2. **Backend foundations (Track B).** Client, real suggestions with execution and undo, change log, ad sets and ads, and a set of small API exposures. These unlock about half of what the mockups show.
+
+The **new features** (Track C: alerts, approvals, client portal, ⌘K, flight calendar, smart hours, experiments, Snapchat, Stripe) come after the core of A and B.
+
+Rough size: **Track A ≈ 60 working days, Track B ≈ 30, Track C ≈ 80+**, for one developer. Details in [§ 9](#9-sizing).
+
+---
+
+## 2. Where the app is today
+
+From a full read of `apps/web` and `apps/api`.
+
+| Area | State today |
+|---|---|
+| Shell | Always-dark fixed sidebar, no mobile layout (no drawer, no bottom bar). The collapsed sidebar can't be re-expanded (bug). The workspace card is hard-coded "My Workspace". The header's notifications, ⌘K search, bell and help are fake |
+| Theme | `darkMode: "class"` is configured, but nothing toggles it; pages hard-code `slate-*` and hex values. Font: Plus Jakarta Sans |
+| Primitives | Only `Modal`, `Skeleton`, `EmptyState`, `WizardRail`, `MetaErrorCard`, `VideoThumbnailPlayer`. No shared Button, Input, Select, Tabs, Badge, Card, Table, Menu — each page re-implements them |
+| Data fetching | `useApi` has no cache or dedupe; `getMe` is fetched twice per page; the sidebar refetches on every navigation; Campaigns makes 4 calls just for status counts |
+| Real data | Dashboard, Campaigns, Campaign detail (Overview + Settings tabs), Audiences, Creatives, Analytics, Insights, Budget optimizer, AI Planner, Settings General/Workspace/Integrations |
+| Fake / mock | Billing (entirely), Settings Notifications / API keys / Security / Danger zone, Insights chat widget, header notifications, Campaign detail Ad sets / Creatives / Audience tabs, "Duplicate" / "Archive" menu items, Analytics "Export report", Creatives `FALLBACK_COPY` when AI copy fails |
+| Platforms | **Meta: full** (OAuth, sync, health, publish, launch/pause, edit, delete). Google / TikTok / LinkedIn: OAuth + read-only manual sync. Snapchat, YouTube, Pinterest, X: enum only |
+| Giant files | `creatives/page.tsx` 5,241 lines, `PublishToMetaModal.tsx` 2,757, `settings/page.tsx` 1,712, `CreateCampaignModal.tsx` 1,453, four ~270-line near-identical `*Connect.tsx` |
+
+**Bugs and security found during the review (fix in Phase 0):**
+
+- `POST /api/ai/generate-copy` has **no `requireAuth`** (`apps/api/src/routes/ai.ts:248`), so anyone can spend our AI budget.
+- Mojibake ("Syncingâ€¦") in `components/settings/{Google,LinkedIn,TikTok}Connect.tsx`.
+- `/budget-optimizer` is missing from the middleware's `APP_ONLY_PREFIXES`.
+- Dead code: `components/dashboard/CampaignTable.tsx`, `app/api/ai/plan-campaign/route.ts`.
+- The onboarding gate is unreachable (the auth middleware auto-creates a workspace).
+
+---
+
+## 3. Ground rules for this project
+
+1. **The guide wins.** Tokens, sizes, radii and copy come from `Advertix UI Guide.md` and the mockups; no invented colours.
+2. **Nothing working gets dropped.** Every current capability has a home in the new UI — see the parity checklist in [§ 7](#7-feature-parity-checklist). If the mockup leaves something out (e.g. the Meta Page picker, destination URL, Insights list, Meta audiences tab), we add it in the new style.
+3. **No fake actions.** A button either does what it says or is visibly disabled with the reason ("Available when Google publishing ships"). In particular, any *Apply* that touches spend must really execute and be undoable, or it doesn't ship as "Apply".
+4. **Mock data never reaches production users.** Following the agent prompt, sections whose API doesn't exist yet are built against a typed interface plus a mock in `apps/web/lib/mocks/` with a `// TODO(api): <endpoint>` comment. But mocks are **only shown in development or behind `NEXT_PUBLIC_UI_PREVIEW=1`**. In production the section shows its empty or "coming soon" state.
+5. **Client is the context.** Every list and analytics call takes the selected client from `ClientContext` (persisted as `?client=`). Until Track B1 lands, that context holds "All clients" only, and the switcher reads "All clients".
+6. **Per page:** match the mockup at 390 / 768 / 1024 / 1440 in light and dark; empty, loading (skeleton) and error states; keyboard reachable; `tsc --noEmit` + `next lint` clean; guide's acceptance checklist ticked.
+
+---
+
+## 4. Decisions needed before we start
+
+Recommended answer first.
+
+**Decided 2026-10-21:**
+- **#1 Clients** → new `Client` model, ad accounts assigned to clients, one default client for single-brand workspaces.
+- **#2 Start order** → Phase 0, then UI foundation (A1–A3) in parallel with Clients (B1), then pages.
+- **#3 Mock data** → dev / preview flag only; production shows empty or "coming soon" states.
+- **#4 AI Apply** → only actions that really execute and can be undone; others show "Review".
+- Items 5–12 still open; they're needed before the phase that uses them, not to start.
+
+1. **Clients.** **Recommend:** a new `Client` model (name, short mark, vertical, logo, monthly budget, autonomy, ask-first) with `AdAccount.clientId`; campaigns, creatives, audiences and metrics inherit the client through their ad account. Single-brand workspaces get one default client, and the switcher hides itself when there's only one client.
+2. **Order of work.** **Recommend:** Track A (foundations → shell → DataGrid) and Track B1 (Clients) in parallel first, then pages. Building pages on a workspace-only API and retrofitting clients later means touching every page twice.
+3. **Mock policy in production.** **Recommend:** as in [§ 3.4](#3-ground-rules-for-this-project) — dev / preview flag only.
+4. **Suggestions.** **Recommend:** a unified `Suggestion` model replacing `Insight` and `BudgetRecommendation` (migrate both), with per-kind executors. Phase 1 executes only what we can do for real on Meta (budget change, pause/resume, rotate ad); other kinds show **Review** (opens the item) instead of Apply.
+5. **Ad sets and ads.** **Recommend:** add `AdSet` and `Ad` tables plus ad-level daily metrics (incl. frequency) for **Meta first**. This unlocks Campaign detail tabs, creative performance, fatigue and audience performance.
+6. **New campaign wizard shape.** **Recommend:** keep **one Campaign row per platform** (today's model), grouped as one "launch" in the wizard. Publishing stays Meta-only, and other platforms save as drafts marked "publishing coming soon". The wizard gains the Meta-required fields the mockup omits: Page, destination URL, CTA, placements, gender, geo search, interests, custom/lookalike audiences, plus the live ad preview.
+7. **Roles.** **Recommend:** migrate `WorkspaceRole` to `OWNER | MEDIA_BUYER | ANALYST | CLIENT_VIEWER` (ADMIN/EDITOR → MEDIA_BUYER, VIEWER → ANALYST) plus `MemberClientAccess`.
+8. **Snapchat and other unbuilt platforms.** **Recommend:** shown as "Coming soon" (never "connected") in the sidebar box, Connections and the wizard, until a connector exists.
+9. **Campaigns grid suggestion flow.** The mockup has Apply → Applied with no Not now or Undo. **Recommend:** follow guide § 6 everywhere (Apply → Applied → Undo; Not now → Snoozed).
+10. **Billing.** **Recommend:** no Stripe in this project. The Billing tab shows the real plan from the DB and usage computed from real data; "Change plan" links to `/pricing` / contact. Prices come from `apps/web/lib/marketing/pricing.ts`, which removes today's $699 vs $499 conflict.
+11. **Automation levels.** **Recommend:** "Suggest only" works from day one. "Auto-apply small changes" and "Autopilot" are visible but disabled ("Available once Approvals & undo ship") until Track B3 exists (guide principle 5: nothing changes without consent).
+12. **Data fetching.** **Recommend:** add **SWR** (~4 KB) behind `useApi` for caching and dedupe. It fixes the duplicate fetches without touching every call site's shape.
+
+---
+
+## 5. Technical approach
+
+### 5.1 Tokens, fonts, theme
+
+- Guide § 2.1 tokens become CSS variables on `:root` and `.dark` in `globals.css` (`--bg`, `--surface`, `--surface-2/3`, `--ink`, `--ink-2/3`, `--line`, `--line-2`, `--brand`, `--brand-hover`, `--brand-soft`, `--brand-soft-2`, `--brand-ink`, `--brand-mid`, `--grad`, `--pos/neg/warn` + `-soft`). They don't collide with the marketing site, which uses `--mk-*` scoped to `.mk`.
+- Tailwind maps them to colours (`bg-surface`, `text-ink-2`, `border-line`, `bg-brand-soft` …), radii (`card 16`, `menu 14`, `ctl 10`) and shadows (`card`, `pop`).
+- Font: **Geist** for the whole app via the `geist` package (already installed for marketing). Plus Jakarta Sans is removed once the last old page is gone.
+- Dark mode: a `ThemeProvider` toggles `.dark` on `<html>` (saved per user in localStorage, defaulting to the OS). The mockups' `[data-theme=dark]` maps to `.dark`.
+- The old utilities (`.glass-card`, `.metric-card`, `.gradient-text`, `.btn-brand`, `primary-*` indigo, `sidebar-*`) are deleted when nothing uses them.
+
+### 5.2 Folder layout
+
+- `components/app/ui/` — primitives (Button, Segmented, Toggle, Checkbox, Pill, DeltaPill, PlatformBadge, Card, KpiCard + Sparkline, Menu, MultiSelectMenu, Drawer, Dialog with bottom sheet under 600px, EmptyState, Skeleton, AiSuggestion, AiNote, Tabs, SelectableCard, MeterBar, PacingBar).
+- `components/app/grid/` — the DataGrid (column config, Sort / Columns / Row-height menus, sticky Action column, selection + bulk bar, footer totals, persisted per table in `localStorage` `advertix.grid.<tableId>`).
+- `components/app/charts/` — hand-rolled SVG bar, line and area charts with the hover readout in the card header (guide § 6). Recharts stays only where a page still needs it, then goes.
+- `components/app/shell/` — AppShell, Sidebar, ClientSwitcher, AdAccountsBox, TopBar, PageHeader, MobileAppBar, MobileDrawer, BottomTabBar, ThemeToggle.
+- Page-specific pieces next to their routes (`components/app/<page>/`), so no page file grows past ~600 lines.
+- `lib/mocks/` — typed mocks (preview only, [§ 3.4](#3-ground-rules-for-this-project)).
+- `lib/publish/` — publish logic pulled out of `PublishToMetaModal.tsx` (targeting spec, placements, asset payload, URL validation, copy limits, schedule validation), so the wizard and any future publish surface share one implementation.
+- `/dev/ui` — dev-only page showing every primitive in both themes (agent prompt Step 1.5).
+
+### 5.3 Routes
+
+| Today | New | Notes |
+|---|---|---|
+| `/dashboard` | `/dashboard` (Overview) | |
+| `/campaigns`, `/campaigns/[id]` | same | |
+| `CreateCampaignModal` (`?new=1`) | `/campaigns/new` | `?new=1` redirects; AI Planner prefill kept |
+| `/creatives`, `/audiences`, `/analytics`, `/ai-planner` | same | |
+| `/insights` | → `/analytics` (+ Overview suggestions) | redirect |
+| `/budget-optimizer` | `/budgets` | redirect |
+| `/billing` | `/settings?tab=billing` | redirect |
+| Settings › Integrations | `/connections` | update ~15 `/settings?tab=integrations` links incl. the API's `meta-health.service.ts` `RECONNECT_URL` and middleware lists |
+| — | `/activity` (Approvals & history, F2) | Track C |
+
+### 5.4 Release approach
+
+There are no real users yet (per IMPLEMENTATION.md), so pages are replaced **in place, one by one**, on `main`: you verify locally and push. The new shell lands early, so old pages render inside it for a while; that's acceptable pre-launch. Each page's PR description has screenshots at 1440 and 390, light and dark.
+
+---
+
+## 6. Phases
+
+### Phase 0 — Fixes that shouldn't wait (≈ 1–2 days) — ✅ done 2026-10-21
+
+- ✅ `requireAuth` on `POST /api/ai/generate-copy`; the Next proxy forwards the Clerk token. Verified: no token / fake token → 401. A route audit found no other unprotected endpoints besides `/api/ai/health` and the four OAuth callbacks, which must stay public.
+- ✅ Expired Meta creative preview URLs are refreshed on read (`apps/api/src/services/meta-media-refresh.service.ts`), covered by a stubbed end-to-end test. Still to check live: open the Creatives library with creatives older than a few days.
+- ✅ Mojibake and BOMs fixed in the three Connect components; `/budget-optimizer` added to `APP_ONLY_PREFIXES`; dead `CampaignTable.tsx` and the unused plan-campaign proxy deleted.
+- *(Pre-launch, separate track):* OAuth state nonce (Roadmap 3.2), Clerk production instance (3.1).
+
+### Track A — UI revamp
+
+| # | Phase | Contents | Real data | Waits on |
+|---|---|---|---|---|
+| A1 | Foundations | Tokens, Geist, ThemeProvider, Tailwind mapping, primitives, `/dev/ui`, SWR behind `useApi` | — | — |
+| A2 | Shell | Sidebar (client switcher, nav with live counts, **ad-accounts box** fed by ad accounts + token warning), top bar (search opens ⌘K later, role pill, alerts bell, theme toggle, help, avatar), PageHeader, mobile app bar / drawer / bottom tab bar; collapse bug fixed | ad accounts, campaign count, me | Clients (B1) for the switcher contents |
+| A3 | DataGrid | Guide § 4.1 in full | — | — |
+| A4 | **Overview** (`/dashboard`) | Greeting, 5 KPI cards with sparklines, spend & revenue chart (7/14/30D, hover readout), Advertix suggests, client pacing table | KPIs, chart, sparklines, suggestions (Insights for now) | Clients table + pacing need B1 + B5; real Apply needs B2 |
+| A5 | **Campaigns** | KPI strip, AI banner + "Only show these", DataGrid (status segment with counts, platform multi-select, toggle pause/resume, suggestion column, sticky Action), bulk bar (Pause, Resume, Edit budgets, Duplicate), footer totals, CSV export (client-side, D6 CSV) | rows, 30-day metrics (joined from `/analytics/campaigns`), toggles, bulk status | "Learning" status (B4); suggestion column (B2); duplicate endpoint (B5) |
+| A6 | **Campaign detail** | Header with status toggle, tabs Overview / Ad sets / Ads / Change log; 6 KPIs; metric-switch chart with event markers; suggestions; **Ask about this campaign**; ad-set grid; ad tiles with fatigue bars. Keep today's Settings (rename, budget, delete), Launch on Meta, Ads Manager link, `?publish=1` | KPIs, chart, status, settings, publish/launch | Ad sets / ads / fatigue (B4); change log + markers (B3); Ask (new `POST /ai/campaigns/:id/ask`, B5) |
+| A7 | **New campaign** (`/campaigns/new`) | 5-step wizard (Goal → Platforms & budget → Audience → Ads → Review & launch), live forecast + setup-strength panel, autosaved draft, done screen. **Plus the Meta-required fields** (decision 6), live MetaAdPreview, MetaErrorCard, pixel warning on the Goal step, budget floor and date validation, "Run continuously", AI Planner prefill | All of today's create + publish flow, restyled; forecast from 30-day analytics | Client step (B1); multiple ads per launch (B4) |
+| A8 | **Creatives** | Creative studio (prompt, format, tone → 4 drafts), card grid (status segment, sort, size), detail drawer with Advertix read and Create variants. **Keep:** upload (image/video with progress + transcode polling, URL paste, carousel builder), copy-variant editor, edit/replace media, delete, kind/platform filters | library, AI generation, upload | Spend / ROAS / CTR / frequency per creative (B4) |
+| A9 | **Audiences** | Stats, overlap and new-audience suggestion cards, DataGrid with type filter and overlap bars, D2 Create audience. **Keep:** Meta audiences (merged into the grid as a source), Build with AI (a "Describe it" tab in D2), manual builder pickers, edit / duplicate / delete (row menu), lookalike via `createMetaLookalike` | saved + Meta audiences, AI builder | "Used in", ROAS, CPA (audience↔campaign link, B4); overlap is an estimate (decision in [§ 10](#10-open-questions)) |
+| A10 | **Analytics** (absorbs `/insights`) | 5 clickable KPI cards driving the line chart, previous-period compare, share panel (platform / client), 5-step funnel, breakdown grid (platform / client / **campaign**), D6 Export, D5 Schedule report. **Keep:** Insights list with Generate (1-hour gate), Apply, Dismiss, dismissed + Restore — as an "Advertix read" band | KPIs, chart, compare (2× window), share, breakdown by platform / campaign, insights | By client (B1); funnel landing-page-views and add-to-cart (B4 sync); scheduled reports (Track C) |
+| A11 | **Budgets** (`/budgets`) | Cross-platform allocator (sliders on response curves, recommended markers, live projection, Use Advertix mix, Schedule these budgets), monthly pacing grid. **Keep:** per-campaign recommendations (move to the Campaigns suggestion column), history (→ Change log), insufficient-data states, a clear "planning mode — not pushed to the platforms" note until writes exist | curves fitted from daily metrics | Per-client caps (B1); scheduled live budget writes (B2/B3 + a nightly job) |
+| A12 | **AI Planner** | Chat with starter briefs, reasoning steps, plan card (facts, timeline, campaigns, forecast, watch-outs), refinement chips, Create campaigns as drafts. **Keep:** clarify questions (reuse the chip row), "using your account" context, rich plan details (collapsible), open-one-in-the-wizard for Meta publishing | `planCampaign` (prompt + schema extended to plan v2) | Saved plans and versions (new `Plan` model, B5) |
+| A13 | **Connections** (`/connections`) | Token warning, platform cards with auto-sync, ad-account grid (filter, Renew, Fix pixel, Assign client, Archive), D1 Connect dialog (3 steps). **Keep:** OAuth popups, per-platform sync, disconnect with confirm, full Meta health report (account drawer), `?connected=` / `?error=` toasts; one `useConnectPlatform` hook replaces the four Connect components | accounts, OAuth, sync, health | `lastSyncedAt` + `tokenExpiresAt` exposure, per-account 30-day spend (B5); Assign client (B1); D1 account selection (B5) |
+| A14 | **Settings** (tabs General, Team, AI & automation, Notifications, Billing) | General (agency profile, reporting defaults), Team grid + D4 invite, AI & automation (autonomy, guardrail, ask-first clients, rules), Notifications matrix, Billing. **Keep:** workspace save, members / role / remove, and a home for API keys, security and danger zone (bottom of General + Clerk profile) | workspace, members | Invites (B6); autonomy / guardrail / rules (B3 + Track C); notification delivery (Track C) |
+| A15 | Dialogs + QA | D1–D7 finished where their pages live (D1 Connections, D2 Audiences, D3 Creatives, D4 Settings, D5/D6 Analytics + Campaigns, D7 Campaigns + detail); full pass at 390 / 768 / 1024 / 1440 × light / dark; delete old components, Plus Jakarta and old utilities | — | — |
+
+### Track B — Backend foundations
+
+| # | Phase | Contents | Unlocks |
+|---|---|---|---|
+| B1 | **Clients** | `Client` model, `AdAccount.clientId`, CRUD `/clients`, `?clientId=` on campaigns / creatives / audiences / analytics / insights, `GET /analytics/by-client`, `Client.monthlyBudget` + `GET /budgets/pacing?month=` | Switcher, Overview client table + pacing, Analytics by client, Connections Assign client, Budgets, D1 / D2 / D4 |
+| B2 | **Suggestions** | `Suggestion` model (kind, clientId, campaignId, title, reason, impact, actionLabel, doneLabel, actionPayload, status, snoozedUntil, suppressUntil, revertPayload); migrate Insights + budget recommendations; executors for Meta budget / status / rotate; `apply`, `snooze`, `undo` endpoints | Every Apply → Applied → Undo on Overview, Campaigns, Campaign detail, Creatives, Audiences, Budgets |
+| B3 | **Change log & undo** | Immutable `ChangeLog` (actor user / AI / rule, before / after, campaign, approvedBy), 7-day undo window; every mutation (campaign PUT, suggestion apply, budget changes) writes to it | Campaign detail Change log tab + chart markers, Settings audit log, Approvals (F2), automation levels |
+| B4 | **Ad sets, ads, richer metrics (Meta first)** | `AdSet`, `Ad` tables + daily ad-level metrics (frequency, reach, landing-page views, add-to-cart), learning status, 90-day backfill; `Campaign.audienceId` (or join table) | Campaign detail tabs, creative performance + fatigue, audience performance, funnel, "Learning" status, duplicate with ad sets |
+| B5 | **Small API exposures** | `lastSyncedAt`, `tokenExpiresAt`, health summary on ad accounts; `days` window on `/campaigns`; previous-period series + `metric=cpa`; `POST /campaigns/:id/duplicate`; `POST /ai/campaigns/:id/ask`; `Plan` model; per-account 30-day spend; D1 account selection (stage discovered accounts instead of auto-adding all) | Bits of most pages |
+| B6 | **Team** | `Invite` model + Resend email (the key is already used by `/api/contact`), role migration (decision 7), `MemberClientAccess`, seats from the plan | Settings › Team, D4, role pill |
+
+### Track C — New features (after the core of A and B)
+
+Ordered by value and dependencies (Feature Proposals + review):
+
+| # | Feature | Depends on | Size |
+|---|---|---|---|
+| C1 | **F2 Approvals & history** — `/activity`: waiting-for-approval queue above the guardrail or for ask-first clients, history with Undo | B3, B6 | M |
+| C2 | **F1 Alerts inbox** — header bell panel; anomaly engine (CPA spikes, pacing, tracking silence), health checks for all platforms, grouped per campaign, one-click fixes | B1, B3, job queue (C10), notification channels | L |
+| C3 | **F5 Command palette (⌘K)** — clients, campaigns, actions; "Ask Advertix" needs `/ai/chat` | B1 | S |
+| C4 | **F4 Client portal + D5 Scheduled reports** — share links (token, toggles), public read-only view, weekly PDF + email | B1, PDF rendering service | L |
+| C5 | **F7 Flight calendar** — every client's launches and end dates on one timeline, overlap warnings, holiday markers | B1, SCHEDULED status | M |
+| C6 | **F8 Schedule step** in the wizard (end date, smart-hours toggle, auto-pause rules) — auto-pause triggers later | C1, C2 engine | M (+L for triggers) |
+| C7 | **F6 Smart-hours heatmap** — hourly metrics sync, eligibility gate (14 days + 300 conversions), platform writers | C1, hourly sync, Google / TikTok write parity | L |
+| C8 | **Snapchat connector** — or keep it "coming soon" everywhere | — | M |
+| C9 | **F3 Experiments** — tests with significance, scale the winner | B4, C1 | XL |
+| C10 | **Job queue** — BullMQ + Redis replaces the in-process `setInterval`; multi-platform sync, alerts, reports, scheduled budgets / launches | Adds a Redis service on Railway (≈ $1–3 / month extra) | M |
+| C11 | Stripe billing, Shopify / GA4 revenue truth, activation checklist | — | L each (checklist S) |
+
+---
+
+## 7. Feature parity checklist
+
+Everything here works today and must survive the redesign.
+
+| Capability today | New home |
+|---|---|
+| Meta publish: Page picker, audience (geo search, cities + radius, exclusions, age, gender, interests, custom / saved audiences, placements), creative (library, upload, URL, image / video / carousel, message, headline, description, link, CTA), live preview, error card, success with Ads Manager link | New campaign wizard (+ `lib/publish`) |
+| Launch / pause on Meta, Open in Ads Manager, `?publish=1` | Campaign detail header |
+| Campaign rename / budget / delete | Campaign detail (Edit + Settings) |
+| AI Planner prefill → wizard | `/campaigns/new` prefill |
+| Creatives: AI generate (image / carousel / text, platform, objective, tone, aspect, outputs, templates, reference image), upload with transcode polling, carousel builder, copy-variant editor, replace media, delete, filters | Creative studio + detail drawer (editable) + D3 |
+| Audiences: saved templates, Meta custom / saved audiences, AI builder, manual pickers, edit / duplicate / delete | Audiences grid (source column, row menu) + D2 |
+| Insights: generate (1-hour gate), apply, dismiss, dismissed + restore | Overview suggestions + Analytics "Advertix read" band |
+| Budget optimizer: analyze, per-campaign recommendations, apply all, dismiss, history | Budgets allocator + Campaigns suggestion column + Change log |
+| Analytics: 7/30/90 range, impressions + clicks charts, campaign breakdown table | Range menu, metric menu, "By campaign" segment |
+| OAuth popups (4 platforms), sync now, disconnect, Meta health report, `?connected=` toasts | Connections + D1 + account drawer |
+| Workspace name, members, role change, remove | Settings General / Team |
+| Sign-in / sign-up, `/connect/done` popup page | Restyled, logic unchanged |
+
+---
+
+## 8. Definition of done (per page)
+
+From the agent prompt's checklist, plus our rules:
+
+- [ ] Matches the mockup at 390 / 768 / 1024 / 1440 in light and dark
+- [ ] One primary button; every button works or is visibly disabled with a reason
+- [ ] Tables use DataGrid (Sort, Columns, Row height; only the Action column is sticky)
+- [ ] Client switcher filters the page (once B1 exists)
+- [ ] AI suggestions follow Apply → Applied → Undo and Not now → Snoozed — and Apply really executes
+- [ ] Empty, loading and error states in the product's voice
+- [ ] Keyboard: sensible tab order, Esc closes menus and dialogs, visible focus
+- [ ] No hard-coded colours outside the token files; no mock data in production
+- [ ] Every capability from [§ 7](#7-feature-parity-checklist) for this page still works
+- [ ] `tsc --noEmit` and `next lint` clean; the page file stays under ~600 lines
+
+---
+
+## 9. Sizing
+
+Working days for one developer; rough.
+
+| Track | Items | Days |
+|---|---|---|
+| Phase 0 | Fixes | 1–2 |
+| A | A1 3 · A2 3 · A3 3 · A4 3 · A5 3 · A6 4 · A7 6 · A8 5 · A9 4 · A10 4 · A11 4 · A12 4 · A13 3 · A14 4 · A15 4 | ≈ 57 |
+| B | B1 4 · B2 6 · B3 5 · B4 8 · B5 4 · B6 3 | ≈ 30 |
+| C | C1 5 · C2 10 · C3 2 · C4 10 · C5 4 · C6 4 · C7 10 · C8 8 · C9 15 · C10 4 · C11 15+ | ≈ 85+ |
+
+Suggested order: **Phase 0 → A1 + B1 → A2 + A3 → A4 → B2 → A5 → B5 → A6 → B3 → A7 → B4 → A8–A10 → B6 → A11–A15 → Track C.**
+
+---
+
+## 10. Open questions
+
+Not blocking the start, but needed before the named phase:
+
+1. **(A9)** Audience overlap: Meta's overlap tool isn't in its public API. Show an estimate (from shared interests and lookalike seeds), or drop the column?
+2. **(A7)** Goals: the mockup adds App installs (needs an app object on Meta) and drops Engagement / Video views. Which set?
+3. **(A7)** Age: the mockup's bucket chips can't express gaps on Meta (it takes min / max). Use a min / max range in the same style?
+4. **(A8)** AI video drafts: the studio implies AI video generation, which doesn't exist. Keep studio drafts to images and copy?
+5. **(A8)** Creative statuses: the mockup uses Live / Learning / Fatigued / Draft, while the DB uses DRAFT / APPROVED / REJECTED / ARCHIVED. Derive the new ones from ad delivery (needs B4)?
+6. **(A11)** Budget split: how a platform-level daily amount is divided among that platform's campaigns (proportional to current budgets?).
+7. **(A14)** The mockup never defines "Pacing rules", "Audit log", "Manage" and the account "Open" buttons. Specs needed, or they open the obvious drawer?
+8. **(A2)** What the AI Planner sidebar badge ("4") counts.
+9. **(C2)** Slack: an OAuth app or incoming webhooks to start?
+10. Currency: the mockups hard-code `$`. We keep each account's currency (`lib/money.ts`), with mixed-currency totals shown in the workspace's default currency.
+
+---
+
+## 11. Progress
+
+### A1 — Foundations ✅ (2026-10-21)
+
+- **Tokens:** guide § 2.1 values (copied from the mockups' `:root` / dark blocks) in `apps/web/app/globals.css` as RGB channels (`--c-*`) plus ready vars (`--brand` …), dark values under `.dark`. Tailwind maps them: `bg-bg`, `bg-surface(-2/-3)`, `text-ink(-2/-3)`, `border-line(-2)`, `bg-brand(-hover/-soft/-soft-2)`, `text-brand-ink`, `pos / neg / warn(-soft)`, radii `rounded-card / -menu / -ctl`, shadows `shadow-card / -pop`. Scrollbars per § 2.3.
+- **Font:** Geist (sans + mono) for the whole app, loaded once in the root layout. Plus Jakarta Sans removed. Don't import Geist in nested layouts: Next then puts its CSS in that layout's chunk only (this happened once and was fixed).
+- **Theme:** `components/app/theme/ThemeProvider.tsx` toggles `.dark` on `<html>` and removes it when the app unmounts, so marketing stays light. **Default is light** until A15 (old pages aren't dark-ready); `THEME_SCRIPT` prevents a flash.
+- **Primitives** in `components/app/ui/` (exported from `index.ts`): Button / ButtonLink / IconButton, Segmented, Toggle, Checkbox, Pill / StatusPill / DeltaPill, PlatformBadge, Card / CardHeader, KpiCard + Sparkline, Menu (+ MenuItem / MenuLabel / MenuSeparator), Dialog (bottom sheet under 600px), Drawer, Skeleton, EmptyState, AiMark, AiNote, AiSuggestion (with `mode="review"` for non-executable suggestions, decision #4). Keyboard: Esc, focus trap, arrow keys in menus and segmented controls.
+- **`/dev/ui`:** every primitive in both themes; public in development only and 404 in production.
+- **Data fetching:** SWR behind `useApi`. Pass `{ key }` as the third argument to share and cache a request; existing calls are unchanged.
+- Note: guide `--ink-3` (#85829a) is about 3.7:1 on white, below AA for small text. Kept as specified for now; revisit in A15.
+
+### B1 — Clients ✅ (2026-10-21)
+
+- **Schema** (additive, `prisma db push`): `Client` (name, short, vertical, logoUrl, monthlyBudget, currency, isDefault), `AdAccount.clientId`, `Creative.clientId`, `Audience.clientId` (null = shared library item).
+- **`apps/api/src/lib/clients.ts`:** `ensureClients()` creates a default client named after the workspace on first use, and assigns unassigned accounts while there's only one client. Also `parseClientScope()` (`?clientId=`; an unknown id → 404), `campaignClientWhere()`, `ownedOrSharedWhere()`, `parseBodyClientId()`.
+- **Endpoints:** `GET/POST/PATCH/DELETE /api/clients` (the last client can't be deleted), `PATCH /api/ad-accounts/:id { clientId }`, `GET /api/analytics/by-client`, `GET /api/budgets/pacing?month=&clientId=` (spent / projected / status / run-out day). `?clientId=` added to `/campaigns`, `/ad-accounts`, `/analytics/{overview,timeseries,by-platform,campaigns}`, `/creatives`, `/audiences`. Ad accounts now expose `lastSyncedAt` and `clientId`. Insights are not client-scoped; B2 replaces them.
+- **Web client** (`lib/api.ts`): `Client`, `ClientPacing`, `ClientBreakdown` types; `getClients / createClient / updateClient / deleteClient / assignAdAccountClient / getPacing / getAnalyticsByClient`; optional `clientId` on the analytics, ad-account, campaign, creative and audience calls.
+- **Tested** against the local DB, with route handlers called directly in a throwaway workspace that is cleaned up afterwards: default client, scoped analytics / campaigns / creatives, pacing, bad ids, delete rules.
+- **Deploy order:** run `npx prisma db push` against the production (Railway) database **before** the new API deploys. The API reads the `Client` table on common requests (e.g. `GET /ad-accounts`).
+
+### A2 — App shell ✅ (2026-10-21)
+
+- **`components/app/shell/`:** `AppShell` (256px sticky sidebar + sticky 64px top bar from 900px; below that a 56px app bar, left drawer and 66px bottom tab bar with the raised Plan tile), `SidebarContent` (logo, client switcher, Workspace + Account nav with the campaign count, ad-accounts box, user row), `TopBar` / `MobileAppBar`, `PageHeader` + `PageTabs` + `PageBody` (header sticks under the top bar).
+- **Client scope:** `ClientProvider` / `useClientScope()` keeps the selected client in `?client=` and localStorage `advertix.client`; `scoped(href)` carries it across nav links. With one client the switcher is static and `clientId` stays null (no filtering).
+- **Honest states:** search (until the C3 command palette) and alerts (until F1) are visibly disabled with the reason; the theme toggle shows in development only (A15); empty ad accounts → "Connect an account" opens the existing `ConnectModal`; load errors show "Try again".
+- Routes not yet rebuilt still get the old padded content area (`REBUILT_ROUTES` in `AppShell.tsx`; remove in A15). Temporary nav targets: Insights (until A10), Budgets → `/budget-optimizer` (A11), Connections → `/settings?tab=integrations` (A13).
+- Old `components/layout/Sidebar.tsx` and `Header.tsx` deleted. Dev preview at `/dev/shell`.
+
+### A3 — DataGrid ✅ (2026-10-21)
+
+- **`components/app/grid/`** (`DataGrid`, `CellText`, `GridSearch`, `FilterMultiSelect`, `BulkButton`, `GridEmpty`, `useGridDisplay`). Guide § 4.1 in full: Sort menu (fields + Order segment, labels A→Z for text and High to low for numbers), clickable headers with ↑/↓, Columns menu (identity + Action "Always shown", "· N hidden", Reset to default), Row height (Comfortable 64 / Compact 48) + "Wrap long values", sticky Action column only, selection with indeterminate header checkbox, floating dark bulk bar, footer totals, loading skeleton rows, empty slot.
+- **Column config:** `{ id, label, width (min px), grow? (fr), align, sortValue?, sortType?, defaultHidden?, render(row, display), footer? }`. The first column is the identity column. Widths are min + fr, so every row lines up and the table scrolls sideways once it no longer fits.
+- **Persistence:** sort, hidden columns, row height and wrap in localStorage `advertix.grid.<tableId>`, read after mount and validated against the current columns.
+- Sorting is client-side over the rows passed in (empty values always last). Selection is pruned to the visible rows, so bulk actions never touch rows hidden by a filter.
+- On phones the Sort / Columns buttons drop their secondary text and the bulk-bar actions scroll while the count and ✕ stay visible. Dev preview with demo rows at `/dev/grid`.
+### A4 — Overview ✅ (2026-10-21)
+
+- **`/dashboard`** rebuilt on the new shell (`app/(dashboard)/dashboard/page.tsx` + `components/app/overview/`): greeting with date and scope, summary line (clients · campaigns live · ad accounts synced N ago), 5 KPI cards (Spend, Revenue, ROAS, Conversions, Cost / conversion; last 30 days vs the 30 before, 14-day sparklines), Spend & revenue bars (7D / 14D / 30D, hover or arrow keys update the header readout), Advertix suggests, client pacing table (DataGrid). Everything follows the client switcher.
+- **Deltas:** `GET /analytics/overview` now also returns `previous` (raw previous-period totals, additive). With no prior data the pill shows "—" instead of a misleading +100%; ROAS shows an absolute change; cost / conversion is derived.
+- **Suggestions (until B2):** active Insights + the latest pending budget analysis. Neither can be applied and undone yet, so every item offers **Review** (→ `/insights` or `/budget-optimizer`). Not now dismisses an insight (shown faded as "Dismissed" with Undo = restore). Empty state has "Check my accounts" (insights generate, honours the 1-hour gate). Insights aren't client-scoped yet; a note says so when a client is selected.
+- **Clients table** (only with more than one client and "All clients" selected): last-30-day spend / revenue / ROAS from `/analytics/by-client`, this month's pacing bar with a today marker from `/budgets/pacing`, and a computed note (runs out on day N, underspending by X, on pace, set a budget). View switches the client scope. Spend on unassigned ad accounts shows as "Not assigned".
+- **Currency:** taken from the ad accounts in scope; if they mix currencies the summary says so. KPIs drop cents (`fmtMoney(…, { whole: true })`).
+- **Dropped from the old dashboard** (per the mockup; covered elsewhere): AI banner (→ suggestions), platform breakdown (→ Analytics share panel, A7), active campaigns table (→ Campaigns), quick actions, budget widget (→ suggestions + Budgets). Export report is visibly disabled until D6. Unused `components/dashboard/PlatformBreakdown.tsx` deleted.
+- Dev preview `/dev/overview` renders the real page; the screenshot script answers its API calls with demo JSON (no mock data in the app).
+
+### B2 — Suggestions ✅ (2026-10-21)
+
+- **Schema** (additive, `prisma db push`): `Suggestion` (kind, clientId, campaignId, title, reason, impact, priority, actionType, actionPayload, revertPayload, actionLabel, doneLabel, reviewHref, status OPEN / APPLIED / SNOOZED / DISMISSED / EXPIRED, snoozedUntil, suppressUntil, appliedAt / appliedById / undoneAt, source + sourceRef + dedupeKey, expiresAt) with enums `SuggestionStatus`, `SuggestionSource`.
+- **Migration approach:** Suggestions are the source for the new UI. The insight generator and the budget optimizer now also write suggestions (and mirror dismiss / restore / apply), and a workspace's existing active insights + latest pending analysis are copied in on its first `GET /suggestions`. The old Insights and Budget optimizer pages keep using their own tables until A10 / A11 rebuild them; drop `Insight` / `BudgetRecommendation` then.
+- **Executors** (`services/campaign-actions.service.ts`, Meta only — the other platforms are read-only syncs): set daily budget (ad set for campaigns published from Advertix, campaign object for synced campaigns with a campaign budget) and pause / resume. Platform first, then our row, same as `PUT /campaigns/:id`.
+- **Guardrails:** a budget suggestion is executable only if the campaign is on Meta with a daily budget we can reach, the account is connected, and the new budget is 0.5×–2× the current one and above the account minimum; the ratio is re-checked at apply time. Everything else (Google / TikTok / LinkedIn, ad-set-level budgets, big jumps, insights) is Review → the campaign or the old page. Creative rotation waits for ads (B4).
+- **Endpoints** `/api/suggestions`: `GET ?clientId=&campaignId=&include=applied`, `POST /refresh` (insight check with the 1-hour gate + re-sync), `POST /:id/apply` (claims the row first so a double click can't run twice; rolls back on a platform error), `POST /:id/snooze { days=7 }`, `POST /:id/undo` (reverts an apply within 7 days, refused with 409 if the value changed since — e.g. edited in Ads Manager and synced; also wakes a snooze). Regeneration respects snoozes and recent applies.
+- **Overview** now uses suggestions: real Apply → "Budget raised" + Undo where executable, Review otherwise, Not now → "Snoozed 7 days" + Undo, filtered by the client switcher, "Show all" past 4.
+- **Fix found on the way:** Meta sync overwrote the stored budget of campaigns published from Advertix with 0 (their budget is on the ad set, so Meta reports no campaign budget). Sync now keeps the stored budget when Meta reports none.
+- **Tested** against the local DB with Meta mocked (16 checks): backfill, executability rules, client filter, apply on ad set vs campaign, double apply, undo, undo conflict, platform error rollback, pause / resume, review-only, snooze across regeneration, mirroring from the old pages.
+- **Deploy order:** `npx prisma db push` on Railway **before** the API deploys (the API reads `Suggestion` on Overview load and after every insight / budget run).
+
+### A5 — Campaigns ✅ (2026-10-21)
+
+- **`/campaigns`** rebuilt (`app/(dashboard)/campaigns/page.tsx` + `components/app/campaigns/`): header (scope · last 30 days, counts, Sync now, Export CSV, New campaign), KPI strip (Running now, Spend, Blended ROAS, Daily budget live), AI banner with "Only show these", DataGrid with search, status segment with counts, platform multi-select, Clear filters.
+- **Grid:** Campaign (client · objective), Platform, Status (toggle + pill), Budget / day, Spend, ROAS, Conversions, CTR and Reach (hidden by default), Advertix suggests. Sticky Action: the suggestion's real Apply (or Review), then Undo; otherwise Publish (Meta drafts → `?publish=1`) or Open; plus a row menu (Open, Publish, Pause / Resume, Not now, Duplicate as draft, Delete with the Meta warning). Footer totals (live daily budget, spend, blended ROAS, conversions).
+- **Bulk bar:** Pause, Resume (counts only the rows that can change), Edit budgets (dialog: change by % or set an amount, previews every change, says which are live on Meta; saved through `PUT /campaigns/:id`, which pushes to Meta first), Duplicate (drafts). Partial failures are reported by name.
+- **Honesty fix:** Google / TikTok / LinkedIn campaigns synced from the platform are view-only for status and budget (the old page's toggle only changed our copy, which the next sync reverted). Their status pill says where to change it; the budget dialog leaves them out with a note.
+- **Data:** one request — `GET /campaigns?limit=500&days=30` (new: `days` makes totals cover the last N days instead of lifetime; cap raised from 100 to 500; `adAccount.clientId` exposed). Filtering, counts and sorting run in the browser. Over 500 campaigns, a note says only the most recent 500 are shown.
+- **Shared:** `useSuggestions` (Apply / Not now / Undo, used by Overview and Campaigns); `Menu` gained `portal` (fixed-position panel that flips up near the bottom, for menus inside the scrolling grid); the shell's rebuilt-route list is now exact paths (`/campaigns/[id]` keeps the old padding until A6).
+- **Kept from the old page:** Sync now with step labels + Meta error card, `?new=1` + AI Planner prefill into the create modal, per-campaign pause / resume (on Meta when live), publish hand-off, duplicate, delete. **Dropped:** card / list view switch and pagination (one grid, loaded at once), the date-range select (it never changed the data).
+- **Later:** "Learning" status (B4); bulk Duplicate uses the existing create call until the duplicate endpoint (B5); phones get the sticky Action column at full width — revisit with the mobile pass (A15).
+- **Follow-ups from review (2026-10-21):**
+  - **Card view:** DataGrid takes `renderCards`; a table / cards switch sits before Sort and is saved with the other grid preferences (`view` in `advertix.grid.<tableId>`). In card view Sort and filters stay; Columns, Row height and selection don't apply. Campaign cards show platform, status toggle, name, 30-day spend / ROAS / conversions, budget and reach, the suggestion, and the same main button + row menu as the table.
+  - **Menus never change page layout:** every `Menu` now renders as a fixed panel at page level. It opens below the trigger or above when there's more room, caps its height and scrolls inside if neither side fits, follows the trigger on scroll / resize, and closes if the trigger leaves the screen. Applies to every grid and toolbar menu (the earlier `portal` option is gone — it's the only mode).
+  - **Header / cell alignment:** sortable right-aligned headers put the ↑ / ↓ slot on the left, so their text ends exactly where the numbers below end (it was ~14px off).
+
+### B5 — Small API exposures ✅ (2026-10-21)
+
+- **Ad accounts** (`GET /ad-accounts`): `tokenExpiresAt` (new column, set at OAuth: Meta long-lived token ≈ 60 days, LinkedIn refresh token ≈ 1 year, TikTok when it has one; Google null), `health` summary from the stored Meta health report (`overall`, `issues`, `topIssue`, `checkedAt`; null when no check has run), `spend30d` per account in its own currency. (`lastSyncedAt` and the client came with B1.)
+- **Timeseries** (`GET /analytics/timeseries`): `metric=cpa` (spend ÷ conversions per day, 0 on days without conversions) and `compare=previous` — each point gets `previous`, the value on the same day one period earlier (null when there was no data). Without `compare` the response is unchanged. (`days` on `/campaigns` came with A5.)
+- **`POST /campaigns/:id/duplicate { name?, budget? }`**: copies a campaign as a local DRAFT in the same ad account — nothing is created on the platform until it's published. Budget, budget type, objective and targeting are copied; schedule dates already in the past are dropped. Creatives belong to one campaign each, so they aren't copied. The Campaigns row / bulk Duplicate now uses it.
+- **`POST /ai/campaigns/:id/ask { question, history? }`** ("Ask about this campaign", used by A6): answers only from that campaign's data — settings, 30 days of daily metrics, last 7 vs previous 7 days, open suggestions — and says what isn't available yet (ad set / ad / audience / creative breakdowns). ≤ 500-character questions, last 6 turns of history (sanitised to alternate), 30 questions per workspace per hour, plain-text answers of about 120 words.
+- **Saved plans**: `Plan` (title, brief, status DRAFT / USED / ARCHIVED, client, `latestVersion`) + `PlanVersion` (version, plan JSON, note). `GET /plans?clientId=&include=archived`, `GET /plans/:id` (versions newest first), `POST /plans` (v1), `POST /plans/:id/versions`, `PATCH /plans/:id`, `DELETE /plans/:id`. The AI Planner starts saving to it in A12.
+- **Moved to A13:** D1 account selection (stage discovered accounts and add only the picked ones). It needs the D1 dialog; changing the OAuth callbacks first would make today's Connect stop adding accounts.
+- **Tested** against the local DB (AI mocked): account fields, cpa + compare alignment and the unchanged default shape, duplicate rules, ask context + history sanitising + 404s, plan versions / archive / cascade delete.
+- **Deploy order:** `npx prisma db push` on Railway before the API deploys (new `AdAccount.tokenExpiresAt` column, `Plan` / `PlanVersion` tables, `PlanStatus` enum).
+
+### A6 — Campaign detail ✅ (2026-10-21)
+
+- **`/campaigns/[id]`** rebuilt (`app/(dashboard)/campaigns/[id]/page.tsx` + `components/app/campaign/`). Header: breadcrumb (Campaigns › client › name), platform badge, name + status, summary (platform · objective • live since • account • budget), status switch (pause / resume, on Meta when live; disabled with the reason for drafts, ended and read-only synced campaigns), Duplicate (D7 dialog → `POST /campaigns/:id/duplicate`, opens the copy), Ads Manager link, Publish to Meta (unpublished Meta drafts) or Edit campaign, ⋯ → Delete with the Meta warning. Tabs in `?tab=`: Overview, Ad sets, Ads, Change log, Settings.
+- **Overview:** 6 KPI cards (Spend, Revenue, ROAS, Conversions, Cost / conversion, CTR) for the last 30 days vs the 30 before (no change pill when there's no earlier data); "Advertix read" with the plain observations from the old page (no conversions, CTR under 1%, budget capping); "Daily {metric}" bars with ROAS / Spend / CPA / CTR, hover / arrow-key readout; this campaign's suggestions with real Apply / Undo (Review on a non-executable one opens Settings); **Ask about this campaign** (starter questions, follow-ups keep context, answers from the campaign's own 30 days); daily breakdown DataGrid (compact by default, footer totals). Without data: empty state + side panel only.
+- **Settings:** rename and budget (account minimum check; synced Google / TikTok / LinkedIn campaigns are read-only with a note), delete. **Change log:** what Advertix already records — created / imported, published, suggestions applied — until B3 brings the full audit trail. **Ad sets / Ads:** honest "coming soon" (B4) with an Ads Manager link when live.
+- **Kept:** `?publish=1` opens the publish wizard, the last publish error card, Launch / pause on Meta, Ads Manager deep link, rename / budget / delete. Event markers on the chart come with B3; ad sets, ads and fatigue with B4.
+- **Shared:** `DataGrid` `defaultDensity`; `useSuggestions` accepts `campaignId`; the shell's rebuilt-route list accepts patterns. Unused `components/dashboard/SpendChart.tsx` deleted.
+
+### B3 — Change log & undo ✅ (2026-10-21)
+
+- **Schema** (additive, `prisma db push`): `ChangeLog` (workspace, client, campaign — set null on delete, `campaignName` kept — actor USER / AI / RULE / SYNC, `actorUserId` = who made or approved it, action, summary, before / after, `platformPushed`, `suggestionId`, `revertOfId`, `undoneAt` / `undoneById`) + enum `ChangeActor`.
+- **Recorded** (`services/change-log.service.ts`; recording never fails the change itself): campaign create, edit (one entry per changed group: budget, status, name, schedule, targeting), duplicate, publish, launch / pause, delete; applied suggestions (actor AI, approved by the user); Budget optimizer "apply" (actor AI, marked "in Advertix only — not sent to the platform"); and on Meta sync, name / budget / active ↔ paused changes made outside Advertix (actor SYNC, not undoable). Google / TikTok / LinkedIn syncs don't record outside changes yet.
+- **Undo** (`POST /change-log/:id/undo`): budget, status and name changes within 7 days. Same path as a normal edit — on Meta first for live campaigns (ad set or campaign budget, campaign + ad set status / name), our row otherwise — and refused (409) when the value has changed again since. An undo writes its own entry (`revertOfId`) and marks the original. Entries from a suggestion are undone through the suggestion, so it reopens and both stay in step; suggestion Undo marks its log entry too.
+- **`GET /change-log?campaignId=&clientId=&limit=&before=`**: newest first with actor names, `canUndo`, paging by `before`.
+- **Campaign detail:** the Change log tab lists every entry (avatar: person initials / Advertix / sync), who, when, "on the platform" vs "in Advertix only", Undo, "Undone by …", Load older. The daily chart shows markers for budget changes, pauses / resumes and publishing, laid out so labels don't overlap.
+- **Tested** against the local DB with Meta mocked (9 checks): entries per change, local and Meta undo (ad set budget, rename on campaign + ad set, status via launch), conflict refusal, suggestion apply → AI entry → undo through the log, sync-detected changes logged once, delete keeps entries. B2 checks re-run: 16/16.
+- **Deploy order:** `npx prisma db push` on Railway before the API deploys (new `ChangeLog` table, `ChangeActor` enum).
+
+### A10 — Analytics (absorbs Insights) ✅ (2026-10-22)
+
+- **`/analytics`** rebuilt (`app/(dashboard)/analytics/page.tsx` + `components/app/analytics/`), following the client switcher. Header: scope · reporting, period and comparison line, 7 / 30 / 90-day range, Export CSV (the breakdown rows), Schedule report visibly disabled until Track C.
+- **KPI cards** (Spend, Revenue, ROAS, Conversions, Cost / conversion) vs the previous period; clicking one drives the trend chart. **Trend chart:** line + area for this period, dashed previous period (`compare=previous`, B5) with a toggle, hover / arrow-key readout, "More metrics" (Impressions, Clicks). Days without delivery are 0 for totals and a gap for ROAS / CPA.
+- **Share of {metric}** by platform or client (client only with several clients and "All clients"). **Funnel:** impressions → clicks → conversions with step rates; landing-page views and add-to-cart say "Not synced yet" (B4) instead of inventing numbers; a plain "Where people drop off" read from CTR / conversion rate.
+- **Advertix read** (the old Insights page): observations with Check again (1-hour gate), Mark done, Dismiss, and the dismissed list with Restore. `/insights` now redirects here; the sidebar's temporary Insights item is gone (Analytics highlights for `/insights`); insight-based suggestions' Review links point at `/analytics`.
+- **Breakdown** DataGrid by platform / client / campaign (top 100 by spend, rows link to the campaign): Spend, Revenue, ROAS, Conv., CPA, CTR, CPM, Impressions + Clicks (hidden), footer totals.
+- **Kept from the old page:** 7 / 30 / 90 range, impressions and clicks charts (More metrics), platform comparison (share + breakdown), sortable campaign table (breakdown → campaign), AI insights. Removed: unused `components/dashboard/MetricCard.tsx` (the old `components/dashboard/` folder is now empty and deleted), the old Insights page and its skeleton.
+
+### A7 — New campaign wizard ✅ (2026-10-22)
+
+- **`/campaigns/new`** is a full page that replaces `CreateCampaignModal` and `PublishToMetaModal` (`app/(dashboard)/campaigns/new/page.tsx` + `components/app/new-campaign/{model.ts, steps.tsx, review.tsx}`). There are 5 steps in the header bar: Goal → Platforms & budget → Audience → Ads → Review & launch. You can jump back to any step, or forward up to the first incomplete one.
+- **Goal:** Website visits / Leads / Sales / Awareness / Engagement, with an optional name. Advertix names the campaign from platform, goal and month until you type one. Leads and Sales warn up front when the Meta ad account has no Pixel, with a link to Events Manager.
+- **Platforms & budget:** one card per platform showing the connected account and its client.
+  - Meta publishes from Advertix. Google / TikTok / LinkedIn are saved as drafts ("publishing coming soon"). Unconnected platforms link to Connect.
+  - Daily or total budget, checked against the account's real minimum (shown as a hint; the field starts empty rather than pre-filled with the minimum).
+  - Start / end dates or "Run continuously". A total budget needs an end date.
+- **Audience** and **Ads** (Meta) reuse the publish flow's steps, extracted to `components/campaigns/publish/metaSteps.tsx` and moved to design tokens:
+  - Audience: location (required unless a saved / custom audience is picked), demographics, interests, custom and saved audiences.
+  - Ads: Facebook Page, library / upload / URL creative, placements, copy, link and CTA, live preview.
+  - The targeting pickers were moved to tokens too.
+- **Review & launch:** a summary of every step with Edit links and an editable name. Launch modes are Publish paused (recommended), Publish and start now (`launchCampaign`), or Save as draft. Meta errors use `MetaErrorCard`.
+  - Retries never duplicate anything: ids already created are reused (PUT) and only the publish is repeated.
+  - The done screen lists each platform's result (Paused on Meta / Live / Draft) with Open campaign and Ads Manager links.
+- **Side panel:** Forecast from the client's last 30 days (CPM, CTR, conversion rate → spend, reach, clicks or results, cost per 1,000 views, ROAS for Sales). It says plainly when there's no budget or no history to estimate from. Also shows setup strength with the remaining checks, and a tip for each step.
+- **Draft safety:** the wizard autosaves to `localStorage` on every change. Coming back shows "Picked up where you left off" with Start over. Save draft & exit is in the header.
+- **Entry points:**
+  - `?from=<campaignId>` opens an existing draft, with its platform locked. This is the "Publish to Meta" path from the campaigns grid and campaign detail; `/campaigns/<id>?publish=1` redirects here.
+  - The AI Planner's sessionStorage prefill maps goal, name, platform, budget, ages, gender and countries.
+  - `/campaigns?new=1` redirects here. The New campaign buttons (campaigns page, overview) link here.
+- **Removed:** `components/campaigns/CreateCampaignModal.tsx`, `components/campaigns/publish/PublishToMetaModal.tsx`, `components/ui/WizardRail.tsx`.

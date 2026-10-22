@@ -96,6 +96,104 @@ export interface AdAccount {
   accountStatus?: number | null;
   isActive: boolean;
   createdAt: string;
+  /** Last successful platform sync. Null = never. */
+  lastSyncedAt?: string | null;
+  /** Agency client this account belongs to. Null = not assigned. */
+  clientId?: string | null;
+  /** When the user has to reconnect (Meta ≈ 60 days, LinkedIn ≈ 1 year). Null = no known expiry. */
+  tokenExpiresAt?: string | null;
+  /** Summary of the last stored health check. Null when none has run. */
+  health?: AdAccountHealth | null;
+  /** Spend over the last 30 days, in the account's currency. */
+  spend30d?: number;
+}
+
+export interface AdAccountHealth {
+  overall: "healthy" | "degraded" | "blocked";
+  issues: number;
+  topIssue: string | null;
+  checkedAt: string | null;
+}
+
+/* ── Agency clients (docs/DASHBOARD_REDESIGN_PLAN.md, B1) ── */
+
+export interface Client {
+  id: string;
+  name: string;
+  /** 1–3 letter avatar mark. */
+  short: string;
+  vertical: string | null;
+  logoUrl: string | null;
+  monthlyBudget: number | null;
+  currency: string | null;
+  /** Auto-created client for single-brand workspaces. */
+  isDefault: boolean;
+  adAccountCount: number;
+  platforms: Platform[];
+  campaignCount: number;
+  createdAt: string;
+}
+
+export interface ClientsResponse {
+  clients: Client[];
+  unassignedAdAccounts: number;
+}
+
+export interface ClientInput {
+  name?: string;
+  short?: string | null;
+  vertical?: string | null;
+  logoUrl?: string | null;
+  monthlyBudget?: number | null;
+  currency?: string | null;
+}
+
+export type PacingStatus = "ON_TRACK" | "AHEAD" | "BEHIND" | "NO_BUDGET" | "NO_SPEND";
+
+export interface ClientPacing {
+  clientId: string;
+  name: string;
+  short: string;
+  monthlyBudget: number | null;
+  currency: string | null;
+  /** The client's accounts use more than one currency (spend is a raw sum). */
+  mixedCurrency: boolean;
+  spent: number;
+  spentPct: number | null;
+  projected: number;
+  projectedPct: number | null;
+  status: PacingStatus;
+  /** Day of month the budget runs out at the current rate (AHEAD only). */
+  runOutDay: number | null;
+  /** Budget projected to go unspent (BEHIND only). */
+  unspentProjected: number | null;
+  platforms: Platform[];
+}
+
+export interface PacingResponse {
+  /** YYYY-MM */
+  month: string;
+  daysInMonth: number;
+  dayOfMonth: number;
+  /** Share of the month elapsed, in % (the "today" marker). */
+  expectedPct: number;
+  clients: ClientPacing[];
+}
+
+export interface ClientBreakdown {
+  /** Null = ad accounts not assigned to a client. */
+  clientId: string | null;
+  name: string;
+  short: string;
+  spend: number;
+  revenue: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  roas: number;
+  ctr: number;
+  cpa: number;
+  platforms: Platform[];
 }
 
 /** One item in the Meta health report — a connection/account check result. */
@@ -153,6 +251,8 @@ export interface Campaign {
     currency?: string | null;
     timezone?: string | null;
     minDailyBudget?: number | null;
+    /** Client the campaign's ad account belongs to (B1). */
+    clientId?: string | null;
   };
   _count?: { metrics: number };
   /** Populated when `includeLatestMetrics=true` was passed to /campaigns. */
@@ -303,6 +403,43 @@ export interface Insight {
   createdAt: string;
   appliedAt?: string | null;
   dismissedAt?: string | null;
+}
+
+export type SuggestionStatus = "OPEN" | "APPLIED" | "SNOOZED" | "DISMISSED" | "EXPIRED";
+
+/** Something Advertix suggests (B2). `executable` = Apply really runs on the platform and Undo reverts it. */
+export interface Suggestion {
+  id: string;
+  /** Card tag: "Budget shift", "Opportunity", "Warning", … */
+  kind: string;
+  clientId: string | null;
+  clientName: string | null;
+  campaignId: string | null;
+  campaignName: string | null;
+  title: string;
+  reason: string;
+  impact: string | null;
+  priority: number;
+  confidence: string | null;
+  executable: boolean;
+  actionType: "SET_DAILY_BUDGET" | "SET_STATUS" | null;
+  actionPayload: { campaignId: string; dailyBudget?: number; status?: "ACTIVE" | "PAUSED" } | null;
+  /** "Raise budget" (or "Review" when not executable). */
+  actionLabel: string;
+  /** Past tense after Apply: "Budget raised". */
+  doneLabel: string | null;
+  reviewHref: string | null;
+  status: SuggestionStatus;
+  snoozedUntil: string | null;
+  appliedAt: string | null;
+  canUndo: boolean;
+  createdAt: string;
+}
+
+export interface SuggestionsResponse {
+  suggestions: Suggestion[];
+  /** When Advertix last checked the accounts (insight generation). */
+  lastCheckedAt: string | null;
 }
 
 export interface InsightsResponse {
@@ -523,11 +660,74 @@ export interface AnalyticsOverview {
     clicks: number;
     conversions: number;
   };
+  /** Previous-period totals (same length, immediately before). Absent on older API builds. */
+  previous?: {
+    spend: number;
+    revenue: number;
+    impressions: number;
+    clicks: number;
+    conversions: number;
+  };
+}
+
+/** Change log entry (B3). `canUndo`: budget / status / name changes within 7 days, not yet undone. */
+export interface ChangeLogEntry {
+  id: string;
+  campaignId: string | null;
+  campaignName: string;
+  clientId: string | null;
+  /** USER = a person; AI = an Advertix suggestion someone applied; RULE = automation; SYNC = changed outside Advertix. */
+  actorType: "USER" | "AI" | "RULE" | "SYNC";
+  actorUserId: string | null;
+  actorName: string | null;
+  action: string;
+  summary: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  /** The change was made on the ad platform, not only in Advertix. */
+  platformPushed: boolean;
+  suggestionId: string | null;
+  revertOfId: string | null;
+  undoneAt: string | null;
+  undoneByName: string | null;
+  canUndo: boolean;
+  createdAt: string;
+}
+
+export type PlanStatus = "DRAFT" | "USED" | "ARCHIVED";
+
+/** A saved AI plan (B5). `brief` is truncated in lists. */
+export interface PlanSummary {
+  id: string;
+  title: string;
+  brief: string;
+  status: PlanStatus;
+  latestVersion: number;
+  clientId: string | null;
+  createdById: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlanVersion {
+  id: string;
+  planId: string;
+  version: number;
+  /** The planner's plan object (POST /ai/plan-campaign). */
+  plan: Record<string, unknown>;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface PlanDetail extends PlanSummary {
+  versions: PlanVersion[];
 }
 
 export interface TimeseriesPoint {
   date: string;
   value: number;
+  /** Same day of the previous period; only with `compare: "previous"`. Null = no data that day. */
+  previous?: number | null;
 }
 
 export interface PlatformBreakdown {
@@ -650,30 +850,67 @@ export function useApiClient() {
         method: "PUT",
         body: JSON.stringify(data),
       }),
+    /** Copy as a local draft (B5). Nothing is created on the platform until it's published. */
+    duplicateCampaign: (id: string, data?: { name?: string; budget?: number }) =>
+      apiFetch<Campaign>(`/campaigns/${id}/duplicate`, { method: "POST", body: JSON.stringify(data ?? {}) }),
+    /** "Ask about this campaign" (B5): answers from the campaign's own last-30-day data. */
+    askCampaign: (id: string, question: string, history: { role: "user" | "assistant"; content: string }[] = []) =>
+      apiFetch<{ answer: string; basedOn: { days: number; daysWithData: number } }>(`/ai/campaigns/${id}/ask`, {
+        method: "POST",
+        body: JSON.stringify({ question, history }),
+      }),
+
+    /* Change log (B3) */
+    getChangeLog: (params: { campaignId?: string; clientId?: string | null; limit?: number; before?: string }) =>
+      apiFetch<{ entries: ChangeLogEntry[] }>(
+        `/change-log${buildQuery({ campaignId: params.campaignId, clientId: params.clientId ?? undefined, limit: params.limit, before: params.before })}`
+      ),
+    undoChange: (id: string) => apiFetch<{ ok: boolean }>(`/change-log/${id}/undo`, { method: "POST" }),
+
+    /* Saved AI plans (B5) */
+    getPlans: (params?: { clientId?: string | null; includeArchived?: boolean }) =>
+      apiFetch<{ plans: PlanSummary[] }>(
+        `/plans${buildQuery({ clientId: params?.clientId ?? undefined, include: params?.includeArchived ? "archived" : undefined })}`
+      ),
+    getPlan: (id: string) => apiFetch<PlanDetail>(`/plans/${id}`),
+    createPlan: (data: { brief: string; plan: object; title?: string; clientId?: string | null; note?: string }) =>
+      apiFetch<PlanDetail>("/plans", { method: "POST", body: JSON.stringify(data) }),
+    addPlanVersion: (id: string, data: { plan: object; note?: string }) =>
+      apiFetch<PlanVersion>(`/plans/${id}/versions`, { method: "POST", body: JSON.stringify(data) }),
+    updatePlan: (id: string, data: { title?: string; status?: PlanStatus; clientId?: string | null }) =>
+      apiFetch<PlanSummary>(`/plans/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    deletePlan: (id: string) => apiFetch<void>(`/plans/${id}`, { method: "DELETE" }),
+
     deleteCampaign: (id: string) =>
       apiFetch<SuccessResponse>(`/campaigns/${id}`, { method: "DELETE" }),
     getCampaignMetrics: (id: string, days = 30) =>
       apiFetch<CampaignMetric[]>(`/campaigns/${id}/metrics?days=${days}`),
 
     /* Analytics */
-    getAnalyticsOverview: (days = 30, platform?: Platform) =>
+    getAnalyticsOverview: (days = 30, platform?: Platform, clientId?: string | null) =>
       apiFetch<AnalyticsOverview>(
-        `/analytics/overview${buildQuery({ days, platform })}`
+        `/analytics/overview${buildQuery({ days, platform, clientId: clientId ?? undefined })}`
       ),
     getTimeseries: (
       days = 30,
-      metric: "spend" | "revenue" | "roas" | "impressions" | "clicks" | "conversions" = "spend",
-      platform?: Platform
+      metric: "spend" | "revenue" | "roas" | "impressions" | "clicks" | "conversions" | "cpa" = "spend",
+      platform?: Platform,
+      clientId?: string | null,
+      /** Adds `previous` (same day of the previous period) to each point. */
+      compare?: "previous"
     ) =>
       apiFetch<TimeseriesPoint[]>(
-        `/analytics/timeseries${buildQuery({ days, metric, platform })}`
+        `/analytics/timeseries${buildQuery({ days, metric, platform, clientId: clientId ?? undefined, compare })}`
       ),
-    getPlatformBreakdown: (days = 30) =>
+    getPlatformBreakdown: (days = 30, clientId?: string | null) =>
       apiFetch<PlatformBreakdown[]>(
-        `/analytics/by-platform${buildQuery({ days })}`
+        `/analytics/by-platform${buildQuery({ days, clientId: clientId ?? undefined })}`
       ),
+    getAnalyticsByClient: (days = 30) =>
+      apiFetch<ClientBreakdown[]>(`/analytics/by-client${buildQuery({ days })}`),
     getAnalyticsCampaigns: (params?: {
       days?: number;
+      clientId?: string;
       sortBy?: string;
       sortOrder?: "asc" | "desc";
       page?: number;
@@ -684,7 +921,27 @@ export function useApiClient() {
       ),
 
     /* Ad Accounts */
-    getAdAccounts: () => apiFetch<AdAccount[]>("/ad-accounts"),
+    getAdAccounts: (clientId?: string | null) =>
+      apiFetch<AdAccount[]>(`/ad-accounts${buildQuery({ clientId: clientId ?? undefined })}`),
+    assignAdAccountClient: (id: string, clientId: string | null) =>
+      apiFetch<AdAccount>(`/ad-accounts/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ clientId }),
+      }),
+
+    /* Clients */
+    getClients: () => apiFetch<ClientsResponse>("/clients"),
+    createClient: (data: ClientInput & { name: string }) =>
+      apiFetch<Client>("/clients", { method: "POST", body: JSON.stringify(data) }),
+    updateClient: (id: string, data: ClientInput) =>
+      apiFetch<Client>(`/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    deleteClient: (id: string) => apiFetch<void>(`/clients/${id}`, { method: "DELETE" }),
+
+    /* Budgets */
+    getPacing: (params?: { month?: string; clientId?: string | null }) =>
+      apiFetch<PacingResponse>(
+        `/budgets/pacing${buildQuery({ month: params?.month, clientId: params?.clientId ?? undefined })}`
+      ),
     connectAdAccount: (data: ConnectAdAccountInput) =>
       apiFetch<AdAccount>("/ad-accounts", {
         method: "POST",
@@ -807,6 +1064,22 @@ export function useApiClient() {
       apiFetch<Insight>(`/insights/${id}/restore`, { method: "POST" }),
     getDismissedInsights: () =>
       apiFetch<{ insights: Insight[] }>("/insights/dismissed"),
+
+    /* Suggestions (B2) */
+    getSuggestions: (params?: { clientId?: string | null; campaignId?: string; includeApplied?: boolean }) =>
+      apiFetch<SuggestionsResponse>(
+        `/suggestions${buildQuery({
+          clientId: params?.clientId ?? undefined,
+          campaignId: params?.campaignId,
+          include: params?.includeApplied ? "applied" : undefined,
+        })}`
+      ),
+    refreshSuggestions: () =>
+      apiFetch<SuggestionsResponse & { generated: boolean }>("/suggestions/refresh", { method: "POST" }),
+    applySuggestion: (id: string) => apiFetch<Suggestion>(`/suggestions/${id}/apply`, { method: "POST" }),
+    snoozeSuggestion: (id: string, days?: number) =>
+      apiFetch<Suggestion>(`/suggestions/${id}/snooze`, { method: "POST", body: JSON.stringify({ days }) }),
+    undoSuggestion: (id: string) => apiFetch<Suggestion>(`/suggestions/${id}/undo`, { method: "POST" }),
 
     /* ───────────────────────────────── */
     /* Phase 1A — Meta publish wizard    */

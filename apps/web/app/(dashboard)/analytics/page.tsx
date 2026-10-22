@@ -1,835 +1,299 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import clsx from "clsx";
-import toast from "react-hot-toast";
-import {
-  Download,
-  DollarSign,
-  TrendingUp,
-  Zap,
-  CheckCircle2,
-  Sparkles,
-  Minus,
-  ArrowUp,
-  ArrowDown,
-  BarChart3,
-  RefreshCw,
-  Loader2,
-} from "lucide-react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ComposedChart,
-  Area,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import MetricCard from "@/components/dashboard/MetricCard";
-import {
-  SkeletonMetricCard,
-  SkeletonTableRow,
-} from "@/components/ui/Skeleton";
-import EmptyState from "@/components/ui/EmptyState";
+import { CalendarClock, ChevronDown, Download } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
-import { useApiClient } from "@/lib/api";
-import type {
-  AnalyticsOverview,
-  AnalyticsCampaignsResponse,
-  PlatformBreakdown,
-  Platform,
-  TimeseriesPoint,
-  Insight,
-} from "@/lib/api";
+import type { Platform } from "@/lib/api";
+import { fmtMoney } from "@/lib/money";
+import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
+import { useClientScope } from "@/components/app/shell/ClientContext";
+import { Button, ButtonLink, EmptyState, KpiCard, Menu, MenuItem, PlatformBadge, Segmented, PLATFORM_META, type PlatformKey } from "@/components/app/ui";
+import { dayLabel } from "@/components/app/campaign/metrics";
+import { downloadCsv } from "@/components/app/campaigns/csv";
+import { TrendChart, type TrendPoint } from "@/components/app/analytics/TrendChart";
+import { SharePanel, type ShareEntry } from "@/components/app/analytics/SharePanel";
+import { Funnel } from "@/components/app/analytics/Funnel";
+import { AdvertixRead } from "@/components/app/analytics/AdvertixRead";
+import { BreakdownGrid, type BreakdownBy, type BreakdownRow } from "@/components/app/analytics/BreakdownGrid";
+
+/**
+ * Analytics (guide §5.7, plan A10; absorbs /insights): 5 clickable KPI cards
+ * drive the trend line, previous-period compare, share by platform / client,
+ * funnel, Advertix read (insights), breakdown by platform / client /
+ * campaign, CSV export. Follows the client switcher.
+ */
 
 type Range = 7 | 30 | 90;
-type Metric =
-  | "spend"
-  | "revenue"
-  | "roas"
-  | "impressions"
-  | "clicks"
-  | "conversions";
+type Metric = "spend" | "revenue" | "roas" | "conversions" | "cpa" | "impressions" | "clicks";
+type Totals = { spend: number; revenue: number; conversions: number; impressions: number; clicks: number };
 
-const METRIC_META: Record<
-  Metric,
-  { label: string; color: string; format: (n: number) => string }
-> = {
-  spend: {
-    label: "Spend",
-    color: "#6366f1",
-    format: (n) => `$${n.toLocaleString()}`,
-  },
-  revenue: {
-    label: "Revenue",
-    color: "#10b981",
-    format: (n) => `$${n.toLocaleString()}`,
-  },
-  roas: {
-    label: "ROAS",
-    color: "#a855f7",
-    format: (n) => `${n.toFixed(2)}x`,
-  },
-  impressions: {
-    label: "Impressions",
-    color: "#f59e0b",
-    format: (n) => formatCompact(n),
-  },
-  clicks: {
-    label: "Clicks",
-    color: "#0ea5e9",
-    format: (n) => formatCompact(n),
-  },
-  conversions: {
-    label: "Conversions",
-    color: "#ec4899",
-    format: (n) => formatCompact(n),
-  },
+const METRIC_LABEL: Record<Metric, string> = {
+  spend: "Spend",
+  revenue: "Revenue",
+  roas: "ROAS",
+  conversions: "Conversions",
+  cpa: "Cost / conversion",
+  impressions: "Impressions",
+  clicks: "Clicks",
 };
+const compact = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1).replace(/\.0$/, "")}K` : Math.round(n).toLocaleString("en-US"));
 
-function formatCompact(n: number): string {
-  if (n >= 1_000_000)
-    return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
-  return n.toString();
+function totalOf(m: Metric, t: Totals): number | null {
+  if (m === "roas") return t.spend > 0 && t.revenue > 0 ? t.revenue / t.spend : null;
+  if (m === "cpa") return t.conversions > 0 ? t.spend / t.conversions : null;
+  return t[m];
 }
 
-const PLATFORM_BADGE: Record<
-  Platform,
-  { label: string; bg: string; text: string }
-> = {
-  META: { label: "Meta", bg: "bg-[#1877F2]/10", text: "text-[#1877F2]" },
-  GOOGLE: { label: "Google", bg: "bg-[#EA4335]/10", text: "text-[#EA4335]" },
-  TIKTOK: { label: "TikTok", bg: "bg-slate-900/[0.08]", text: "text-slate-900" },
-  LINKEDIN: {
-    label: "LinkedIn",
-    bg: "bg-[#0A66C2]/10",
-    text: "text-[#0A66C2]",
-  },
-  YOUTUBE: { label: "YouTube", bg: "bg-[#FF0000]/10", text: "text-[#FF0000]" },
-  SNAPCHAT: {
-    label: "Snapchat",
-    bg: "bg-[#FFFC00]/20",
-    text: "text-slate-900",
-  },
-  PINTEREST: {
-    label: "Pinterest",
-    bg: "bg-[#E60023]/10",
-    text: "text-[#E60023]",
-  },
-  X: { label: "X", bg: "bg-slate-900/[0.08]", text: "text-slate-900" },
-};
+const pct = (c: number | null, p: number | null) => (c === null || p === null || p === 0 ? null : ((c - p) / p) * 100);
 
-const TABS: Range[] = [7, 30, 90];
-const TAB_LABEL: Record<Range, string> = {
-  7: "Last 7D",
-  30: "Last 30D",
-  90: "Last 90D",
-};
-
-type SortKey =
-  | "spend"
-  | "revenue"
-  | "roas"
-  | "impressions"
-  | "clicks"
-  | "conversions";
+function lastDays(n: number) {
+  const now = new Date();
+  return Array.from({ length: n }, (_, k) =>
+    new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (n - 1 - k))).toISOString().slice(0, 10)
+  );
+}
 
 export default function AnalyticsPage() {
+  const { clientId, client, hasMultiple } = useClientScope();
   const [range, setRange] = useState<Range>(30);
   const [metric, setMetric] = useState<Metric>("spend");
-  const [sortBy, setSortBy] = useState<SortKey>("spend");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [compare, setCompare] = useState(true);
+  const [shareBy, setShareBy] = useState<"platform" | "client">("platform");
+  const [by, setBy] = useState<BreakdownBy>("platform");
 
-  const overview = useApi<AnalyticsOverview>(
-    (c) => c.getAnalyticsOverview(range),
-    [range]
-  );
-  const timeseries = useApi<TimeseriesPoint[]>(
-    (c) => c.getTimeseries(range, metric),
-    [range, metric]
-  );
-  const platforms = useApi<PlatformBreakdown[]>(
-    (c) => c.getPlatformBreakdown(range),
-    [range]
-  );
-  const campaigns = useApi<AnalyticsCampaignsResponse>(
-    (c) =>
-      c.getAnalyticsCampaigns({
-        days: range,
-        sortBy,
-        sortOrder,
-        page: 1,
-        limit: 10,
-      }),
-    [range, sortBy, sortOrder]
-  );
+  const accounts = useApi((c) => c.getAdAccounts(), [], { key: "ad-accounts" });
+  const overview = useApi((c) => c.getAnalyticsOverview(range, undefined, clientId), [range, clientId], { key: "analytics-overview" });
+  const ts = useApi((c) => c.getTimeseries(range, metric, undefined, clientId, "previous"), [range, metric, clientId], { key: "analytics-ts" });
+  const platforms = useApi((c) => c.getPlatformBreakdown(range, clientId), [range, clientId], { key: "analytics-platforms" });
+  const clientsOn = hasMultiple && !clientId;
+  const byClient = useApi((c) => (clientsOn ? c.getAnalyticsByClient(range) : Promise.resolve([])), [range, clientsOn], { key: "analytics-by-client" });
+  const campaigns = useApi((c) => c.getAnalyticsCampaigns({ days: range, clientId: clientId ?? undefined, limit: 100, sortBy: "spend", sortOrder: "desc" }), [range, clientId], {
+    key: "analytics-campaigns",
+  });
 
-  const meta = METRIC_META[metric];
+  const scoped = (accounts.data ?? []).filter((a) => a.isActive && (!clientId || a.clientId === clientId));
+  const currencies = Array.from(new Set(scoped.map((a) => a.currency).filter((c): c is string => !!c)));
+  const currency = currencies[0] ?? null;
 
-  function toggleSort(k: SortKey) {
-    if (k === sortBy) {
-      setSortOrder((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortBy(k);
-      setSortOrder("desc");
-    }
-  }
+  const fmt = (m: Metric) => (v: number) =>
+    m === "roas" ? `${v.toFixed(2)}x` : m === "cpa" ? fmtMoney(v, currency) : m === "spend" || m === "revenue" ? fmtMoney(v, currency, { whole: true }) : compact(v);
+  const axisFmt = (m: Metric) => (v: number) => (m === "spend" || m === "revenue" || m === "cpa" ? fmtMoney(v, currency, { compact: v >= 1000, whole: v < 1000 }) : fmt(m)(v));
 
-  const hasAnyData = (overview.data?.spend ?? 0) > 0;
+  const o = overview.data;
+  const cur: Totals | null = o ? { spend: o.spend, revenue: o.revenue, conversions: o.conversions, impressions: o.impressions, clicks: o.clicks } : null;
+  const prev: Totals | null = o?.previous ?? null;
+  const hadPrev = !!prev && (prev.spend > 0 || prev.impressions > 0);
+  const delta = (m: Metric) => (!cur || !hadPrev ? undefined : m === "roas" ? (totalOf(m, cur) !== null && totalOf(m, prev!) !== null ? totalOf(m, cur)! - totalOf(m, prev!)! : null) : pct(totalOf(m, cur), totalOf(m, prev!)));
+
+  const points: TrendPoint[] = useMemo(() => {
+    const byDate = new Map((ts.data ?? []).map((p) => [p.date, p]));
+    return lastDays(range).map((date) => {
+      const p = byDate.get(date);
+      // No metric row = no delivery that day: 0 for totals, a gap for ratios.
+      const ratio = metric === "roas" || metric === "cpa";
+      return { date, value: p ? p.value : ratio ? null : 0, previous: p ? p.previous ?? null : null };
+    });
+  }, [ts.data, range, metric]);
+
+  const shareMetric: "spend" | "revenue" | "conversions" | "impressions" | "clicks" = metric === "roas" || metric === "cpa" ? "spend" : metric;
+  const shareEntries: ShareEntry[] =
+    shareBy === "client" && clientsOn
+      ? (byClient.data ?? []).map((b) => ({ key: b.clientId ?? "none", label: b.clientId ? b.name : "Not assigned", value: b[shareMetric] }))
+      : (platforms.data ?? []).map((p) => ({
+          key: p.platform,
+          label: PLATFORM_META[p.platform as PlatformKey]?.name ?? p.platform,
+          icon: <PlatformBadge platform={p.platform as PlatformKey} size={20} />,
+          value: p[shareMetric],
+        }));
+
+  const rows: BreakdownRow[] =
+    by === "client" && clientsOn
+      ? (byClient.data ?? []).map((b) => ({ id: b.clientId ?? "none", name: b.clientId ? b.name : "Not assigned", spend: b.spend, revenue: b.revenue, conversions: b.conversions, impressions: b.impressions, clicks: b.clicks }))
+      : by === "campaign"
+        ? (campaigns.data?.campaigns ?? []).map((c) => ({
+            id: c.id,
+            name: c.name,
+            sub: PLATFORM_META[c.platform as PlatformKey]?.name,
+            icon: <PlatformBadge platform={c.platform as PlatformKey} size={20} />,
+            href: `/campaigns/${c.id}`,
+            spend: c.spend,
+            revenue: c.revenue,
+            conversions: c.conversions,
+            impressions: c.impressions,
+            clicks: c.clicks,
+          }))
+        : (platforms.data ?? []).map((p) => ({
+            id: p.platform,
+            name: PLATFORM_META[p.platform as PlatformKey]?.name ?? p.platform,
+            icon: <PlatformBadge platform={p.platform as Platform as PlatformKey} size={22} />,
+            spend: p.spend,
+            revenue: p.revenue,
+            conversions: p.conversions,
+            impressions: p.impressions,
+            clicks: p.clicks,
+          }));
+  const rowsLoading = by === "campaign" ? campaigns.loading : by === "client" ? byClient.loading : platforms.loading;
+  const byOptions: { value: BreakdownBy; label: string }[] = [
+    { value: "platform", label: "Platform" },
+    ...(clientsOn ? [{ value: "client" as const, label: "Client" }] : []),
+    { value: "campaign", label: "Campaign" },
+  ];
+  const effectiveBy: BreakdownBy = by === "client" && !clientsOn ? "platform" : by;
+
+  const days = lastDays(range);
+  const period = `${dayLabel(days[0])} – ${dayLabel(days[days.length - 1])}`;
+  const scopeTitle = client ? client.name : hasMultiple ? "All clients" : "All accounts";
   const loading = overview.loading;
+  const noData = !loading && !overview.error && cur !== null && cur.spend === 0 && cur.impressions === 0;
+  const chartTotal = cur ? totalOf(metric, cur) : null;
+  const chartPrev = prev && hadPrev ? totalOf(metric, prev) : null;
+  const sumWord = metric === "roas" || metric === "cpa" ? "overall" : "total";
 
-  // Series for the main chart
-  const chartData = useMemo(
-    () =>
-      (timeseries.data ?? []).map((p) => ({
-        label: new Date(p.date + "T00:00:00Z").toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        }),
-        date: p.date,
-        value: p.value,
-      })),
-    [timeseries.data]
-  );
-
-  // Funnel from real overview data
-  const funnel = useMemo(() => {
-    const o = overview.data;
-    if (!o) return [];
-    return [
-      { stage: "Impressions", count: o.impressions, color: "#6366f1" },
-      {
-        stage: "Clicks",
-        count: o.clicks,
-        color: "#8b5cf6",
-        note: `${(o.ctr * 100).toFixed(2)}% CTR`,
-      },
-      {
-        stage: "Conversions",
-        count: o.conversions,
-        color: "#ec4899",
-        note:
-          o.clicks > 0
-            ? `${((o.conversions / o.clicks) * 100).toFixed(2)}% CVR`
-            : undefined,
-      },
-    ];
-  }, [overview.data]);
-
-  const maxFunnel = funnel[0]?.count ?? 0;
-
-  if (!loading && !hasAnyData && !overview.error) {
-    return (
-      <div className="space-y-6">
-        <header className="animate-in stagger-1">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 lg:text-3xl">
-            Analytics
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Track performance across all your campaigns
-          </p>
-        </header>
-        <EmptyState
-          icon={BarChart3}
-          title="No analytics data yet"
-          description="Connect your ad accounts and sync campaigns to see performance data."
-          action={{
-            label: "Connect Ad Account",
-            onClick: () =>
-              (window.location.href = "/settings?tab=integrations"),
-          }}
-        />
-      </div>
-    );
-  }
+  const exportCsv = () => {
+    const header = [effectiveBy === "platform" ? "Platform" : effectiveBy === "client" ? "Client" : "Campaign", "Spend", "Revenue", "ROAS", "Conversions", "CPA", "CTR %", "CPM", "Impressions", "Clicks"];
+    const data = [...rows]
+      .sort((a, b) => b.spend - a.spend)
+      .map((r) => [
+        r.name,
+        r.spend.toFixed(2),
+        r.revenue.toFixed(2),
+        r.spend > 0 && r.revenue > 0 ? (r.revenue / r.spend).toFixed(2) : "",
+        r.conversions,
+        r.conversions > 0 ? (r.spend / r.conversions).toFixed(2) : "",
+        r.impressions > 0 ? ((r.clicks / r.impressions) * 100).toFixed(2) : "",
+        r.impressions > 0 ? ((r.spend / r.impressions) * 1000).toFixed(2) : "",
+        r.impressions,
+        r.clicks,
+      ]);
+    downloadCsv(`advertix-analytics-${effectiveBy}-${range}d-${days[days.length - 1]}.csv`, header, data);
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Top bar */}
-      <header className="flex flex-wrap items-end justify-between gap-3 animate-in stagger-1">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 lg:text-3xl">
-            Analytics
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Track performance across all your campaigns
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
-            {TABS.map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setRange(t)}
-                className={clsx(
-                  "rounded-lg px-3 py-1.5 text-xs font-bold transition",
-                  range === t
-                    ? "bg-white text-slate-900 shadow-sm"
-                    : "text-slate-500 hover:text-slate-700"
-                )}
-              >
-                {TAB_LABEL[t]}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-          >
-            <Download className="h-4 w-4" />
-            Export Report
-          </button>
-        </div>
-      </header>
-
-      {/* Summary metric cards */}
-      <div className="grid grid-cols-2 gap-5 animate-in stagger-2 lg:grid-cols-4 lg:gap-6">
-        {overview.loading ? (
+    <>
+      <PageHeader
+        kicker={`${scopeTitle} · reporting`}
+        title="Analytics"
+        summary={`${period}${compare ? `, compared with the ${range} days before` : ""}${currencies.length > 1 ? ` · totals mix ${currencies.join(", ")}` : ""}`}
+        actions={
           <>
-            <SkeletonMetricCard />
-            <SkeletonMetricCard />
-            <SkeletonMetricCard />
-            <SkeletonMetricCard />
+            <Segmented
+              label="Date range"
+              value={range}
+              onChange={setRange}
+              options={[
+                { value: 7, label: "7 days" },
+                { value: 30, label: "30 days" },
+                { value: 90, label: "90 days" },
+              ]}
+            />
+            <Button variant="secondary" icon={<Download size={16} />} onClick={exportCsv} disabled={rowsLoading || rows.length === 0} title="Download the breakdown below as CSV">
+              Export CSV
+            </Button>
+            {/* TODO(Track C): scheduled email reports (D5). */}
+            <Button variant="secondary" icon={<CalendarClock size={16} />} disabled title="Scheduled reports are coming soon">
+              Schedule report
+            </Button>
           </>
-        ) : overview.data ? (
-          <>
-            <MetricCard
-              title="Total Spend"
-              value={overview.data.spend.toLocaleString("en-US", {
-                maximumFractionDigits: 0,
-              })}
-              change={overview.data.changes.spend}
-              changeLabel="vs prev period"
-              icon={DollarSign}
-              iconColor="#059669"
-              iconBg="rgba(16, 185, 129, 0.12)"
-              trend={overview.data.changes.spend >= 0 ? "up" : "down"}
-              prefix="$"
-            />
-            <MetricCard
-              title="Total Revenue"
-              value={overview.data.revenue.toLocaleString("en-US", {
-                maximumFractionDigits: 0,
-              })}
-              change={overview.data.changes.revenue}
-              changeLabel="vs prev period"
-              icon={TrendingUp}
-              iconColor="#2563eb"
-              iconBg="rgba(59, 130, 246, 0.12)"
-              trend={overview.data.changes.revenue >= 0 ? "up" : "down"}
-              prefix="$"
-            />
-            <MetricCard
-              title="Avg ROAS"
-              value={overview.data.roas.toFixed(2)}
-              change={overview.data.changes.roas}
-              changeLabel="vs prev period"
-              icon={Zap}
-              iconColor="#7c3aed"
-              iconBg="rgba(139, 92, 246, 0.12)"
-              trend={overview.data.changes.roas >= 0 ? "up" : "down"}
-              suffix="x"
-            />
-            <MetricCard
-              title="Conversions"
-              value={overview.data.conversions.toLocaleString()}
-              change={overview.data.changes.conversions}
-              changeLabel="vs prev period"
-              icon={CheckCircle2}
-              iconColor="#ea580c"
-              iconBg="rgba(249, 115, 22, 0.12)"
-              trend={overview.data.changes.conversions >= 0 ? "up" : "down"}
-            />
-          </>
-        ) : null}
-      </div>
-
-      {/* Main chart */}
-      <section className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card animate-in stagger-3">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">
-              Performance Over Time
-            </h3>
-            <p className="text-xs text-slate-500">
-              {range}-day {meta.label.toLowerCase()} trend
-            </p>
-          </div>
-          <div className="inline-flex flex-wrap rounded-xl border border-slate-200 bg-slate-50 p-0.5">
-            {(Object.keys(METRIC_META) as Metric[]).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMetric(m)}
-                className={clsx(
-                  "rounded-lg px-3 py-1.5 text-xs font-bold transition",
-                  metric === m
-                    ? "bg-white text-slate-900 shadow-sm"
-                    : "text-slate-500 hover:text-slate-700"
-                )}
-              >
-                {METRIC_META[m].label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {timeseries.loading ? (
-          <div className="h-72 animate-pulse rounded-xl bg-slate-100" />
-        ) : chartData.length === 0 ? (
-          <div className="flex h-72 items-center justify-center rounded-xl border border-dashed border-slate-200 text-sm text-slate-500">
-            No data in this window.
-          </div>
+        }
+      />
+      <PageBody className="gap-5">
+        {noData ? (
+          <EmptyState
+            title="No analytics data yet"
+            body="Connect an ad account and sync your campaigns. Spend, results and trends show up here after the first sync."
+            action={<ButtonLink href="/settings?tab=integrations" variant="secondary">Connect an ad account</ButtonLink>}
+          />
         ) : (
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart
-                data={chartData}
-                margin={{ top: 12, right: 8, left: -8, bottom: 0 }}
-              >
-                <defs>
-                  <linearGradient id="metric-fill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={meta.color} stopOpacity={0.34} />
-                    <stop offset="100%" stopColor={meta.color} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid
-                  strokeDasharray="3 4"
-                  stroke="#e2e8f0"
-                  vertical={false}
+          <>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-4">
+              {(["spend", "revenue", "roas", "conversions", "cpa"] as Metric[]).map((m) => (
+                <KpiCard
+                  key={m}
+                  label={METRIC_LABEL[m]}
+                  loading={loading}
+                  value={cur && totalOf(m, cur) !== null && (m !== "revenue" || cur.revenue > 0) ? fmt(m)(totalOf(m, cur)!) : "—"}
+                  delta={delta(m)}
+                  deltaFormat={m === "roas" ? (v) => Math.abs(v).toFixed(2) : undefined}
+                  higherIsBetter={m !== "cpa"}
+                  selected={metric === m}
+                  onClick={() => setMetric(m)}
                 />
-                <XAxis
-                  dataKey="label"
-                  interval={Math.max(1, Math.floor(chartData.length / 6)) - 1}
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fill: "#94a3b8", fontSize: 11, fontWeight: 500 }}
-                  dy={6}
-                />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  tick={{ fill: "#94a3b8", fontSize: 11, fontWeight: 500 }}
-                  tickFormatter={(v) => meta.format(v)}
-                  width={50}
-                />
-                <Tooltip
-                  cursor={{ stroke: "#cbd5e1", strokeDasharray: "3 4" }}
-                  contentStyle={{
-                    borderRadius: 12,
-                    border: "1px solid #e2e8f0",
-                    boxShadow: "0 8px 24px -8px rgba(15,23,42,0.18)",
-                    fontSize: 12,
-                    padding: "8px 12px",
-                  }}
-                  formatter={(v) => [meta.format(Number(v)), meta.label]}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="value"
-                  stroke={meta.color}
-                  strokeWidth={2.5}
-                  fill="url(#metric-fill)"
-                  isAnimationActive
-                  animationDuration={700}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </section>
-
-      {/* Platform comparison + Funnel */}
-      <section className="grid grid-cols-1 gap-6 animate-in stagger-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
-          <div className="mb-3">
-            <h3 className="text-base font-bold text-slate-900">
-              Platform Performance
-            </h3>
-            <p className="text-xs text-slate-500">
-              Spend vs Revenue, last {range}D
-            </p>
-          </div>
-          {platforms.loading ? (
-            <div className="h-64 animate-pulse rounded-xl bg-slate-100" />
-          ) : (platforms.data ?? []).length === 0 ? (
-            <div className="flex h-64 items-center justify-center text-sm text-slate-500">
-              No platform data yet.
+              ))}
             </div>
-          ) : (
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={(platforms.data ?? []).map((p) => ({
-                    platform: PLATFORM_BADGE[p.platform]?.label ?? p.platform,
-                    spend: p.spend,
-                    revenue: p.revenue,
-                    roas: p.roas,
-                  }))}
-                  margin={{ top: 10, right: 8, left: -8, bottom: 0 }}
-                  barCategoryGap={24}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 4"
-                    stroke="#e2e8f0"
-                    vertical={false}
-                  />
-                  <XAxis
-                    dataKey="platform"
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fill: "#475569", fontSize: 11, fontWeight: 600 }}
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fill: "#94a3b8", fontSize: 11, fontWeight: 500 }}
-                    tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                    width={48}
-                  />
-                  <Tooltip
-                    cursor={{ fill: "rgba(99, 102, 241, 0.06)" }}
-                    contentStyle={{
-                      borderRadius: 12,
-                      border: "1px solid #e2e8f0",
-                      fontSize: 12,
-                      padding: "8px 12px",
-                    }}
-                  />
-                  <Legend
-                    iconType="square"
-                    iconSize={10}
-                    wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                  />
-                  <Bar
-                    dataKey="spend"
-                    name="Spend"
-                    fill="#6366f1"
-                    radius={[6, 6, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="revenue"
-                    name="Revenue"
-                    fill="#10b981"
-                    radius={[6, 6, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
+            {overview.error && (
+              <p role="alert" className="-mt-2 text-sm text-neg">
+                Couldn’t load totals.{" "}
+                <button type="button" className="font-semibold underline underline-offset-2" onClick={() => void overview.refetch()}>
+                  Try again
+                </button>
+              </p>
+            )}
 
-        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
-          <div className="mb-3">
-            <h3 className="text-base font-bold text-slate-900">
-              Conversion Funnel
-            </h3>
-            <p className="text-xs text-slate-500">
-              Last {range}D, end-to-end conversion path
-            </p>
-          </div>
-          {overview.loading ? (
-            <div className="h-48 animate-pulse rounded-xl bg-slate-100" />
-          ) : funnel.length === 0 ? (
-            <div className="text-sm text-slate-500">No funnel data yet.</div>
-          ) : (
-            <ul className="space-y-2">
-              {funnel.map((f, i) => {
-                const pct = maxFunnel > 0 ? (f.count / maxFunnel) * 100 : 0;
-                return (
-                  <li key={f.stage}>
-                    <div className="mb-1 flex items-baseline justify-between">
-                      <span className="text-xs font-semibold text-slate-700">
-                        {f.stage}
-                      </span>
-                      <span className="text-sm font-bold text-slate-900">
-                        {f.count.toLocaleString()}
-                        {f.note && (
-                          <span className="ml-2 text-[10px] font-semibold text-emerald-600">
-                            {f.note}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="h-7 overflow-hidden rounded-lg bg-slate-100">
-                      <div
-                        className="h-full rounded-lg transition-all duration-700"
-                        style={{
-                          width: `${pct}%`,
-                          background: `linear-gradient(90deg, ${f.color}, ${f.color}cc)`,
-                        }}
-                      />
-                    </div>
-                    {i < funnel.length - 1 && funnel[i + 1].count > 0 && f.count > 0 && (
-                      <p className="mt-1 text-right text-[10px] font-semibold text-slate-400">
-                        {((funnel[i + 1].count / f.count) * 100).toFixed(1)}%
-                        &nbsp;→
-                      </p>
+            <div className="flex flex-wrap items-start gap-4">
+              <TrendChart
+                className="min-w-0 flex-[1.8_1_560px]"
+                title={`${METRIC_LABEL[metric]} by day`}
+                points={points}
+                format={axisFmt(metric)}
+                compare={compare}
+                onCompareChange={setCompare}
+                compareLabel={`Compare to previous ${range} days`}
+                loading={ts.loading}
+                summary={
+                  <>
+                    <span className="font-semibold text-ink">Last {range} days</span> · {sumWord} {chartTotal === null ? "—" : fmt(metric)(chartTotal)}
+                    {compare && <> · previous {chartPrev === null ? "no data" : fmt(metric)(chartPrev)}</>}
+                  </>
+                }
+                headerExtra={
+                  <Menu
+                    align="end"
+                    width={200}
+                    trigger={(p) => (
+                      <Button {...p} variant="secondary" size="toolbar" className={`px-3 text-[13px] ${p.className}`}>
+                        More metrics <ChevronDown size={14} />
+                      </Button>
                     )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      {/* Campaign breakdown table */}
-      <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-card animate-in stagger-5">
-        <div className="border-b border-slate-100 p-5">
-          <h3 className="text-base font-bold text-slate-900">
-            Campaign Breakdown
-          </h3>
-          <p className="text-xs text-slate-500">
-            Click a column to sort. {campaigns.data?.total ?? 0} campaigns.
-          </p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                <th className="px-5 py-3">Campaign</th>
-                <th className="py-3">Platform</th>
-                <SortableTh
-                  label="Spend"
-                  k="spend"
-                  sortKey={sortBy}
-                  sortDir={sortOrder}
-                  onSort={toggleSort}
+                  >
+                    {(close) =>
+                      (["impressions", "clicks"] as Metric[]).map((m) => (
+                        <MenuItem key={m} selected={metric === m} onSelect={() => (setMetric(m), close())}>
+                          {METRIC_LABEL[m]}
+                        </MenuItem>
+                      ))
+                    }
+                  </Menu>
+                }
+              />
+              <div className="min-w-0 flex-[1_1_300px]">
+                <SharePanel
+                  metricLabel={METRIC_LABEL[shareMetric].toLowerCase()}
+                  entries={shareEntries}
+                  format={fmt(shareMetric)}
+                  by={clientsOn ? shareBy : "platform"}
+                  byOptions={clientsOn ? [{ value: "platform", label: "Platform" }, { value: "client", label: "Client" }] : [{ value: "platform", label: "Platform" }]}
+                  onByChange={setShareBy}
+                  loading={platforms.loading || (shareBy === "client" && byClient.loading)}
                 />
-                <SortableTh
-                  label="Revenue"
-                  k="revenue"
-                  sortKey={sortBy}
-                  sortDir={sortOrder}
-                  onSort={toggleSort}
-                />
-                <SortableTh
-                  label="ROAS"
-                  k="roas"
-                  sortKey={sortBy}
-                  sortDir={sortOrder}
-                  onSort={toggleSort}
-                />
-                <SortableTh
-                  label="Impressions"
-                  k="impressions"
-                  sortKey={sortBy}
-                  sortDir={sortOrder}
-                  onSort={toggleSort}
-                />
-                <SortableTh
-                  label="Clicks"
-                  k="clicks"
-                  sortKey={sortBy}
-                  sortDir={sortOrder}
-                  onSort={toggleSort}
-                />
-                <SortableTh
-                  label="Conv"
-                  k="conversions"
-                  sortKey={sortBy}
-                  sortDir={sortOrder}
-                  onSort={toggleSort}
-                  className="pr-5"
-                />
-              </tr>
-            </thead>
-            <tbody>
-              {campaigns.loading
-                ? Array.from({ length: 5 }).map((_, i) => (
-                    <SkeletonTableRow key={i} cols={8} />
-                  ))
-                : (campaigns.data?.campaigns ?? []).map((r) => {
-                    const plat = PLATFORM_BADGE[r.platform] ?? {
-                      label: r.platform,
-                      bg: "bg-slate-100",
-                      text: "text-slate-700",
-                    };
-                    return (
-                      <tr
-                        key={r.id}
-                        className="border-t border-slate-50 transition hover:bg-slate-50/60"
-                      >
-                        <td className="max-w-[200px] truncate px-5 py-3.5 text-sm font-semibold text-slate-900">
-                          {r.name}
-                        </td>
-                        <td className="py-3.5">
-                          <span className={clsx("pill", plat.bg, plat.text)}>
-                            {plat.label}
-                          </span>
-                        </td>
-                        <td className="py-3.5 text-xs font-semibold text-slate-700">
-                          ${r.spend.toLocaleString()}
-                        </td>
-                        <td className="py-3.5 text-xs font-semibold text-slate-700">
-                          ${r.revenue.toLocaleString()}
-                        </td>
-                        <td className="py-3.5">
-                          <span
-                            className={clsx(
-                              "text-sm font-bold",
-                              r.roas >= 2
-                                ? "text-emerald-600"
-                                : "text-rose-600"
-                            )}
-                          >
-                            {r.roas.toFixed(2)}x
-                          </span>
-                        </td>
-                        <td className="py-3.5 text-xs font-medium text-slate-700">
-                          {formatCompact(r.impressions)}
-                        </td>
-                        <td className="py-3.5 text-xs font-medium text-slate-700">
-                          {formatCompact(r.clicks)}
-                        </td>
-                        <td className="pr-5 py-3.5 text-xs font-semibold text-slate-700">
-                          {formatCompact(r.conversions)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-              {!campaigns.loading &&
-                (campaigns.data?.campaigns ?? []).length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={8}
-                      className="px-5 py-8 text-center text-sm text-slate-500"
-                    >
-                      No campaigns with metrics in this window.
-                    </td>
-                  </tr>
-                )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              </div>
+            </div>
 
-      {/* AI Insights (real — from /insights) */}
-      <section className="animate-in stagger-6">
-        <AnalyticsAIInsights />
-      </section>
+            <Funnel impressions={cur?.impressions ?? 0} clicks={cur?.clicks ?? 0} conversions={cur?.conversions ?? 0} scopeLabel={scopeTitle} loading={loading} />
 
-    </div>
-  );
-}
+            <AdvertixRead />
 
-function AnalyticsAIInsights() {
-  const api = useApiClient();
-  const q = useApi<{ insights: Insight[] }>((c) => c.getInsights(), []);
-  const [generating, setGenerating] = useState(false);
-  const top = (q.data?.insights ?? []).slice(0, 4);
-
-  async function refresh() {
-    setGenerating(true);
-    try {
-      await api.generateInsights();
-      await q.refetch();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't refresh insights");
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  return (
-    <div className="rounded-2xl p-[1px] bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
-      <div className="rounded-[15px] bg-white p-5">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">🤖 AI Performance Analysis</h3>
-            <p className="text-xs text-slate-500">Data-driven observations across your campaigns</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Link href="/insights" className="text-xs font-semibold text-primary hover:underline">
-              View all →
-            </Link>
-            <button
-              type="button"
-              onClick={refresh}
-              disabled={generating}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-primary/30 bg-primary/5 px-3.5 py-2 text-xs font-bold text-primary transition hover:bg-primary/10 disabled:opacity-60"
-            >
-              {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Refresh Insights
-            </button>
-          </div>
-        </div>
-        {q.loading ? (
-          <div className="space-y-2">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="h-12 animate-pulse rounded-xl bg-slate-100" />
-            ))}
-          </div>
-        ) : top.length === 0 ? (
-          <p className="rounded-xl bg-slate-50/70 p-3 text-sm text-slate-500">
-            No insights yet. Run campaigns for a few days, then hit{" "}
-            <span className="font-semibold text-slate-700">Refresh Insights</span> to generate AI analysis.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {top.map((ins) => (
-              <li key={ins.id} className="flex items-start gap-3 rounded-xl bg-slate-50/70 p-3">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-primary shadow-sm ring-1 ring-primary/15">
-                  <Sparkles className="h-3.5 w-3.5" strokeWidth={2.5} />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-slate-800">{ins.title}</p>
-                  <p className="text-xs leading-relaxed text-slate-600">{ins.message}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
+            <BreakdownGrid
+              by={effectiveBy}
+              byOptions={byOptions}
+              onByChange={setBy}
+              rows={rows}
+              currency={currency}
+              loading={rowsLoading}
+              note={effectiveBy === "campaign" && (campaigns.data?.total ?? 0) > 100 ? `Top 100 of ${campaigns.data?.total} by spend` : undefined}
+            />
+          </>
         )}
-      </div>
-    </div>
-  );
-}
-
-function SortableTh({
-  label,
-  k,
-  sortKey,
-  sortDir,
-  onSort,
-  className,
-}: {
-  label: string;
-  k: SortKey;
-  sortKey: SortKey;
-  sortDir: "asc" | "desc";
-  onSort: (k: SortKey) => void;
-  className?: string;
-}) {
-  const active = sortKey === k;
-  return (
-    <th className={clsx("py-3", className)}>
-      <button
-        type="button"
-        onClick={() => onSort(k)}
-        className={clsx(
-          "inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider transition",
-          active ? "text-slate-900" : "text-slate-500 hover:text-slate-700"
-        )}
-      >
-        {label}
-        {active ? (
-          sortDir === "asc" ? (
-            <ArrowUp className="h-3 w-3" />
-          ) : (
-            <ArrowDown className="h-3 w-3" />
-          )
-        ) : (
-          <Minus className="h-3 w-3 opacity-30" />
-        )}
-      </button>
-    </th>
+      </PageBody>
+    </>
   );
 }

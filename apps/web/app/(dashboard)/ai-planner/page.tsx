@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useAppRouter } from "@/hooks/useAppRouter";
 import clsx from "clsx";
 import toast from "react-hot-toast";
 import {
@@ -475,7 +475,7 @@ function GeneratedPlan({
   plan: CampaignPlan;
   context: PlannerContext | null;
 }) {
-  const router = useRouter();
+  const router = useAppRouter();
   const currency = plan.strategy?.currency || context?.currency || "USD";
 
   /**
@@ -529,7 +529,7 @@ function GeneratedPlan({
       // an empty wizard beats a dead button.
       toast("Opening the campaign wizard");
     }
-    router.push("/campaigns?new=1");
+    router.push("/campaigns/new");
   }
 
   const allocation = (plan.budget_allocation ?? []).map((a, i) => ({

@@ -1,99 +1,31 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
-import clsx from "clsx";
-import {
-  Sparkles,
-  RefreshCw,
-  DollarSign,
-  TrendingUp,
-  Zap,
-  Megaphone,
-  Rocket,
-  Palette,
-  Users,
-  BarChart3,
-  Bot,
-  Target,
-  Layers,
-  Wand2,
-  ArrowRight,
-} from "lucide-react";
-import MetricCard from "@/components/dashboard/MetricCard";
-import SpendChart, {
-  type SpendChartPoint,
-} from "@/components/dashboard/SpendChart";
-import PlatformBreakdown, {
-  type PlatformBreakdownPoint,
-} from "@/components/dashboard/PlatformBreakdown";
-import {
-  SkeletonMetricCard,
-  SkeletonChartCard,
-  SkeletonCard,
-} from "@/components/ui/Skeleton";
-import EmptyState from "@/components/ui/EmptyState";
+import { Download, Plus, Sparkles } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
-import { useApiClient } from "@/lib/api";
-import { fmtMoney as fmtMoneyCur } from "@/lib/money";
-import type {
-  AnalyticsOverview,
-  CampaignsResponse,
-  TimeseriesPoint,
-  PlatformBreakdown as PlatformBreakdownData,
-  Campaign,
-  BudgetRecommendationRow,
-  Insight,
-} from "@/lib/api";
+import type { AnalyticsOverview, TimeseriesPoint } from "@/lib/api";
+import { fmtMoney } from "@/lib/money";
+import { timeAgo } from "@/lib/time";
+import ConnectModal from "@/components/connect/ConnectModal";
+import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
+import { useClientScope } from "@/components/app/shell/ClientContext";
+import { Button, ButtonLink, Card, KpiCard } from "@/components/app/ui";
+import { SpendRevenueChart, type DayPoint } from "@/components/app/overview/SpendRevenueChart";
+import { OverviewSuggestions } from "@/components/app/overview/OverviewSuggestions";
+import { ClientsPacingTable } from "@/components/app/overview/ClientsPacingTable";
 
-/* ─────────────────────────────── */
-/* Static content (not yet backed) */
-/* ─────────────────────────────── */
+/**
+ * Overview (guide §5.1, plan A4): greeting, 5 KPI cards (last 30 days vs the
+ * 30 before), spend & revenue chart, Advertix suggests, client pacing table.
+ * Everything follows the client switcher.
+ */
 
-// TODO: wire to /api/ai/activity once AI activity audit log lands.
-const QUICK_ACTIONS = [
-  {
-    label: "Launch Campaign",
-    sub: "From scratch or template",
-    icon: Rocket,
-    color: "#6366f1",
-    bg: "linear-gradient(135deg, rgba(99,102,241,0.12), rgba(99,102,241,0.04))",
-    href: "/campaigns?new=1",
-  },
-  {
-    label: "Generate Creative",
-    sub: "AI image + copy variants",
-    icon: Palette,
-    color: "#a855f7",
-    bg: "linear-gradient(135deg, rgba(168,85,247,0.12), rgba(168,85,247,0.04))",
-    href: "/creatives",
-  },
-  {
-    label: "Build Audience",
-    sub: "Lookalike or interest-based",
-    icon: Users,
-    color: "#06b6d4",
-    bg: "linear-gradient(135deg, rgba(6,182,212,0.12), rgba(6,182,212,0.04))",
-    href: "/audiences",
-  },
-  {
-    label: "View Reports",
-    sub: "Full analytics breakdown",
-    icon: BarChart3,
-    color: "#10b981",
-    bg: "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.04))",
-    href: "/analytics",
-  },
-];
+const DAYS = 30;
+const SPARK_DAYS = 14;
 
-/* ─────────────────────────────── */
-/* Helpers                          */
-/* ─────────────────────────────── */
-
-function timeBasedGreeting(): string {
-  const h = new Date().getHours();
+function greeting(d: Date) {
+  const h = d.getHours();
   if (h < 5) return "Up late";
   if (h < 12) return "Good morning";
   if (h < 17) return "Good afternoon";
@@ -101,714 +33,199 @@ function timeBasedGreeting(): string {
   return "Working late";
 }
 
-function fmtMoney(n: number): string {
-  return n.toLocaleString("en-US", {
-    maximumFractionDigits: 0,
-  });
-}
-
-function trend(change: number): "up" | "down" | "neutral" {
-  if (change > 0.1) return "up";
-  if (change < -0.1) return "down";
-  return "neutral";
-}
-
-/* ─────────────────────────────── */
-/* Page                              */
-/* ─────────────────────────────── */
-
-export default function DashboardPage() {
-  const router = useRouter();
-  const { user } = useUser();
-
-  const overview = useApi<AnalyticsOverview>(
-    (api) => api.getAnalyticsOverview(30),
-    []
-  );
-  const timeseries = useApi<TimeseriesPoint[]>(
-    (api) => api.getTimeseries(30, "spend"),
-    []
-  );
-  const roasSeries = useApi<TimeseriesPoint[]>(
-    (api) => api.getTimeseries(30, "roas"),
-    []
-  );
-  const platforms = useApi<PlatformBreakdownData[]>(
-    (api) => api.getPlatformBreakdown(30),
-    []
-  );
-  const campaigns = useApi<CampaignsResponse>(
-    (api) =>
-      api.getCampaigns({
-        limit: "5",
-        status: "ACTIVE",
-      }),
-    []
-  );
-
-  const loading =
-    overview.loading ||
-    timeseries.loading ||
-    roasSeries.loading ||
-    platforms.loading ||
-    campaigns.loading;
-
-  const hasError =
-    overview.error || campaigns.error || timeseries.error || platforms.error;
-
-  const hasAnyData = (overview.data?.spend ?? 0) > 0;
-  const hasNoCampaigns =
-    !campaigns.loading &&
-    (campaigns.data?.total ?? 0) === 0 &&
-    !overview.loading &&
-    (overview.data?.spend ?? 0) === 0;
-
-  // Conditional AI insight message based on real metrics.
-  const aiInsight = useMemo<string | null>(() => {
-    const o = overview.data;
-    if (!o || o.spend <= 0) return null;
-    if (o.changes.spend > 20) {
-      return `Spend is up ${Math.round(o.changes.spend)}% vs the previous period — monitor ROAS closely to avoid overspending.`;
-    }
-    if (o.roas > 3) {
-      return `Great ROAS at ${o.roas.toFixed(2)}x. Consider scaling budget on your best-performing campaigns.`;
-    }
-    if (o.roas < 2) {
-      return `ROAS is ${o.roas.toFixed(2)}x — below the 2x healthy mark. AI recommends pausing underperformers and reallocating budget.`;
-    }
-    return `Your campaigns are running steadily at ${o.roas.toFixed(2)}x ROAS. Sync ad accounts for the latest data.`;
-  }, [overview.data]);
-
-  // Build SpendChart data by zipping spend + roas timeseries on date.
-  const chartData = useMemo<SpendChartPoint[]>(() => {
-    const spendByDate = new Map(
-      (timeseries.data ?? []).map((p) => [p.date, p.value])
-    );
-    const roasByDate = new Map(
-      (roasSeries.data ?? []).map((p) => [p.date, p.value])
-    );
-    const dates = Array.from(
-      new Set<string>([...spendByDate.keys(), ...roasByDate.keys()])
-    ).sort();
-    return dates.map((date) => ({
-      date,
-      spend: spendByDate.get(date) ?? 0,
-      roas: roasByDate.get(date) ?? 0,
-    }));
-  }, [timeseries.data, roasSeries.data]);
-
-  const totalSpendSparkline = useMemo(
-    () => (timeseries.data ?? []).slice(-7).map((p) => p.value),
-    [timeseries.data]
-  );
-
-  return (
-    <div className="space-y-6">
-      {/* ── Page Header ── */}
-      <header className="flex flex-wrap items-end justify-between gap-3 animate-in stagger-1">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 lg:text-3xl">
-            {timeBasedGreeting()}
-            {user?.firstName ? `, ${user.firstName}` : ""}{" "}
-            <span aria-hidden>👋</span>
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Here&apos;s what&apos;s happening with your campaigns today.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 shadow-card">
-          <RefreshCw className="h-3.5 w-3.5 text-slate-400" />
-          <span>
-            {hasAnyData ? (
-              <>
-                Last synced{" "}
-                <span className="font-semibold text-slate-700">
-                  just now
-                </span>
-              </>
-            ) : (
-              <span className="font-semibold text-slate-700">
-                Never synced
-              </span>
-            )}
-          </span>
-          <span className="h-3 w-px bg-slate-200" />
-          <span className="font-medium text-slate-500">
-            {new Date().toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })}
-          </span>
-        </div>
-      </header>
-
-      {/* ── AI Insight Banner ── (only if real data) */}
-      {hasAnyData && aiInsight && (
-        <section className="animate-in stagger-2">
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-brand p-5 shimmer-overlay">
-            <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 backdrop-blur">
-                  <Sparkles
-                    className="h-5 w-5 text-white"
-                    strokeWidth={2.5}
-                  />
-                </div>
-                <div className="text-white">
-                  <div className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider backdrop-blur">
-                    Advertix AI Insight
-                  </div>
-                  <p className="mt-1.5 max-w-2xl text-sm font-medium leading-snug text-white/95 sm:text-[15px]">
-                    {aiInsight}{" "}
-                    <Link
-                      href="/ai-planner"
-                      className="underline underline-offset-2"
-                    >
-                      Open AI Planner →
-                    </Link>
-                  </p>
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-3">
-                <Link
-                  href="/ai-planner"
-                  className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-primary-700 shadow-md transition hover:-translate-y-0.5 hover:shadow-lg"
-                >
-                  Open AI Planner
-                </Link>
-              </div>
-            </div>
-            <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-white/10 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-16 left-1/3 h-40 w-40 rounded-full bg-fuchsia-300/20 blur-3xl" />
-          </div>
-        </section>
-      )}
-
-      {/* ── Metric Cards ── */}
-      <section className="grid grid-cols-1 gap-5 animate-in stagger-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-6">
-        {overview.loading ? (
-          <>
-            <SkeletonMetricCard />
-            <SkeletonMetricCard />
-            <SkeletonMetricCard />
-            <SkeletonMetricCard />
-          </>
-        ) : overview.data ? (
-          <>
-            <MetricCard
-              title="Total Spend"
-              value={fmtMoney(overview.data.spend)}
-              change={overview.data.changes.spend}
-              changeLabel="vs prev period"
-              icon={DollarSign}
-              iconColor="#059669"
-              iconBg="rgba(16, 185, 129, 0.12)"
-              trend={trend(overview.data.changes.spend)}
-              prefix="$"
-              sparklineData={totalSpendSparkline}
-            />
-            <MetricCard
-              title="Total Revenue"
-              value={fmtMoney(overview.data.revenue)}
-              change={overview.data.changes.revenue}
-              changeLabel="vs prev period"
-              icon={TrendingUp}
-              iconColor="#2563eb"
-              iconBg="rgba(59, 130, 246, 0.12)"
-              trend={trend(overview.data.changes.revenue)}
-              prefix="$"
-              sparklineData={totalSpendSparkline.map((v) => v * 3)}
-            />
-            <MetricCard
-              title="Avg ROAS"
-              value={overview.data.roas.toFixed(2)}
-              change={overview.data.changes.roas}
-              changeLabel="vs prev period"
-              icon={Zap}
-              iconColor="#7c3aed"
-              iconBg="rgba(139, 92, 246, 0.12)"
-              trend={trend(overview.data.changes.roas)}
-              suffix="x"
-              sparklineData={(roasSeries.data ?? [])
-                .slice(-7)
-                .map((p) => p.value)}
-            />
-            <MetricCard
-              title="Active Campaigns"
-              value={String(campaigns.data?.total ?? 0)}
-              change={0}
-              changeLabel="now serving"
-              icon={Megaphone}
-              iconColor="#ea580c"
-              iconBg="rgba(249, 115, 22, 0.12)"
-              trend="neutral"
-            />
-          </>
-        ) : (
-          <div className="col-span-full text-sm text-rose-600">
-            Couldn&apos;t load metrics — {overview.error}
-          </div>
-        )}
-      </section>
-
-      {/* ── Welcome empty state (first-time user, no campaigns at all) ── */}
-      {hasNoCampaigns ? (
-        <section className="animate-in stagger-4">
-          <EmptyState
-            icon={Rocket}
-            title={`Welcome to Advertix${user?.firstName ? `, ${user.firstName}` : ""}! 👋`}
-            description="Connect your first ad account to start syncing campaigns and seeing real performance metrics here."
-            action={{
-              label: "Connect Ad Account",
-              onClick: () => router.push("/settings?tab=integrations"),
-              icon: ArrowRight,
-            }}
-            secondaryAction={{
-              label: "Or plan a campaign with AI",
-              href: "/ai-planner",
-            }}
-          />
-        </section>
-      ) : (
-      <>
-      {/* ── Charts ── */}
-      <section className="grid grid-cols-1 gap-6 animate-in stagger-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          {loading ? (
-            <SkeletonChartCard />
-          ) : chartData.length === 0 ? (
-            <EmptyState
-              icon={BarChart3}
-              title="No spend data yet"
-              description="Connect your ad accounts and sync to see your spend trend."
-              action={{
-                label: "Connect Ad Account",
-                onClick: () =>
-                  router.push("/settings?tab=integrations"),
-              }}
-              compact
-            />
-          ) : (
-            <SpendChart data={chartData} showRangeTabs={false} />
-          )}
-        </div>
-        <div className="lg:col-span-1">
-          {loading ? (
-            <SkeletonChartCard height={336} />
-          ) : (
-            <PlatformBreakdown data={platforms.data ?? []} />
-          )}
-        </div>
-      </section>
-
-      {/* ── Active Campaigns ── */}
-      <section className="animate-in stagger-5">
-        <ActiveCampaignsCard
-          loading={campaigns.loading}
-          campaigns={campaigns.data?.campaigns ?? []}
-          total={campaigns.data?.total ?? 0}
-          onConnect={() => router.push("/settings?tab=integrations")}
-        />
-      </section>
-
-      {/* ── Bottom Row ── */}
-      <section className="grid grid-cols-1 gap-6 animate-in stagger-6 lg:grid-cols-2">
-        <RecentInsightsCard />
-
-        <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
-          <div className="mb-4">
-            <h3 className="text-base font-bold text-slate-900">
-              Quick Actions
-            </h3>
-            <p className="text-xs text-slate-500">
-              Jump straight into your most-used workflows
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {QUICK_ACTIONS.map((a) => (
-              <Link
-                key={a.label}
-                href={a.href}
-                className="group relative overflow-hidden rounded-xl border border-slate-200 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md"
-                style={{ background: a.bg }}
-              >
-                <div
-                  className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl ring-1 ring-inset transition group-hover:scale-110"
-                  style={{
-                    backgroundColor: "white",
-                    color: a.color,
-                    boxShadow: `0 0 0 1px ${a.color}40`,
-                  }}
-                >
-                  <a.icon className="h-4 w-4" strokeWidth={2.25} />
-                </div>
-                <div className="text-sm font-bold text-slate-900">
-                  {a.label}
-                </div>
-                <div className="text-[11px] text-slate-500">{a.sub}</div>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="animate-in stagger-6">
-        <BudgetOptimizerWidget />
-      </section>
-      </>
-      )}
-
-      {hasError && !loading && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-medium text-rose-700">
-          Some data couldn&apos;t be loaded. Refresh the page or check that the
-          API server is running.
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─────────────────────────────── */
-/* Recent AI Insights card          */
-/* ─────────────────────────────── */
-
-const INSIGHT_ICON: Record<Insight["type"], { icon: typeof Sparkles; color: string; bg: string }> = {
-  OPPORTUNITY: { icon: TrendingUp, color: "#10b981", bg: "rgba(16,185,129,0.12)" },
-  WARNING: { icon: Sparkles, color: "#f59e0b", bg: "rgba(245,158,11,0.12)" },
-  OPTIMIZATION: { icon: Sparkles, color: "#6366f1", bg: "rgba(99,102,241,0.12)" },
-  ALERT: { icon: Sparkles, color: "#ef4444", bg: "rgba(239,68,68,0.12)" },
-};
-
-function RecentInsightsCard() {
-  const router = useRouter();
-  const q = useApi<{ insights: Insight[]; lastGeneratedAt: string | null }>(
-    (c) => c.getInsights(),
-    []
-  );
-  const api = useApiClient();
-  const [generating, setGenerating] = useState(false);
-  const top = (q.data?.insights ?? []).slice(0, 3);
-
-  async function runAnalysis() {
-    setGenerating(true);
-    try {
-      await api.generateInsights();
-    } catch {
-      // ignore — the insights page surfaces errors
-    } finally {
-      setGenerating(false);
-      router.push("/insights");
-    }
+/** Last `n` UTC calendar days, oldest first, as YYYY-MM-DD. */
+function lastDays(n: number) {
+  const out: string[] = [];
+  const d = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - i));
+    out.push(x.toISOString().slice(0, 10));
   }
-
-  return (
-    <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white">
-            <Sparkles className="h-3.5 w-3.5" strokeWidth={2.5} />
-          </span>
-          <div>
-            <h3 className="text-base font-bold text-slate-900">Recent AI Insights</h3>
-            <p className="text-xs text-slate-500">Data-driven observations from your campaigns</p>
-          </div>
-        </div>
-        <Link href="/insights" className="text-xs font-semibold text-primary hover:underline">
-          View all →
-        </Link>
-      </div>
-
-      {q.loading ? (
-        <div className="space-y-2">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-12 animate-pulse rounded-xl bg-slate-100" />
-          ))}
-        </div>
-      ) : top.length > 0 ? (
-        <ul className="space-y-1">
-          {top.map((ins) => {
-            const m = INSIGHT_ICON[ins.type];
-            return (
-              <li key={ins.id}>
-                <Link
-                  href="/insights"
-                  className="group flex items-start gap-3 rounded-xl p-2.5 transition hover:bg-slate-50"
-                >
-                  <div
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-                    style={{ backgroundColor: m.bg, color: m.color }}
-                  >
-                    <m.icon className="h-4 w-4" strokeWidth={2.25} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-slate-900">{ins.title}</p>
-                    <p className="line-clamp-2 text-xs text-slate-500">{ins.message}</p>
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <div className="flex flex-col items-center gap-2 py-5 text-center">
-          <p className="text-xs text-slate-500">No insights yet — let AI analyze your campaigns.</p>
-          <button
-            type="button"
-            onClick={runAnalysis}
-            disabled={generating}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-white transition hover:bg-primary/90 disabled:opacity-60"
-          >
-            {generating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" strokeWidth={2.5} />}
-            Run AI Analysis
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  return out;
 }
 
-/* ─────────────────────────────── */
-/* AI Budget Optimizer widget       */
-/* ─────────────────────────────── */
+const pct = (c: number, p: number) => (p > 0 ? ((c - p) / p) * 100 : null);
 
-function BudgetOptimizerWidget() {
-  const q = useApi<BudgetRecommendationRow | null>(
-    (c) => c.getLatestRecommendation(),
-    []
-  );
-  const rec = q.data;
-  const items = rec?.recommendations ?? [];
-  const top = [...items].sort((a, b) => a.priority - b.priority).slice(0, 2);
+/** KPI deltas from the previous-period totals; falls back to the API's % changes on older API builds. */
+function kpiDeltas(o: AnalyticsOverview) {
+  const p = o.previous;
+  if (!p) {
+    return { spend: o.changes.spend, revenue: o.changes.revenue, roas: null, conversions: o.changes.conversions, cpa: null };
+  }
+  const prevRoas = p.spend > 0 ? p.revenue / p.spend : null;
+  const cpa = o.conversions > 0 ? o.spend / o.conversions : null;
+  const prevCpa = p.conversions > 0 ? p.spend / p.conversions : null;
+  return {
+    spend: pct(o.spend, p.spend),
+    revenue: pct(o.revenue, p.revenue),
+    roas: prevRoas !== null && o.spend > 0 ? o.roas - prevRoas : null,
+    conversions: pct(o.conversions, p.conversions),
+    cpa: cpa !== null && prevCpa !== null ? pct(cpa, prevCpa) : null,
+  };
+}
+
+export default function OverviewPage() {
+  const { user } = useUser();
+  const { clientId, client, clients, hasMultiple } = useClientScope();
+  const [connectOpen, setConnectOpen] = useState(false);
+
+  const me = useApi((c) => c.getMe(), [], { key: "me" });
+  const accounts = useApi((c) => c.getAdAccounts(), [], { key: "ad-accounts" });
+  const overview = useApi((c) => c.getAnalyticsOverview(DAYS, undefined, clientId), [clientId], { key: "overview" });
+  const spendTs = useApi((c) => c.getTimeseries(DAYS, "spend", undefined, clientId), [clientId], { key: "ts-spend" });
+  const revenueTs = useApi((c) => c.getTimeseries(DAYS, "revenue", undefined, clientId), [clientId], { key: "ts-revenue" });
+  const convTs = useApi((c) => c.getTimeseries(DAYS, "conversions", undefined, clientId), [clientId], { key: "ts-conversions" });
+  const live = useApi((c) => c.getCampaigns({ status: "ACTIVE", limit: 1, clientId: clientId ?? undefined }), [clientId], {
+    key: "campaigns-live-count",
+  });
+
+  // Accounts in scope decide the display currency.
+  const scopedAccounts = (accounts.data ?? []).filter((a) => a.isActive && (!clientId || a.clientId === clientId));
+  const currencies = Array.from(new Set(scopedAccounts.map((a) => a.currency).filter((c): c is string => !!c)));
+  const currency = currencies[0] ?? null;
+  const lastSync = scopedAccounts
+    .map((a) => a.lastSyncedAt)
+    .filter((t): t is string => !!t)
+    .sort()
+    .pop();
+
+  const days = useMemo<DayPoint[]>(() => {
+    const index = (pts: TimeseriesPoint[] | null) => new Map((pts ?? []).map((p) => [p.date, p.value]));
+    const s = index(spendTs.data);
+    const r = index(revenueTs.data);
+    return lastDays(DAYS).map((date) => ({ date, spend: s.get(date) ?? 0, revenue: r.get(date) ?? 0 }));
+  }, [spendTs.data, revenueTs.data]);
+
+  const sparks = useMemo(() => {
+    const conv = new Map((convTs.data ?? []).map((p) => [p.date, p.value]));
+    const recent = days.slice(-SPARK_DAYS).map((d) => ({ ...d, conv: conv.get(d.date) ?? 0 }));
+    return {
+      spend: recent.map((d) => d.spend),
+      revenue: recent.map((d) => d.revenue),
+      roas: recent.map((d) => (d.spend > 0 ? d.revenue / d.spend : 0)),
+      conversions: recent.map((d) => d.conv),
+      cpa: recent.map((d) => (d.conv > 0 ? d.spend / d.conv : 0)),
+    };
+  }, [days, convTs.data]);
+
+  const o = overview.data;
+  const deltas = o ? kpiDeltas(o) : null;
+  const money = (n: number) => fmtMoney(n, currency, { whole: true });
+  const kpiLoading = overview.loading;
+  const seriesLoading = spendTs.loading || revenueTs.loading;
+
+  const noAccounts = !accounts.loading && !accounts.error && (accounts.data ?? []).filter((a) => a.isActive).length === 0;
+  const firstName = user?.firstName ?? me.data?.user?.name?.split(" ")[0];
+  const now = new Date();
+  const scopeTitle = client ? client.name : hasMultiple ? "All clients" : me.data?.workspace?.name ?? "Your workspace";
+  const liveCount = live.data?.total;
+  const summary = [
+    client?.vertical,
+    !client && hasMultiple ? `${clients.length} clients` : null,
+    liveCount !== undefined ? `${liveCount} campaign${liveCount === 1 ? "" : "s"} live` : null,
+    client
+      ? `${client.platforms.length} platform${client.platforms.length === 1 ? "" : "s"}`
+      : scopedAccounts.length
+        ? `${scopedAccounts.length} ad account${scopedAccounts.length === 1 ? "" : "s"}${lastSync ? ` synced ${timeAgo(lastSync)}` : ""}`
+        : null,
+    currencies.length > 1 ? `totals mix ${currencies.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <div className="rounded-2xl border border-slate-200/70 bg-white p-5 shadow-card">
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white">
-            <Sparkles className="h-3.5 w-3.5" strokeWidth={2.5} />
+    <>
+      <PageHeader
+        kicker={
+          <span suppressHydrationWarning>
+            {now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })} · {scopeTitle}
           </span>
-          <div>
-            <h3 className="text-base font-bold text-slate-900">
-              AI Budget Recommendation
-            </h3>
-            <p className="text-xs text-slate-500">
-              {rec
-                ? `Last analyzed ${new Date(rec.createdAt).toLocaleDateString()}`
-                : "Reallocate spend toward your best-performing campaigns"}
-            </p>
-          </div>
-        </div>
-        <Link
-          href="/budget-optimizer"
-          className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
-        >
-          Open <ArrowRight className="h-3 w-3" />
-        </Link>
-      </div>
-
-      {q.loading ? (
-        <div className="h-20 animate-pulse rounded-xl bg-slate-100" />
-      ) : rec && top.length > 0 ? (
-        <div className="space-y-2">
-          {top.map((r) => (
-            <div
-              key={r.campaignId}
-              className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2"
-            >
-              <span className="truncate text-sm font-semibold text-slate-800">
-                {r.campaignName}
-              </span>
-              <span
-                className={clsx(
-                  "shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold",
-                  r.action === "INCREASE"
-                    ? "bg-emerald-50 text-emerald-700"
-                    : r.action === "PAUSE"
-                      ? "bg-rose-50 text-rose-700"
-                      : r.action === "DECREASE"
-                        ? "bg-amber-50 text-amber-700"
-                        : "bg-slate-100 text-slate-600"
-                )}
-              >
-                {r.action === "PAUSE"
-                  ? "Pause"
-                  : `${fmtMoneyCur(r.recommendedBudget, rec.currency)}/day`}
-              </span>
+        }
+        title={
+          <span suppressHydrationWarning>
+            {greeting(now)}
+            {firstName ? `, ${firstName}` : ""}
+          </span>
+        }
+        summary={summary || undefined}
+        actions={
+          <>
+            {/* TODO(D6): report export. Visibly unavailable until then. */}
+            <Button variant="secondary" icon={<Download size={16} />} disabled title="Report export is coming soon">
+              Export report
+            </Button>
+            <ButtonLink href="/campaigns/new" variant="primary" icon={<Plus size={16} strokeWidth={2.5} />}>
+              New campaign
+            </ButtonLink>
+          </>
+        }
+      />
+      <PageBody>
+        {noAccounts ? (
+          <Card className="flex flex-col items-start gap-3 p-8">
+            <span className="text-lg font-semibold">Welcome to Advertix{firstName ? `, ${firstName}` : ""}</span>
+            <span className="max-w-xl text-ink-2">
+              Connect your first ad account to sync campaigns. Spend, revenue and Advertix suggestions show up here after the first sync.
+            </span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button variant="primary" onClick={() => setConnectOpen(true)}>
+                Connect an ad account
+              </Button>
+              <ButtonLink href="/ai-planner" variant="secondary" icon={<Sparkles size={16} />}>
+                Plan a campaign with AI
+              </ButtonLink>
             </div>
-          ))}
-          <Link
-            href="/budget-optimizer"
-            className="mt-1 inline-block text-xs font-semibold text-primary hover:underline"
-          >
-            View all {items.length} recommendation{items.length === 1 ? "" : "s"} →
-          </Link>
-        </div>
-      ) : (
-        <div className="flex flex-col items-center gap-2 py-4 text-center">
-          <p className="text-xs text-slate-500">
-            No analysis yet — let AI review your campaign budgets.
-          </p>
-          <Link
-            href="/budget-optimizer"
-            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-white transition hover:bg-primary/90"
-          >
-            <Sparkles className="h-3.5 w-3.5" strokeWidth={2.5} />
-            Run AI Budget Analysis
-          </Link>
-        </div>
-      )}
-    </div>
-  );
-}
+            <ConnectModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+          </Card>
+        ) : (
+          <>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-4">
+              <KpiCard label="Spend" loading={kpiLoading} value={o ? money(o.spend) : "—"} delta={deltas?.spend} spark={sparks.spend} />
+              <KpiCard label="Revenue" loading={kpiLoading} value={o ? money(o.revenue) : "—"} delta={deltas?.revenue} spark={sparks.revenue} />
+              <KpiCard
+                label="ROAS"
+                loading={kpiLoading}
+                value={o && o.spend > 0 ? `${o.roas.toFixed(2)}x` : "—"}
+                delta={deltas?.roas}
+                deltaFormat={(v) => Math.abs(v).toFixed(2)}
+                spark={sparks.roas}
+              />
+              <KpiCard
+                label="Conversions"
+                loading={kpiLoading}
+                value={o ? o.conversions.toLocaleString("en-US") : "—"}
+                delta={deltas?.conversions}
+                spark={sparks.conversions}
+              />
+              <KpiCard
+                label="Cost / conversion"
+                loading={kpiLoading}
+                value={o && o.conversions > 0 ? fmtMoney(o.spend / o.conversions, currency) : "—"}
+                delta={deltas?.cpa}
+                higherIsBetter={false}
+                spark={sparks.cpa}
+              />
+            </div>
+            {overview.error && (
+              <p role="alert" className="-mt-2 text-sm text-neg">
+                Couldn’t load the last 30 days.{" "}
+                <button type="button" className="font-semibold underline underline-offset-2" onClick={() => void overview.refetch()}>
+                  Try again
+                </button>
+              </p>
+            )}
 
-/* ─────────────────────────────── */
-/* Active Campaigns sub-component   */
-/* ─────────────────────────────── */
+            <div className="flex flex-wrap items-start gap-4">
+              <SpendRevenueChart days={days} currency={currency} loading={seriesLoading} className="min-w-0 flex-[1.7_1_520px]" />
+              <div className="min-w-0 flex-[1_1_300px]">
+                <OverviewSuggestions />
+              </div>
+            </div>
 
-function ActiveCampaignsCard({
-  loading,
-  campaigns,
-  total,
-  onConnect,
-}: {
-  loading: boolean;
-  campaigns: Campaign[];
-  total: number;
-  onConnect: () => void;
-}) {
-  return (
-    <section className="rounded-2xl border border-slate-200/70 bg-white shadow-card">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
-        <div>
-          <h3 className="text-base font-bold text-slate-900">
-            Active Campaigns
-          </h3>
-          <p className="text-xs text-slate-500">
-            Latest 5 active campaigns across all platforms
-          </p>
-        </div>
-        <Link
-          href="/campaigns"
-          className="text-sm font-semibold text-primary hover:underline"
-        >
-          View All →
-        </Link>
-      </div>
-
-      {loading ? (
-        <div className="space-y-2 p-5">
-          {[0, 1, 2, 3, 4].map((i) => (
-            <SkeletonCard key={i} className="h-14" />
-          ))}
-        </div>
-      ) : campaigns.length === 0 ? (
-        <EmptyState
-          icon={Megaphone}
-          title="No campaigns yet"
-          description="Connect your ad accounts and sync to see your campaigns here."
-          action={{
-            label: "Connect Ad Account",
-            onClick: onConnect,
-            icon: ArrowRight,
-          }}
-          secondaryAction={{ label: "Browse campaigns", href: "/campaigns" }}
-          compact
-          className="m-5"
-        />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                <th className="px-5 py-3">Name</th>
-                <th className="py-3">Platform</th>
-                <th className="py-3">Status</th>
-                <th className="py-3">Budget</th>
-                <th className="py-3">Last spend</th>
-                <th className="py-3">ROAS</th>
-                <th className="px-5 py-3 text-right">View</th>
-              </tr>
-            </thead>
-            <tbody>
-              {campaigns.map((c) => {
-                const latest = c.metrics?.[0];
-                const spend = latest ? Number(latest.spend) : 0;
-                const roas = latest ? Number(latest.roas) : 0;
-                return (
-                  <tr
-                    key={c.id}
-                    className="border-t border-slate-50 transition hover:bg-slate-50/60"
-                  >
-                    <td className="max-w-[220px] px-5 py-3.5">
-                      <Link
-                        href={`/campaigns/${c.id}`}
-                        className="block truncate text-sm font-semibold text-slate-900 hover:text-primary"
-                      >
-                        {c.name}
-                      </Link>
-                      <div className="truncate text-xs text-slate-500">
-                        {c.objective}
-                      </div>
-                    </td>
-                    <td className="py-3.5 text-xs font-semibold uppercase text-slate-600">
-                      {c.platform}
-                    </td>
-                    <td className="py-3.5">
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="status-dot active" />
-                        <span className="text-xs font-semibold text-emerald-700">
-                          {c.status}
-                        </span>
-                      </span>
-                    </td>
-                    <td className="py-3.5 text-xs font-medium text-slate-700">
-                      ${Number(c.budget).toLocaleString()}
-                    </td>
-                    <td className="py-3.5 text-xs font-medium text-slate-700">
-                      {latest ? `$${spend.toLocaleString()}` : "—"}
-                    </td>
-                    <td className="py-3.5">
-                      <span
-                        className={clsx(
-                          "text-sm font-bold",
-                          roas === 0
-                            ? "text-slate-400"
-                            : roas >= 2
-                              ? "text-emerald-600"
-                              : "text-amber-600"
-                        )}
-                      >
-                        {roas === 0 ? "—" : `${roas.toFixed(2)}x`}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <Link
-                        href={`/campaigns/${c.id}`}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
-                      >
-                        Open
-                        <ArrowRight className="h-3 w-3" />
-                      </Link>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {total > campaigns.length && (
-        <div className="border-t border-slate-100 px-5 py-3 text-right text-xs text-slate-500">
-          Showing {campaigns.length} of {total} active campaigns —{" "}
-          <Link
-            href="/campaigns?status=ACTIVE"
-            className="font-semibold text-primary hover:underline"
-          >
-            view all
-          </Link>
-        </div>
-      )}
-    </section>
+            {hasMultiple && !clientId && <ClientsPacingTable currency={currency} />}
+          </>
+        )}
+      </PageBody>
+    </>
   );
 }

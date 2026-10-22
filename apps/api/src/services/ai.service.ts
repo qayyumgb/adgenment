@@ -363,6 +363,16 @@ What to look for:
 
 Use the EXACT campaign names from the input. Money figures are in the currency stated in the data — do NOT convert or add "$" unless the data is in USD.`;
 
+const ASK_SYSTEM_PROMPT = `You are Advertix, answering a marketer's questions about ONE ad campaign.
+
+Rules:
+- Use ONLY the campaign data provided below. Never invent metrics, benchmarks presented as facts, or numbers that aren't in the data.
+- If the data can't answer the question (for example there is no ad set, ad, audience or creative breakdown yet), say so plainly and suggest what to check instead.
+- Quote real numbers with the currency code from the data. Do not convert currencies.
+- Be concise: at most about 120 words. Plain text; short paragraphs or up to 4 "- " bullets. No headings, no markdown tables.
+- You cannot change the campaign. Never say you have changed, paused or adjusted anything; recommend instead.
+- Days with zero spend may simply be days the campaign wasn't running.`;
+
 class AIService {
   private async callAnthropic(
     system: string,
@@ -578,6 +588,16 @@ class AIService {
    * JSON object string `{ "insights": [...] }`; the caller parses + persists.
    * Only called when there is real data to analyze.
    */
+  /**
+   * Free-text answer about one campaign (Campaign detail, "Ask about this
+   * campaign"). `context` is the campaign's JSON snapshot; `messages` is the
+   * conversation so far, ending with the user's question.
+   */
+  async askAboutCampaign(context: string, messages: ChatTurn[]): Promise<{ answer: string; tokensUsed: number }> {
+    const { text, tokensUsed } = await this.callAnthropicChat(`${ASK_SYSTEM_PROMPT}\n\nCAMPAIGN DATA (JSON):\n${context}`, messages, 700);
+    return { answer: text, tokensUsed };
+  }
+
   async generateInsights(
     userMessage: string
   ): Promise<{ json: string; tokensUsed: number }> {

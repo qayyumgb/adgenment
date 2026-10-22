@@ -10,6 +10,7 @@
 import { Prisma, type Insight, type InsightType } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { aiService } from "./ai.service";
+import { suggestionsService } from "./suggestions.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const INSIGHT_TTL_MS = 7 * DAY_MS;
@@ -204,6 +205,7 @@ class InsightsService {
       data: { lastInsightGeneratedAt: new Date() },
     });
 
+    await suggestionsService.syncFromInsights(workspaceId);
     return this.getInsights(workspaceId);
   }
 
@@ -226,29 +228,35 @@ class InsightsService {
   async dismissInsight(id: string, workspaceId: string): Promise<Insight> {
     const found = await prisma.insight.findFirst({ where: { id, workspaceId } });
     if (!found) throw new Error("INSIGHT_NOT_FOUND");
-    return prisma.insight.update({
+    const updated = await prisma.insight.update({
       where: { id },
       data: { status: "DISMISSED", dismissedAt: new Date() },
     });
+    await suggestionsService.syncFromInsights(workspaceId);
+    return updated;
   }
 
   async applyInsight(id: string, workspaceId: string): Promise<Insight> {
     const found = await prisma.insight.findFirst({ where: { id, workspaceId } });
     if (!found) throw new Error("INSIGHT_NOT_FOUND");
-    return prisma.insight.update({
+    const updated = await prisma.insight.update({
       where: { id },
       data: { status: "APPLIED", appliedAt: new Date() },
     });
+    await suggestionsService.syncFromInsights(workspaceId);
+    return updated;
   }
 
   /** Restore a dismissed insight back to ACTIVE. */
   async restoreInsight(id: string, workspaceId: string): Promise<Insight> {
     const found = await prisma.insight.findFirst({ where: { id, workspaceId } });
     if (!found) throw new Error("INSIGHT_NOT_FOUND");
-    return prisma.insight.update({
+    const updated = await prisma.insight.update({
       where: { id },
       data: { status: "ACTIVE", dismissedAt: null },
     });
+    await suggestionsService.syncFromInsights(workspaceId);
+    return updated;
   }
 
   getDismissed(workspaceId: string): Promise<Insight[]> {

@@ -616,15 +616,22 @@ class MetaAdsService {
    * Objective is deliberately absent: Meta won't let you change a campaign's
    * objective after creation, so an "edit" that appears to change it has to be
    * a new campaign.
+   *
+   * `dailyBudget` is only for campaigns that carry their own budget (campaign
+   * budget optimisation, typically created in Ads Manager and synced). Our own
+   * publishes keep the budget on the ad set — use updateAdSet for those.
    */
   async updateCampaign(
     accessToken: string,
     metaCampaignId: string,
-    fields: { name?: string; status?: "ACTIVE" | "PAUSED" }
+    fields: { name?: string; status?: "ACTIVE" | "PAUSED"; dailyBudget?: number }
   ): Promise<{ success: boolean }> {
     const body = new URLSearchParams({ access_token: accessToken });
     if (fields.name) body.set("name", fields.name);
     if (fields.status) body.set("status", fields.status);
+    if (fields.dailyBudget !== undefined) {
+      body.set("daily_budget", String(Math.round(fields.dailyBudget * 100)));
+    }
     // Nothing to send — don't burn a call (or a rate-limit slot) on a no-op.
     if ([...body.keys()].length <= 1) return { success: true };
 
@@ -1147,6 +1154,53 @@ class MetaAdsService {
       source: data.source ?? null,
       permalinkUrl: data.permalink_url ?? null,
     };
+  }
+
+  /**
+   * Look up ad images by hash on one ad account. Returns fresh `url`s:
+   * Meta's image URLs are signed and expire after a few days, so creatives
+   * store the stable `image_hash` and re-resolve the URL from it. Hashes
+   * are per ad account, so unknown hashes are simply absent from the map.
+   */
+  async getAdImagesByHash(
+    accessToken: string,
+    adAccountId: string,
+    hashes: string[]
+  ): Promise<Map<string, { url: string | null; permalinkUrl: string | null }>> {
+    const out = new Map<string, { url: string | null; permalinkUrl: string | null }>();
+    const accountPath = this.accountPath(adAccountId);
+    for (let i = 0; i < hashes.length; i += 50) {
+      const chunk = hashes.slice(i, i + 50);
+      const url =
+        `${GRAPH_BASE}/${accountPath}/adimages` +
+        `?hashes=${encodeURIComponent(JSON.stringify(chunk))}` +
+        `&fields=hash,url,permalink_url` +
+        `&access_token=${encodeURIComponent(accessToken)}`;
+      const rows = await this.graphFetchAll<{ hash?: string; url?: string; permalink_url?: string }>(url);
+      for (const r of rows) {
+        if (r.hash) out.set(r.hash, { url: r.url ?? null, permalinkUrl: r.permalink_url ?? null });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Fresh poster-image URLs for several videos in one request (`?ids=`).
+   * Like image URLs, video `picture` URLs expire, so they're re-fetched.
+   */
+  async getVideoPictures(accessToken: string, videoIds: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    for (let i = 0; i < videoIds.length; i += 50) {
+      const chunk = videoIds.slice(i, i + 50);
+      const url =
+        `${GRAPH_BASE}/?ids=${encodeURIComponent(chunk.join(","))}` +
+        `&fields=picture&access_token=${encodeURIComponent(accessToken)}`;
+      const data = await this.graphFetch<Record<string, { picture?: string }>>(url);
+      for (const [id, v] of Object.entries(data)) {
+        if (v?.picture) out.set(id, v.picture);
+      }
+    }
+    return out;
   }
 
   /**

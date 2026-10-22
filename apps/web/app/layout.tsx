@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -50,10 +52,15 @@ export default function RootLayout({
 }) {
   return (
     <ClerkProvider>
-      {/* suppressHydrationWarning: the marketing layout's inline script adds
-          the `mk-motion` class to <html> before hydration. */}
-      <html lang="en" className="h-full" suppressHydrationWarning>
-        <body className="h-full bg-white text-slate-900 dark:bg-dark-bg dark:text-slate-100">
+      {/* suppressHydrationWarning: inline scripts add classes to <html>
+          before hydration (`mk-motion` on marketing, `dark` in the app). */}
+      <html
+        lang="en"
+        className={`h-full ${GeistSans.variable} ${GeistMono.variable}`}
+        suppressHydrationWarning
+      >
+        {/* Body colours and font come from the tokens in globals.css. */}
+        <body className="h-full">
           {children}
         </body>
       </html>

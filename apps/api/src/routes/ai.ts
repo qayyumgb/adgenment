@@ -245,7 +245,142 @@ router.post(
   }
 );
 
-router.post("/generate-copy", async (req: Request, res: Response) => {
+/* ── Ask about this campaign (plan B5) ────────────────────────────────────── */
+
+const ASK_PER_HOUR = 30;
+const askTimestamps = new Map<string, number[]>();
+
+/** Per-workspace hourly cap on campaign questions (each one is an LLM call). */
+function takeAskSlot(workspaceId: string): { ok: boolean; resetSeconds?: number } {
+  const now = Date.now();
+  const recent = (askTimestamps.get(workspaceId) ?? []).filter((t) => now - t < HOUR_MS);
+  if (recent.length >= ASK_PER_HOUR) {
+    return { ok: false, resetSeconds: Math.ceil((recent[0] + HOUR_MS - now) / 1000) };
+  }
+  recent.push(now);
+  askTimestamps.set(workspaceId, recent);
+  return { ok: true };
+}
+
+/** Earlier turns from the client: alternating user / assistant, last 6, bounded size. */
+function parseAskHistory(raw: unknown): ChatTurn[] {
+  if (!Array.isArray(raw)) return [];
+  const turns = raw
+    .filter(
+      (t): t is ChatTurn =>
+        !!t &&
+        typeof t === "object" &&
+        ((t as ChatTurn).role === "user" || (t as ChatTurn).role === "assistant") &&
+        typeof (t as ChatTurn).content === "string" &&
+        (t as ChatTurn).content.trim().length > 0
+    )
+    .map((t) => ({ role: t.role, content: t.content.slice(0, 2000) }))
+    .slice(-6);
+  // The Messages API needs strict alternation starting with "user".
+  const out: ChatTurn[] = [];
+  for (const t of turns) {
+    if (out.length === 0 && t.role !== "user") continue;
+    if (out.length && out[out.length - 1].role === t.role) continue;
+    out.push(t);
+  }
+  // The new question is appended as a user turn, so history must end on assistant.
+  while (out.length && out[out.length - 1].role === "user") out.pop();
+  return out;
+}
+
+/**
+ * POST /ai/campaigns/:id/ask  { question, history? }
+ * Answers from the campaign's own data only: settings, the last 30 days of
+ * daily metrics, week-over-week change and open suggestions.
+ */
+router.post("/campaigns/:id/ask", requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
+    if (!question) return res.status(400).json({ error: "Ask a question about this campaign." });
+    if (question.length > 500) return res.status(400).json({ error: "Keep the question under 500 characters." });
+
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: req.params.id, workspaceId: workspace.id },
+      include: {
+        adAccount: { select: { platform: true, currency: true, accountName: true } },
+        metrics: { where: { date: { gte: since } }, orderBy: { date: "asc" } },
+        suggestions: { where: { status: "OPEN" }, select: { title: true, reason: true }, take: 5 },
+      },
+    });
+    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+
+    const rate = takeAskSlot(workspace.id);
+    if (!rate.ok) {
+      return res.status(429).json({ error: `That's a lot of questions — try again in ${Math.ceil((rate.resetSeconds ?? 60) / 60)} min.` });
+    }
+
+    const daily = campaign.metrics.map((m) => ({
+      date: m.date.toISOString().slice(0, 10),
+      spend: Number(m.spend),
+      revenue: Number(m.revenue),
+      impressions: m.impressions,
+      clicks: m.clicks,
+      conversions: m.conversions,
+    }));
+    const sum = (rows: typeof daily) =>
+      rows.reduce(
+        (a, d) => ({ spend: a.spend + d.spend, revenue: a.revenue + d.revenue, impressions: a.impressions + d.impressions, clicks: a.clicks + d.clicks, conversions: a.conversions + d.conversions }),
+        { spend: 0, revenue: 0, impressions: 0, clicks: 0, conversions: 0 }
+      );
+    const ratios = (t: ReturnType<typeof sum>) => ({
+      ...t,
+      spend: +t.spend.toFixed(2),
+      revenue: +t.revenue.toFixed(2),
+      roas: t.spend > 0 ? +(t.revenue / t.spend).toFixed(2) : null,
+      ctrPct: t.impressions > 0 ? +((t.clicks / t.impressions) * 100).toFixed(2) : null,
+      cpa: t.conversions > 0 ? +(t.spend / t.conversions).toFixed(2) : null,
+    });
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const at = (d: { date: string }) => new Date(d.date).getTime();
+
+    const context = JSON.stringify({
+      campaign: {
+        name: campaign.name,
+        platform: campaign.platform,
+        account: campaign.adAccount.accountName,
+        status: campaign.status,
+        objective: campaign.objective,
+        budget: Number(campaign.budget),
+        budgetType: campaign.budgetType,
+        currency: campaign.adAccount.currency ?? "unknown",
+        startDate: campaign.startDate?.toISOString().slice(0, 10) ?? null,
+        endDate: campaign.endDate?.toISOString().slice(0, 10) ?? null,
+        reach30d: campaign.reach,
+        publishedFromAdvertix: Boolean(campaign.publishedAt),
+      },
+      last30Days: ratios(sum(daily)),
+      last7Days: ratios(sum(daily.filter((d) => at(d) >= weekAgo))),
+      previous7Days: ratios(sum(daily.filter((d) => at(d) >= twoWeeksAgo && at(d) < weekAgo))),
+      daily,
+      openSuggestions: campaign.suggestions,
+      notAvailableYet: ["ad set / ad breakdown", "audience breakdown", "creative performance", "placement breakdown"],
+    });
+
+    try {
+      const { answer } = await aiService.askAboutCampaign(context, [
+        ...parseAskHistory(req.body?.history),
+        { role: "user", content: question },
+      ]);
+      res.json({ answer, basedOn: { days: 30, daysWithData: daily.length } });
+    } catch {
+      res.status(503).json({ error: "Couldn't get an answer right now. Try again in a moment." });
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Auth required: this endpoint spends LLM tokens. It was previously public
+// (reachable directly on the API host without a session).
+router.post("/generate-copy", requireAuth, async (req: Request, res: Response) => {
   const { brief, platform, objective, kind, cardCount } = req.body ?? {};
 
   if (typeof brief !== "string" || brief.trim().length < 10) {

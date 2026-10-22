@@ -1,34 +1,26 @@
-import {
-  SkeletonMetricCard,
-  SkeletonChartCard,
-} from "@/components/ui/Skeleton";
+import { Skeleton } from "@/components/app/ui";
 
+/** Route-level skeleton for /analytics: header, 5 KPI cards, trend + share, funnel. */
 export default function AnalyticsLoading() {
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-2">
-          <div className="h-7 w-32 animate-pulse rounded bg-slate-200/70" />
-          <div className="h-4 w-72 animate-pulse rounded bg-slate-200/70" />
+    <>
+      <div className="flex flex-col gap-2 border-b border-line bg-surface px-[clamp(16px,4vw,32px)] pb-3.5 pt-3">
+        <Skeleton className="h-3 w-40" />
+        <Skeleton className="h-7 w-40" />
+        <Skeleton className="h-3.5 w-80 max-w-full" />
+      </div>
+      <div className="flex flex-col gap-5 px-[clamp(16px,4vw,32px)] pb-10 pt-6">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-[110px] rounded-card" />
+          ))}
         </div>
-        <div className="flex gap-2">
-          <div className="h-10 w-28 animate-pulse rounded-xl bg-slate-200/70" />
-          <div className="h-10 w-28 animate-pulse rounded-xl bg-slate-200/70" />
+        <div className="flex flex-wrap gap-4">
+          <Skeleton className="h-[400px] min-w-0 flex-[1.8_1_560px] rounded-card" />
+          <Skeleton className="h-[400px] min-w-0 flex-[1_1_300px] rounded-card" />
         </div>
+        <Skeleton className="h-[300px] rounded-card" />
       </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <SkeletonMetricCard key={i} />
-        ))}
-      </div>
-
-      <SkeletonChartCard height={360} />
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <SkeletonChartCard height={280} />
-        <SkeletonChartCard height={280} />
-      </div>
-    </div>
+    </>
   );
 }

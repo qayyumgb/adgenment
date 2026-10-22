@@ -3,6 +3,7 @@ import { Prisma, type AudienceType, type Platform } from "@prisma/client";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
+import { ownedOrSharedWhere, parseBodyClientId, parseClientScope } from "../lib/clients";
 
 const router = Router();
 router.use(requireAuth);
@@ -72,7 +73,11 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       Math.max(1, parseInt(String(req.query.limit ?? "48"), 10) || 48)
     );
 
-    const where: Prisma.AudienceWhereInput = { workspaceId: workspace.id };
+    const clientScope = await parseClientScope(req, workspace.id);
+    const where: Prisma.AudienceWhereInput = {
+      workspaceId: workspace.id,
+      ...ownedOrSharedWhere(clientScope),
+    };
     if (isAudienceType(type)) where.type = type;
     if (typeof search === "string" && search.trim() !== "") {
       where.name = { contains: search.trim(), mode: "insensitive" };
@@ -107,6 +112,7 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
     const workspace = await requireWorkspace(req.dbUserId!);
     const { name, description, type, platforms, targeting, aiGenerated, approxSize } =
       req.body ?? {};
+    const clientId = await parseBodyClientId(req.body?.clientId, workspace.id);
 
     if (typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ error: "name is required" });
@@ -130,6 +136,7 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
         targeting: targeting as Prisma.InputJsonValue,
         aiGenerated: aiGenerated === true,
         approxSize: normalizeApproxSize(approxSize),
+        clientId: clientId ?? null,
       },
     });
     res.status(201).json(audience);
@@ -164,6 +171,10 @@ router.put("/:id", async (req: Request, res: Response, next: NextFunction) => {
       data.targeting = targeting as Prisma.InputJsonValue;
     }
     if (approxSize !== undefined) data.approxSize = normalizeApproxSize(approxSize);
+    const clientId = await parseBodyClientId(req.body?.clientId, workspace.id);
+    if (clientId !== undefined) {
+      data.client = clientId ? { connect: { id: clientId } } : { disconnect: true };
+    }
 
     const updated = await prisma.audience.update({
       where: { id: existing.id },
@@ -221,6 +232,7 @@ router.post(
           targeting: source.targeting as Prisma.InputJsonValue,
           aiGenerated: source.aiGenerated,
           approxSize: source.approxSize,
+          clientId: source.clientId,
         },
       });
       res.status(201).json(copy);

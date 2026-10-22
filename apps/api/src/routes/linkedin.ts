@@ -56,6 +56,10 @@ router.get("/callback", async (req: Request, res: Response) => {
 
     const tokens = await linkedinService.exchangeCodeForToken(code);
     const encryptedAccess = encryptToken(tokens.access_token);
+    // Access tokens are refreshed from the refresh token, so the real deadline
+    // is the refresh token's (~1 year); fall back to the access token's.
+    const ttl = tokens.refresh_token_expires_in ?? tokens.expires_in;
+    const tokenExpiresAt = ttl > 0 ? new Date(Date.now() + ttl * 1000) : null;
     const encryptedRefresh = tokens.refresh_token
       ? encryptToken(tokens.refresh_token)
       : null;
@@ -84,6 +88,7 @@ router.get("/callback", async (req: Request, res: Response) => {
           currency: acc.currency || null,
           accessToken: encryptedAccess,
           refreshToken: encryptedRefresh,
+          tokenExpiresAt,
           isActive: acc.status === "ACTIVE",
         },
         update: {
@@ -91,6 +96,7 @@ router.get("/callback", async (req: Request, res: Response) => {
           currency: acc.currency || null,
           accessToken: encryptedAccess,
           ...(encryptedRefresh ? { refreshToken: encryptedRefresh } : {}),
+          tokenExpiresAt,
           isActive: acc.status === "ACTIVE",
         },
       });
