@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAppRouter } from "@/hooks/useAppRouter";
+import { useAccess } from "@/components/app/team/access";
 import toast from "react-hot-toast";
 import { Download, Plus, RefreshCw } from "lucide-react";
 import ConnectModal from "@/components/connect/ConnectModal";
@@ -60,6 +61,7 @@ function Kpi({ label, value, loading }: { label: string; value: string; loading:
 
 export default function CampaignsPage() {
   const router = useAppRouter();
+  const access = useAccess();
   const searchParams = useSearchParams();
   const api = useApiClient();
   const { clientId, client, clients, hasMultiple } = useClientScope();
@@ -218,13 +220,13 @@ export default function CampaignsPage() {
         summary={summary}
         actions={
           <>
-            <Button variant="secondary" icon={<RefreshCw size={16} className={syncStage ? "animate-spin motion-reduce:animate-none" : undefined} />} onClick={handleSync} disabled={!!syncStage} title="Pull the latest campaigns and metrics from Meta">
+            <Button variant="secondary" icon={<RefreshCw size={16} className={syncStage ? "animate-spin motion-reduce:animate-none" : undefined} />} onClick={handleSync} disabled={!!syncStage || !access.can("connect")} title={access.can("connect") ? "Pull the latest campaigns and metrics from Meta" : access.why("connect")}>
               {syncStage ?? "Sync now"}
             </Button>
             <Button variant="secondary" icon={<Download size={16} />} onClick={exportCsv} disabled={loading || rows.length === 0} title="Download the rows below as CSV">
               Export CSV
             </Button>
-            <Button variant="primary" icon={<Plus size={16} strokeWidth={2.5} />} onClick={() => router.push("/campaigns/new")}>
+            <Button variant="primary" icon={<Plus size={16} strokeWidth={2.5} />} onClick={() => router.push("/campaigns/new")} disabled={!access.can("edit")} title={access.can("edit") ? undefined : access.why("edit")}>
               New campaign
             </Button>
           </>

@@ -335,10 +335,19 @@ async function resolveMetaContext(
   req: Request
 ): Promise<{ token: string; accountId: string; workspaceId: string } | { error: string; status: number }> {
   const workspace = await requireWorkspace(req.dbUserId!);
+  // An explicit ad account (our id, in the query or body) wins, e.g. a
+  // lookalike created for the client in view; otherwise the newest one.
+  const wanted =
+    (typeof req.query.adAccountId === "string" && req.query.adAccountId) ||
+    (typeof req.body?.adAccountId === "string" && req.body.adAccountId) ||
+    null;
   const account = await prisma.adAccount.findFirst({
-    where: { workspaceId: workspace.id, platform: "META", isActive: true },
+    where: { workspaceId: workspace.id, platform: "META", isActive: true, ...(wanted ? { id: wanted } : {}) },
     orderBy: { createdAt: "desc" },
   });
+  if (!account && wanted) {
+    return { error: "That Meta ad account isn't connected to this workspace", status: 404 };
+  }
   if (!account) {
     return { error: "No active Meta ad account connected", status: 404 };
   }

@@ -37,8 +37,10 @@ export function ClientSwitcherMenu({ variant }: { variant: "card" | "chip" }) {
       : { mark: initials(clients[0]?.name ?? workspaceName), name: clients[0]?.name ?? workspaceName, sub: "Workspace" };
   const title = client ? client.name : hasMultiple ? "All clients" : scope.name;
 
+  // Members limited to some clients (B6) don't get "All clients".
+  const limited = Boolean(me.data?.access?.clientIds);
   const items = [
-    { id: null as string | null, mark: initials(workspaceName), label: "All clients", sub: String(clients.length) },
+    ...(limited ? [] : [{ id: null as string | null, mark: initials(workspaceName), label: "All clients", sub: String(clients.length) }]),
     ...clients.map((c) => ({ id: c.id as string | null, mark: c.short, label: c.name, sub: `${c.campaignCount}` })),
   ];
 

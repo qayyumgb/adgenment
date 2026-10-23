@@ -278,7 +278,7 @@ export default function AnalyticsPage() {
               </div>
             </div>
 
-            <Funnel impressions={cur?.impressions ?? 0} clicks={cur?.clicks ?? 0} conversions={cur?.conversions ?? 0} scopeLabel={scopeTitle} loading={loading} />
+            <Funnel impressions={cur?.impressions ?? 0} clicks={cur?.clicks ?? 0} conversions={cur?.conversions ?? 0} adLevel={o?.adLevel ?? null} scopeLabel={scopeTitle} loading={loading} />
 
             <AdvertixRead />
 

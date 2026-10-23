@@ -15,7 +15,7 @@ import { MobileAppBar, TopBar } from "./TopBar";
  * keeps providing it until each page is migrated (plan A4–A14).
  * TODO(A15): remove once every page is in this list.
  */
-const REBUILT_ROUTES: (string | RegExp)[] = [/^\/campaigns\/[^/]+$/, "/dashboard", "/campaigns", "/analytics", "/dev/analytics", "/dev/new-campaign", "/dev/shell", "/dev/grid", "/dev/overview", "/dev/campaigns", /^\/dev\/campaign\/[^/]+$/];
+const REBUILT_ROUTES: (string | RegExp)[] = [/^\/campaigns\/[^/]+$/, "/dashboard", "/campaigns", "/analytics", "/creatives", "/audiences", "/budgets", "/ai-planner", "/dev/analytics", "/dev/creatives", "/dev/audiences", "/dev/budgets", "/dev/planner", "/dev/team", "/dev/new-campaign", "/dev/shell", "/dev/grid", "/dev/overview", "/dev/campaigns", /^\/dev\/campaign\/[^/]+$/];
 
 /**
  * App shell (guide §3): 256px sticky sidebar + content from 900px up; below

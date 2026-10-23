@@ -1,6 +1,7 @@
 /**
  * Change log (plan B3): an append-only record of every campaign change and a
- * 7-day undo for budget, status and name changes.
+ * 7-day undo for budget, status and name changes, and for ad set / ad status
+ * and ad set budgets (B4).
  *
  * Recording never throws — a logging failure must not fail the change the
  * user just made. Undo goes through the same paths as a normal edit
@@ -11,10 +12,20 @@
 import { Prisma, type ChangeActor, type ChangeLog } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { money } from "../lib/format";
-import { ActionError, setDailyBudget, setName, setStatus, type CampaignWithAccount } from "./campaign-actions.service";
+import {
+  ActionError,
+  setAdSetDailyBudget,
+  setAdSetStatus,
+  setAdStatus,
+  ownStatus,
+  setDailyBudget,
+  setName,
+  setStatus,
+  type CampaignWithAccount,
+} from "./campaign-actions.service";
 
 export const CHANGE_UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-const UNDOABLE = new Set(["campaign.budget", "campaign.status", "campaign.rename"]);
+const UNDOABLE = new Set(["campaign.budget", "campaign.status", "campaign.rename", "adset.status", "adset.budget", "ad.status"]);
 
 type CampaignLike = {
   id: string;
@@ -62,6 +73,15 @@ export function describe(action: string, before: Record<string, unknown> | null,
       return "Published to Meta (paused, ready to launch)";
     case "campaign.delete":
       return "Deleted the campaign";
+    case "adset.status":
+      return `${after?.status === "PAUSED" ? "Paused" : "Resumed"} ad set “${after?.name ?? before?.name}”`;
+    case "adset.budget": {
+      const b = Number(before?.dailyBudget ?? 0);
+      const a = Number(after?.dailyBudget ?? 0);
+      return `${a >= b ? "Raised" : "Lowered"} the daily budget of ad set “${after?.name ?? before?.name}” from ${money(b, currency)} to ${money(a, currency)}`;
+    }
+    case "ad.status":
+      return `${after?.status === "PAUSED" ? "Paused" : "Resumed"} ad “${after?.name ?? before?.name}”`;
     default:
       return "Changed the campaign";
   }
@@ -241,6 +261,25 @@ class ChangeLogService {
       } else {
         await prisma.campaign.update({ where: { id: c.id }, data: { status: target as "ACTIVE" | "PAUSED" | "DRAFT" | "ENDED" } });
       }
+    } else if (e.action === "adset.status" || e.action === "adset.budget") {
+      if (!live) throw new ActionError(409, "This campaign isn't live on Meta.");
+      const s = await prisma.adSet.findFirst({ where: { id: String(after.adSetId), campaignId: c.id } });
+      if (!s) throw new ActionError(410, "The ad set no longer exists.");
+      if (e.action === "adset.status") {
+        if (ownStatus(s) !== after.status) throw changed();
+        await setAdSetStatus(c as CampaignWithAccount, s, before.status === "ACTIVE" ? "ACTIVE" : "PAUSED");
+      } else {
+        if (Math.abs(Number(s.dailyBudget) - Number(after.dailyBudget)) >= 0.01) throw changed();
+        const target = Number(before.dailyBudget);
+        if (!(target > 0)) throw new ActionError(400, "There's no earlier budget to go back to.");
+        await setAdSetDailyBudget(c as CampaignWithAccount, s, target);
+      }
+    } else if (e.action === "ad.status") {
+      if (!live) throw new ActionError(409, "This campaign isn't live on Meta.");
+      const ad = await prisma.ad.findFirst({ where: { id: String(after.adId), campaignId: c.id } });
+      if (!ad) throw new ActionError(410, "The ad no longer exists.");
+      if (ownStatus(ad) !== after.status) throw changed();
+      await setAdStatus(c as CampaignWithAccount, ad, before.status === "ACTIVE" ? "ACTIVE" : "PAUSED");
     } else if (e.action === "campaign.rename") {
       if (c.name !== after.name) throw changed();
       const target = String(before.name ?? "").trim();

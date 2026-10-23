@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useAppRouter } from "@/hooks/useAppRouter";
+import { useAccess } from "@/components/app/team/access";
 import toast from "react-hot-toast";
-import { AlertTriangle, ChevronRight, Copy, ExternalLink, Layers, MoreHorizontal, Rocket, Trash2, Image as ImageIcon } from "lucide-react";
+import { AlertTriangle, ChevronRight, Copy, ExternalLink, MoreHorizontal, Rocket, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient, type Campaign } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -13,6 +14,8 @@ import { fmtMoney } from "@/lib/money";
 import { PageBody, PageHeader, PageTabs } from "@/components/app/shell/PageHeader";
 import { useClientScope } from "@/components/app/shell/ClientContext";
 import { Button, ButtonLink, Card, EmptyState, IconButton, Menu, PlatformBadge, Skeleton, StatusPill, PLATFORM_META, type PlatformKey } from "@/components/app/ui";
+import { useCampaignStructure } from "@/components/app/campaign/structure";
+import { AdSetsTab, AdsTab } from "@/components/app/campaign/StructureViews";
 import { objectiveLabel } from "@/components/app/campaigns/CampaignsGrid";
 import { canToggle, isLiveOnMeta, isReadOnlySync, needsPublish, useCampaignMutations } from "@/components/app/campaigns/useCampaignMutations";
 import { dailySeries, dayLabel } from "@/components/app/campaign/metrics";
@@ -25,7 +28,7 @@ import { DuplicateDialog } from "@/components/app/campaign/DuplicateDialog";
  * Campaign detail (guide §5.3, plan A6): header with status switch, tabs
  * Overview / Ad sets / Ads / Change log / Settings (tab in `?tab=`), 6 KPIs vs
  * the previous 30 days, daily metric chart, suggestions, "Ask about this
- * campaign", daily breakdown. Publish goes to the New campaign wizard
+ * campaign", ad sets and ads (B4, Meta), daily breakdown. Publish goes to the New campaign wizard
  * (`/campaigns/new?from=<id>`; old `?publish=1` links redirect there). Ads Manager link,
  * launch / pause on Meta, rename / budget / delete.
  */
@@ -36,30 +39,6 @@ const STATUS_LABEL: Record<Campaign["status"], string> = { ACTIVE: "Active", PAU
 
 const shortDate = (iso: string) => dayLabel(iso.slice(0, 10));
 
-function ComingSoonTab({ c, kind }: { c: Campaign; kind: "adsets" | "ads" }) {
-  const adsManager = isLiveOnMeta(c) && c.adAccount?.accountId ? adsManagerUrl(c) : null;
-  const published = Boolean(c.publishedAt);
-  return (
-    <EmptyState
-      icon={kind === "adsets" ? <Layers size={22} /> : <ImageIcon size={22} />}
-      title={kind === "adsets" ? "Ad sets are coming soon" : "Ads are coming soon"}
-      body={
-        (kind === "adsets"
-          ? "Ad set budgets, audiences and results will show here once Advertix syncs ad-level data."
-          : "Each ad’s spend, results and creative fatigue will show here once Advertix syncs ad-level data.") +
-        (published ? " This campaign was published from Advertix with one ad set and one ad." : "")
-      }
-      action={
-        adsManager ? (
-          <ButtonLink href={adsManager} variant="secondary" icon={<ExternalLink size={16} />} target="_blank" rel="noopener noreferrer">
-            Open in Ads Manager
-          </ButtonLink>
-        ) : undefined
-      }
-    />
-  );
-}
-
 // Ads Manager keys off Meta's own numeric account id, not our internal id.
 const adsManagerUrl = (c: Campaign) =>
   `https://business.facebook.com/adsmanager/manage/campaigns?act=${c.adAccount?.accountId}&selected_campaign_ids=${c.externalId}`;
@@ -69,6 +48,8 @@ export default function CampaignDetailPage() {
   const id = params?.id ?? "";
   const searchParams = useSearchParams();
   const router = useAppRouter();
+  const access = useAccess();
+  const canEdit = access.can("edit");
   const api = useApiClient();
   const { clients } = useClientScope();
   const tabParam = searchParams.get("tab");
@@ -81,6 +62,7 @@ export default function CampaignDetailPage() {
     void metricsQ.refetch();
   };
   const mutations = useCampaignMutations(refetch);
+  const structure = useCampaignStructure(id, () => void campaignQ.refetch());
   const [duplicateOpen, setDuplicateOpen] = useState(false);
 
   const c = campaignQ.data;
@@ -140,8 +122,10 @@ export default function CampaignDetailPage() {
   ]
     .filter(Boolean)
     .join(" • ");
-  const toggleable = canToggle(c);
-  const toggleReason = isReadOnlySync(c)
+  const toggleable = canToggle(c) && canEdit;
+  const toggleReason = !canEdit
+    ? access.why("edit")
+    : isReadOnlySync(c)
     ? `Change the status in ${platformName}`
     : needsPublish(c)
       ? "Publish to Meta first"
@@ -211,7 +195,7 @@ export default function CampaignDetailPage() {
               </span>
               {c.status === "ACTIVE" ? "Pause" : live && c.status === "PAUSED" ? "Resume on Meta" : "Resume"}
             </Button>
-            <Button variant="secondary" icon={<Copy size={16} />} onClick={() => setDuplicateOpen(true)}>
+            <Button variant="secondary" icon={<Copy size={16} />} onClick={() => setDuplicateOpen(true)} disabled={!canEdit} title={canEdit ? undefined : access.why("edit")}>
               Duplicate
             </Button>
             {live && c.adAccount?.accountId && (
@@ -228,7 +212,7 @@ export default function CampaignDetailPage() {
                 <span className="max-[1279px]:hidden">Ads Manager</span>
               </ButtonLink>
             )}
-            {needsPublish(c) ? (
+            {!canEdit ? null : needsPublish(c) ? (
               <Button variant="primary" icon={<Rocket size={16} />} onClick={() => router.push(`/campaigns/new?from=${c.id}`)}>
                 Publish to Meta
               </Button>
@@ -237,7 +221,7 @@ export default function CampaignDetailPage() {
                 Edit campaign
               </ButtonLink>
             )}
-            <Menu
+            {canEdit && <Menu
               align="end"
               width={200}
               trigger={(p) => (
@@ -257,7 +241,7 @@ export default function CampaignDetailPage() {
                   Delete campaign
                 </button>
               )}
-            </Menu>
+            </Menu>}
           </>
         }
         tabs={
@@ -266,8 +250,8 @@ export default function CampaignDetailPage() {
             active={tab}
             tabs={[
               { id: "overview", label: "Overview", href: tabHref("overview") },
-              { id: "adsets", label: "Ad sets", href: tabHref("adsets") },
-              { id: "ads", label: "Ads", href: tabHref("ads") },
+              { id: "adsets", label: "Ad sets", href: tabHref("adsets"), count: structure.data?.adSets.length || undefined },
+              { id: "ads", label: "Ads", href: tabHref("ads"), count: structure.data?.ads.length || undefined },
               { id: "log", label: "Change log", href: tabHref("log") },
               { id: "settings", label: "Settings", href: tabHref("settings") },
             ]}
@@ -286,9 +270,9 @@ export default function CampaignDetailPage() {
           </Card>
         )}
 
-        {tab === "overview" && <OverviewTab campaign={c} current={current} previous={previous} loading={metricsQ.loading} onChanged={refetch} />}
-        {tab === "adsets" && <ComingSoonTab c={c} kind="adsets" />}
-        {tab === "ads" && <ComingSoonTab c={c} kind="ads" />}
+        {tab === "overview" && <OverviewTab campaign={c} current={current} previous={previous} loading={metricsQ.loading} onChanged={refetch} structure={structure} />}
+        {tab === "adsets" && <AdSetsTab campaign={c} st={structure} onSynced={() => (refetch(), void structure.refetch())} />}
+        {tab === "ads" && <AdsTab campaign={c} st={structure} adSetFilter={searchParams.get("adset")} onSynced={() => (refetch(), void structure.refetch())} />}
         {tab === "log" && <HistoryTab campaign={c} onChanged={refetch} />}
         {tab === "settings" && <SettingsTab key={c.updatedAt} campaign={c} onSaved={refetch} onDelete={() => void remove()} />}
       </PageBody>

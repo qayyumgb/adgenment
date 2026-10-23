@@ -125,6 +125,77 @@ export interface MetaInsight {
   purchase_roas?: Array<{ action_type: string; value: string }>;
 }
 
+export interface MetaAdSet {
+  id: string;
+  name: string;
+  status: string;
+  effective_status?: string;
+  campaign_id: string;
+  daily_budget?: string;
+  lifetime_budget?: string;
+  optimization_goal?: string;
+  start_time?: string;
+  end_time?: string;
+  /** status: LEARNING | SUCCESS | FAIL ("learning limited"). */
+  learning_stage_info?: { status?: string };
+  targeting?: Record<string, unknown>;
+}
+
+export interface MetaAdCreativeInfo {
+  id: string;
+  title?: string;
+  body?: string;
+  image_url?: string;
+  thumbnail_url?: string;
+  call_to_action_type?: string;
+  object_type?: string;
+  video_id?: string;
+  object_story_spec?: {
+    link_data?: {
+      name?: string;
+      message?: string;
+      link?: string;
+      picture?: string;
+      call_to_action?: { type?: string };
+      child_attachments?: Array<{ name?: string; picture?: string; link?: string }>;
+    };
+    video_data?: { title?: string; message?: string; image_url?: string; call_to_action?: { type?: string; value?: { link?: string } } };
+  };
+  asset_feed_spec?: {
+    titles?: Array<{ text?: string }>;
+    bodies?: Array<{ text?: string }>;
+    images?: Array<{ url?: string }>;
+    videos?: Array<{ thumbnail_url?: string }>;
+    link_urls?: Array<{ website_url?: string }>;
+    call_to_action_types?: string[];
+  };
+}
+
+export interface MetaAd {
+  id: string;
+  name: string;
+  status: string;
+  effective_status?: string;
+  adset_id: string;
+  campaign_id: string;
+  creative?: MetaAdCreativeInfo;
+}
+
+export interface MetaAdInsight {
+  ad_id: string;
+  adset_id: string;
+  campaign_id: string;
+  date_start: string;
+  date_stop: string;
+  impressions: string;
+  reach?: string;
+  clicks: string;
+  spend: string;
+  actions?: Array<{ action_type: string; value: string }>;
+  action_values?: Array<{ action_type: string; value: string }>;
+  purchase_roas?: Array<{ action_type: string; value: string }>;
+}
+
 interface MetaErrorResponse {
   error?: {
     message?: string;
@@ -207,9 +278,15 @@ export interface MetaCustomAudience {
   /** CUSTOM | LOOKALIKE | WEBSITE | APP | ENGAGEMENT | etc. */
   subtype: string;
   isLookalike: boolean;
+  /** Upper bound of Meta's size range (kept for older callers). */
   approxSize: number | null;
+  /** Meta's size range; it only reports bounds, never an exact count. */
+  sizeLower: number | null;
+  sizeUpper: number | null;
   description?: string;
   ready: boolean;
+  /** Lookalikes: the seed audience(s), similarity ratio (0.01 = 1%) and country. */
+  lookalike?: { originIds: string[]; originNames: string[]; ratio: number | null; country: string | null };
 }
 
 export interface MetaSavedAudience {
@@ -546,6 +623,82 @@ class MetaAdsService {
     return map;
   }
 
+  /**
+   * Ad sets of the whole account, or of one campaign when `metaCampaignId` is
+   * given (used right after publish / launch). Deleted ones aren't returned.
+   */
+  async getAdSets(accessToken: string, adAccountId: string, metaCampaignId?: string): Promise<MetaAdSet[]> {
+    const params = new URLSearchParams({
+      fields:
+        "id,name,status,effective_status,campaign_id,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,learning_stage_info,targeting",
+      limit: "200",
+      access_token: accessToken,
+    });
+    const parent = metaCampaignId ?? this.accountPath(adAccountId);
+    return this.graphFetchAll<MetaAdSet>(`${GRAPH_BASE}/${parent}/adsets?${params.toString()}`);
+  }
+
+  /** Ads with what their creative shows (headline, text, image, CTA). */
+  async getAds(accessToken: string, adAccountId: string, metaCampaignId?: string): Promise<MetaAd[]> {
+    const params = new URLSearchParams({
+      fields:
+        "id,name,status,effective_status,adset_id,campaign_id,creative{id,title,body,image_url,thumbnail_url,call_to_action_type,object_type,video_id,object_story_spec,asset_feed_spec}",
+      limit: "200",
+      access_token: accessToken,
+    });
+    const parent = metaCampaignId ?? this.accountPath(adAccountId);
+    return this.graphFetchAll<MetaAd>(`${GRAPH_BASE}/${parent}/ads?${params.toString()}`);
+  }
+
+  /** Daily ad-level insights, including landing-page views and add-to-cart (in `actions`). */
+  async getAdInsights(accessToken: string, adAccountId: string, datePreset: string = "last_30d"): Promise<MetaAdInsight[]> {
+    const params = new URLSearchParams({
+      fields: "ad_id,adset_id,campaign_id,date_start,date_stop,impressions,reach,clicks,spend,actions,action_values,purchase_roas",
+      date_preset: datePreset,
+      level: "ad",
+      time_increment: "1",
+      limit: "500",
+      access_token: accessToken,
+    });
+    return this.graphFetchAll<MetaAdInsight>(`${GRAPH_BASE}/${this.accountPath(adAccountId)}/insights?${params.toString()}`);
+  }
+
+  /**
+   * Range-level unique reach and frequency per ad or ad set (no daily
+   * breakdown — like getCampaignReach, these can't be summed from days).
+   */
+  async getReachFrequency(
+    accessToken: string,
+    adAccountId: string,
+    level: "ad" | "adset",
+    datePreset: string = "last_30d"
+  ): Promise<Record<string, { reach: number; frequency: number }>> {
+    const idField = level === "ad" ? "ad_id" : "adset_id";
+    const params = new URLSearchParams({
+      fields: `${idField},reach,frequency`,
+      date_preset: datePreset,
+      level,
+      limit: "500",
+      access_token: accessToken,
+    });
+    const rows = await this.graphFetchAll<{ ad_id?: string; adset_id?: string; reach?: string; frequency?: string }>(
+      `${GRAPH_BASE}/${this.accountPath(adAccountId)}/insights?${params.toString()}`
+    );
+    const map: Record<string, { reach: number; frequency: number }> = {};
+    for (const r of rows) {
+      const id = level === "ad" ? r.ad_id : r.adset_id;
+      if (id) map[id] = { reach: parseInt(r.reach || "0", 10) || 0, frequency: parseFloat(r.frequency || "0") || 0 };
+    }
+    return map;
+  }
+
+  /** Pause / resume a single ad. */
+  async updateAdStatus(accessToken: string, adId: string, status: "ACTIVE" | "PAUSED"): Promise<{ success: boolean }> {
+    const body = new URLSearchParams({ status, access_token: accessToken });
+    await this.graphFetch<{ success?: boolean }>(`${GRAPH_BASE}/${adId}`, { method: "POST", body });
+    return { success: true };
+  }
+
   /* ───────────────────────────────── */
   /* Mutations                         */
   /* ───────────────────────────────── */
@@ -777,7 +930,7 @@ class MetaAdsService {
     const accountPath = this.accountPath(adAccountId);
     const params = new URLSearchParams({
       fields:
-        "id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,description,operation_status,delivery_status",
+        "id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,description,operation_status,delivery_status,lookalike_spec",
       access_token: accessToken,
       limit: "200",
     });
@@ -791,6 +944,7 @@ class MetaAdsService {
         description?: string;
         operation_status?: { code?: number; description?: string };
         delivery_status?: { code?: number; description?: string };
+        lookalike_spec?: { ratio?: number; country?: string; origin?: Array<{ id?: string; name?: string }>; origin_audience_id?: string };
       }>;
     }>(
       `${GRAPH_BASE}/${accountPath}/customaudiences?${params.toString()}`
@@ -804,8 +958,20 @@ class MetaAdsService {
         a.approximate_count_upper_bound ??
         a.approximate_count_lower_bound ??
         null,
+      sizeLower: a.approximate_count_lower_bound ?? null,
+      sizeUpper: a.approximate_count_upper_bound ?? null,
       description: a.description,
       ready: (a.operation_status?.code ?? 200) === 200,
+      ...(a.lookalike_spec
+        ? {
+            lookalike: {
+              originIds: [...(a.lookalike_spec.origin ?? []).map((o) => o.id ?? ""), a.lookalike_spec.origin_audience_id ?? ""].filter(Boolean),
+              originNames: (a.lookalike_spec.origin ?? []).map((o) => o.name ?? "").filter(Boolean),
+              ratio: typeof a.lookalike_spec.ratio === "number" ? a.lookalike_spec.ratio : null,
+              country: a.lookalike_spec.country ?? null,
+            },
+          }
+        : {}),
     }));
   }
 

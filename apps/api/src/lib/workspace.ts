@@ -1,5 +1,6 @@
 import type { Workspace } from "@prisma/client";
 import { prisma } from "./prisma";
+import { normalizeRole, type Role } from "./access";
 
 export async function getUserWorkspace(
   userId: string
@@ -21,9 +22,9 @@ export async function requireWorkspace(userId: string): Promise<Workspace> {
 export async function getUserRoleInWorkspace(
   userId: string,
   workspaceId: string
-): Promise<"OWNER" | "ADMIN" | "EDITOR" | "VIEWER" | null> {
+): Promise<Role | null> {
   const m = await prisma.workspaceMember.findUnique({
     where: { workspaceId_userId: { workspaceId, userId } },
   });
-  return m?.role ?? null;
+  return m ? normalizeRole(m.role) : null;
 }

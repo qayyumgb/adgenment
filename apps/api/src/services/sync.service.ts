@@ -13,7 +13,7 @@ import {
 import { prisma } from "../lib/prisma";
 import { decryptToken, encryptToken } from "../lib/crypto";
 import { changeLog } from "./change-log.service";
-import { metaService, type MetaCampaign } from "./meta.service";
+import { metaService, type MetaAdCreativeInfo, type MetaCampaign } from "./meta.service";
 import { googleService, isGoogleAuthError } from "./google.service";
 import { tiktokService } from "./tiktok.service";
 import { linkedinService } from "./linkedin.service";
@@ -22,6 +22,9 @@ export type SyncResult = {
   platform: string;
   campaignsSynced: number;
   metricsSynced: number;
+  /** Meta only (B4): ad sets / ads upserted. */
+  adSetsSynced?: number;
+  adsSynced?: number;
 };
 
 /**
@@ -77,6 +80,65 @@ function metaBudget(mc: MetaCampaign): { amount: number; type: BudgetType } {
   }
   return { amount: 0, type: "DAILY" };
 }
+
+type MetaActions = Array<{ action_type: string; value: string }> | undefined;
+const PURCHASE_TYPES = ["purchase", "offsite_conversion.fb_pixel_purchase"];
+// Meta reports the same add-to-cart under several overlapping types; take the
+// first present in this order so one event is never counted twice.
+const ADD_TO_CART_TYPES = ["omni_add_to_cart", "add_to_cart", "offsite_conversion.fb_pixel_add_to_cart"];
+
+function firstActionValue(list: MetaActions, types: string[]): number {
+  for (const t of types) {
+    const hit = list?.find((a) => a.action_type === t);
+    if (hit) return parseFloat(hit.value) || 0;
+  }
+  return 0;
+}
+
+/** Spend, clicks, purchases and revenue from one Meta insights row (campaign or ad level). */
+function metaResults(row: {
+  spend?: string;
+  impressions?: string;
+  clicks?: string;
+  actions?: MetaActions;
+  action_values?: MetaActions;
+  purchase_roas?: MetaActions;
+}) {
+  const spend = parseFloat(row.spend || "0");
+  const impressions = parseInt(row.impressions || "0", 10) || 0;
+  const clicks = parseInt(row.clicks || "0", 10) || 0;
+  const purchaseAction = row.actions?.find((a) => PURCHASE_TYPES.includes(a.action_type));
+  const conversions = purchaseAction ? parseFloat(purchaseAction.value) || 0 : 0;
+  // Revenue = real purchase value from `action_values` (NOT roas × spend,
+  // which is circular and breaks when Meta omits purchase_roas). Falls
+  // back to roas × spend only when action_values is absent.
+  const purchaseValue = row.action_values?.find((a) => PURCHASE_TYPES.includes(a.action_type));
+  const roasEntry = row.purchase_roas?.[0];
+  const roas = roasEntry ? parseFloat(roasEntry.value) || 0 : 0;
+  const revenue = purchaseValue ? parseFloat(purchaseValue.value) || 0 : roas * spend;
+  return { spend, impressions, clicks, conversions, revenue, roas };
+}
+
+/** What an ad's creative shows, from whichever of Meta's creative shapes it uses. */
+function creativeFields(c: MetaAdCreativeInfo | undefined) {
+  const ld = c?.object_story_spec?.link_data;
+  const vd = c?.object_story_spec?.video_data;
+  const af = c?.asset_feed_spec;
+  const cards = ld?.child_attachments ?? [];
+  const format = !c ? "UNKNOWN" : c.video_id || vd || af?.videos?.length || c.object_type === "VIDEO" ? "VIDEO" : cards.length > 1 ? "CAROUSEL" : "IMAGE";
+  const pick = (...v: (string | undefined | null)[]) => v.find((x) => typeof x === "string" && x.trim() !== "") ?? null;
+  return {
+    creativeExternalId: c?.id ?? null,
+    format,
+    imageUrl: pick(c?.image_url, ld?.picture, cards[0]?.picture, vd?.image_url, af?.images?.[0]?.url, af?.videos?.[0]?.thumbnail_url, c?.thumbnail_url),
+    headline: pick(c?.title, ld?.name, vd?.title, af?.titles?.[0]?.text, cards[0]?.name),
+    body: pick(c?.body, ld?.message, vd?.message, af?.bodies?.[0]?.text),
+    callToAction: pick(c?.call_to_action_type, ld?.call_to_action?.type, vd?.call_to_action?.type, af?.call_to_action_types?.[0]),
+    linkUrl: pick(ld?.link, vd?.call_to_action?.value?.link, af?.link_urls?.[0]?.website_url, cards[0]?.link),
+  };
+}
+
+const minor = (v: string | undefined) => (v ? new Prisma.Decimal((parseFloat(v) / 100).toFixed(2)) : null);
 
 function dayUTC(iso: string): Date {
   const d = new Date(iso);
@@ -281,11 +343,13 @@ class SyncService {
       }
     }
 
-    // 2. Pull last-30d insights with daily breakdown and upsert metrics.
+    // 2. Daily insights → metrics. The first sync of an account pulls 90 days
+    //    (Analytics offers a 90-day range); later syncs refresh the last 30.
+    const datePreset = adAccount.backfilledAt ? "last_30d" : "last_90d";
     const insights = await metaService.getCampaignInsights(
       token,
       accountId,
-      "last_30d"
+      datePreset
     );
     let metricsSynced = 0;
 
@@ -293,32 +357,7 @@ class SyncService {
       const ourCampaignId = idMap[insight.campaign_id];
       if (!ourCampaignId) continue;
 
-      const spend = parseFloat(insight.spend || "0");
-      const impressions = parseInt(insight.impressions || "0", 10) || 0;
-      const clicks = parseInt(insight.clicks || "0", 10) || 0;
-
-      const purchaseAction = insight.actions?.find(
-        (a) =>
-          a.action_type === "purchase" ||
-          a.action_type === "offsite_conversion.fb_pixel_purchase"
-      );
-      const conversions = purchaseAction
-        ? parseFloat(purchaseAction.value) || 0
-        : 0;
-
-      // Revenue = real purchase value from `action_values` (NOT roas × spend,
-      // which is circular and breaks when Meta omits purchase_roas). Falls
-      // back to roas × spend only when action_values is absent.
-      const purchaseValue = insight.action_values?.find(
-        (a) =>
-          a.action_type === "purchase" ||
-          a.action_type === "offsite_conversion.fb_pixel_purchase"
-      );
-      const roasEntry = insight.purchase_roas?.[0];
-      const roas = roasEntry ? parseFloat(roasEntry.value) || 0 : 0;
-      const revenue = purchaseValue
-        ? parseFloat(purchaseValue.value) || 0
-        : roas * spend;
+      const { spend, impressions, clicks, conversions, revenue, roas } = metaResults(insight);
 
       const ctr = impressions > 0 ? clicks / impressions : 0;
       const cpc = clicks > 0 ? spend / clicks : 0;
@@ -381,14 +420,156 @@ class SyncService {
       console.error("[sync:meta] reach fetch failed (non-fatal):", err);
     }
 
-    // 4. Stamp the successful sync so the UI can show "last synced" and the
+    // 4. Ad sets, ads and ad-level daily results (B4). Non-fatal: campaign
+    //    data above is still good if this part fails, and the 90-day backfill
+    //    is retried on the next sync.
+    let structure: { adSets: number; ads: number } | null = null;
+    try {
+      structure = await this.syncMetaStructure(adAccount, token, idMap, datePreset);
+    } catch (err) {
+      console.error("[sync:meta] ad sets / ads failed (non-fatal):", err instanceof Error ? err.message : err);
+    }
+
+    // 5. Stamp the successful sync so the UI can show "last synced" and the
     //    scheduler can skip recently-synced accounts.
     await prisma.adAccount.update({
       where: { id: adAccount.id },
-      data: { lastSyncedAt: new Date() },
+      data: { lastSyncedAt: new Date(), ...(structure && !adAccount.backfilledAt ? { backfilledAt: new Date() } : {}) },
     });
 
-    return { platform: "META", campaignsSynced, metricsSynced };
+    return { platform: "META", campaignsSynced, metricsSynced, adSetsSynced: structure?.adSets, adsSynced: structure?.ads };
+  }
+
+  /**
+   * Refresh one published campaign's ad sets and ads right after publish or
+   * launch, so the campaign page shows them without waiting for a sync.
+   */
+  async syncMetaCampaignStructure(campaignId: string): Promise<void> {
+    const c = await prisma.campaign.findUnique({ where: { id: campaignId }, include: { adAccount: true } });
+    if (!c || c.platform !== "META" || !c.externalId || !c.adAccount.isActive) return;
+    const token = decryptToken(c.adAccount.accessToken);
+    await this.syncMetaStructure(c.adAccount, token, { [c.externalId]: c.id }, null, c.externalId);
+  }
+
+  /**
+   * Ad sets, ads and (when `datePreset` is set) ad-level daily results for
+   * the campaigns in `idMap` (Meta campaign id → our id). With
+   * `onlyCampaign`, only that campaign's objects are fetched.
+   */
+  private async syncMetaStructure(
+    adAccount: AdAccount,
+    token: string,
+    idMap: Record<string, string>,
+    datePreset: string | null,
+    onlyCampaign?: string
+  ): Promise<{ adSets: number; ads: number }> {
+    const accountId = adAccount.accountId;
+    const ourCampaignIds = Object.values(idMap);
+
+    // Ad sets.
+    const metaAdSets = await metaService.getAdSets(token, accountId, onlyCampaign);
+    const adSetMap: Record<string, string> = {}; // Meta ad set id → our id
+    for (const s of metaAdSets) {
+      const campaignId = idMap[s.campaign_id];
+      if (!campaignId) continue;
+      const data = {
+        name: s.name,
+        status: mapMetaStatus(s.status, s.effective_status, s.end_time),
+        effectiveStatus: s.effective_status ?? null,
+        dailyBudget: minor(s.daily_budget),
+        lifetimeBudget: minor(s.lifetime_budget),
+        optimizationGoal: s.optimization_goal ?? null,
+        learningStage: s.learning_stage_info?.status ?? null,
+        targeting: s.targeting ? (s.targeting as Prisma.InputJsonValue) : Prisma.JsonNull,
+        startTime: s.start_time ? new Date(s.start_time) : null,
+        endTime: s.end_time ? new Date(s.end_time) : null,
+      };
+      const row = await prisma.adSet.upsert({
+        where: { campaignId_externalId: { campaignId, externalId: s.id } },
+        create: { campaignId, externalId: s.id, ...data },
+        update: data,
+      });
+      adSetMap[s.id] = row.id;
+    }
+
+    // Ads.
+    const metaAds = await metaService.getAds(token, accountId, onlyCampaign);
+    const adMap: Record<string, string> = {}; // Meta ad id → our id
+    for (const a of metaAds) {
+      const adSetId = adSetMap[a.adset_id];
+      const campaignId = idMap[a.campaign_id];
+      if (!adSetId || !campaignId) continue;
+      const data = {
+        campaignId,
+        name: a.name,
+        status: mapMetaStatus(a.status, a.effective_status, undefined),
+        effectiveStatus: a.effective_status ?? null,
+        ...creativeFields(a.creative),
+      };
+      const row = await prisma.ad.upsert({
+        where: { adSetId_externalId: { adSetId, externalId: a.id } },
+        create: { adSetId, externalId: a.id, ...data },
+        update: data,
+      });
+      adMap[a.id] = row.id;
+    }
+
+    // Deleted on Meta (no longer listed) → ended here; history stays.
+    await prisma.adSet.updateMany({
+      where: { campaignId: { in: ourCampaignIds }, externalId: { notIn: Object.keys(adSetMap) }, status: { not: "ENDED" } },
+      data: { status: "ENDED", effectiveStatus: "DELETED" },
+    });
+    await prisma.ad.updateMany({
+      where: { campaignId: { in: ourCampaignIds }, externalId: { notIn: Object.keys(adMap) }, status: { not: "ENDED" } },
+      data: { status: "ENDED", effectiveStatus: "DELETED" },
+    });
+
+    if (datePreset) {
+      // Daily ad results, written in batches.
+      const rows = await metaService.getAdInsights(token, accountId, datePreset);
+      const writes: Prisma.PrismaPromise<unknown>[] = [];
+      for (const r of rows) {
+        const adId = adMap[r.ad_id];
+        if (!adId) continue;
+        const { spend, impressions, clicks, conversions, revenue } = metaResults(r);
+        const values = {
+          impressions,
+          reach: parseInt(r.reach || "0", 10) || 0,
+          clicks,
+          spend: new Prisma.Decimal(spend.toFixed(2)),
+          conversions: Math.round(conversions),
+          revenue: new Prisma.Decimal(revenue.toFixed(2)),
+          landingPageViews: Math.round(firstActionValue(r.actions, ["landing_page_view"])),
+          addToCart: Math.round(firstActionValue(r.actions, ADD_TO_CART_TYPES)),
+        };
+        const date = dayUTC(r.date_start);
+        writes.push(
+          prisma.adMetrics.upsert({
+            where: { adId_date: { adId, date } },
+            create: { adId, date, ...values },
+            update: values,
+          })
+        );
+      }
+      for (let i = 0; i < writes.length; i += 100) await prisma.$transaction(writes.slice(i, i + 100));
+
+      // 30-day reach and frequency (frequency drives the fatigue read).
+      const [byAd, byAdSet] = await Promise.all([
+        metaService.getReachFrequency(token, accountId, "ad"),
+        metaService.getReachFrequency(token, accountId, "adset"),
+      ]);
+      const updates: Prisma.PrismaPromise<unknown>[] = [
+        ...Object.entries(byAd)
+          .filter(([metaId]) => adMap[metaId])
+          .map(([metaId, v]) => prisma.ad.update({ where: { id: adMap[metaId] }, data: { reach30d: v.reach, frequency30d: v.frequency } })),
+        ...Object.entries(byAdSet)
+          .filter(([metaId]) => adSetMap[metaId])
+          .map(([metaId, v]) => prisma.adSet.update({ where: { id: adSetMap[metaId] }, data: { reach30d: v.reach, frequency30d: v.frequency } })),
+      ];
+      for (let i = 0; i < updates.length; i += 100) await prisma.$transaction(updates.slice(i, i + 100));
+    }
+
+    return { adSets: Object.keys(adSetMap).length, ads: Object.keys(adMap).length };
   }
 
   /**

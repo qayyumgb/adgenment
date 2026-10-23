@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAppRouter } from "@/hooks/useAppRouter";
+import { useAccess } from "@/components/app/team/access";
 import { timeAgo } from "@/lib/time";
 import { AiMark, AiSuggestion, Button, Card, Skeleton } from "@/components/app/ui";
 import { useClientScope } from "@/components/app/shell/ClientContext";
@@ -17,6 +18,7 @@ const COLLAPSED = 4;
 
 export function OverviewSuggestions() {
   const router = useAppRouter();
+  const canEdit = useAccess().can("edit");
   const { clientId, hasMultiple } = useClientScope();
   const sg = useSuggestions({ clientId });
   const [checking, setChecking] = useState(false);
@@ -75,7 +77,7 @@ export function OverviewSuggestions() {
               impact={s.impact ?? undefined}
               actionLabel={s.actionLabel}
               doneLabel={s.doneLabel ?? undefined}
-              mode={s.executable ? "apply" : "review"}
+              mode={s.executable && canEdit ? "apply" : "review"}
               state={suggestionState(s)}
               busy={sg.busy === s.id}
               onApply={() => void sg.apply(s)}

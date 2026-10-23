@@ -2,6 +2,8 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { getUserWorkspace } from "../lib/workspace";
+import { getAccess } from "../lib/access";
+import { pendingInviteFor } from "../services/team.service";
 
 const router = Router();
 
@@ -23,9 +25,14 @@ router.get("/me", async (req: Request, res: Response, next: NextFunction) => {
         },
       });
     }
+    // Role and client access (B6), or a pending invite for someone with no workspace yet.
+    const access = workspace ? await getAccess(req) : null;
+    const invite = workspace ? null : await pendingInviteFor(req.user?.email ?? "");
     res.json({
       user: req.user,
       workspace: workspaceWithCount,
+      access: access ? { role: access.role, clientIds: access.clientIds } : null,
+      pendingInvite: invite ? { token: invite.token, workspaceName: invite.workspace.name } : null,
     });
   } catch (err) {
     next(err);

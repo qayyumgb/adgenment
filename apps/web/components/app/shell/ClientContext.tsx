@@ -42,6 +42,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const res = useApi((api) => api.getClients(), [], { key: "clients" });
+  const me = useApi((api) => api.getMe(), [], { key: "me" });
+  const limited = Boolean(me.data?.access?.clientIds);
   const clients = useMemo(() => res.data?.clients ?? [], [res.data]);
   const [wanted, setWanted] = useState<string | null>(null);
 
@@ -61,7 +63,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   // Ignore ids that aren't (or are no longer) in this workspace.
   const client = clients.find((c) => c.id === wanted) ?? null;
-  const clientId = clients.length > 1 ? client?.id ?? null : null;
+  // Limited members (B6) always work inside one of their clients.
+  const clientId = clients.length > 1 ? client?.id ?? (limited ? clients[0]?.id ?? null : null) : null;
 
   const setClient = useCallback(
     (id: string | null) => {
@@ -93,7 +96,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
   const value: ClientScope = {
     clientId,
-    client: clientId ? client : null,
+    client: clientId ? client ?? clients.find((c) => c.id === clientId) ?? null : null,
     clients,
     loading: res.loading,
     hasMultiple: clients.length > 1,

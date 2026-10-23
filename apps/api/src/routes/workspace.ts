@@ -1,229 +1,138 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { type WorkspaceRole, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
-import { getUserRoleInWorkspace, requireWorkspace } from "../lib/workspace";
+import { requireWorkspace } from "../lib/workspace";
+import { getAccess, type Access } from "../lib/access";
+import { createInvites, listTeam, removeMember, resendInvite, revokeInvite, updateMember } from "../services/team.service";
 
+/**
+ * Workspace settings and the team (plan B6). Who may call what is decided
+ * by `roleGuard` (lib/access.ts): team changes are owner-only, workspace
+ * settings owner-only, the team list hidden from client viewers.
+ */
 const router = Router();
 router.use(requireAuth);
 
-const ASSIGNABLE_ROLES: ReadonlyArray<WorkspaceRole> = [
-  "ADMIN",
-  "EDITOR",
-  "VIEWER",
-];
-function isAssignableRole(v: unknown): v is WorkspaceRole {
-  return (
-    typeof v === "string" &&
-    ASSIGNABLE_ROLES.includes(v as WorkspaceRole)
-  );
+async function access(req: Request): Promise<Access> {
+  const a = await getAccess(req);
+  if (!a) throw new Error("NO_WORKSPACE");
+  return a;
 }
 
-/**
- * GET /workspace/members
- */
-router.get(
-  "/members",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const workspace = await requireWorkspace(req.dbUserId!);
-      const members = await prisma.workspaceMember.findMany({
-        where: { workspaceId: workspace.id },
-        include: {
-          user: {
-            select: { id: true, name: true, email: true, plan: true },
-          },
-        },
-        orderBy: [{ role: "asc" }],
-      });
-      res.json(members);
-    } catch (err) {
-      next(err);
-    }
+/** GET /workspace/team — members, pending invites, seats, clients (for access pickers). */
+router.get("/team", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await listTeam(await access(req), req.dbUserId!));
+  } catch (err) {
+    next(err);
   }
-);
+});
 
-/**
- * POST /workspace/invite
- */
-router.post(
-  "/invite",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const workspace = await requireWorkspace(req.dbUserId!);
-      const role = await getUserRoleInWorkspace(req.dbUserId!, workspace.id);
-      if (role !== "OWNER" && role !== "ADMIN") {
-        return res
-          .status(403)
-          .json({ error: "Only owners and admins can invite members" });
-      }
-
-      const { email, role: inviteRole } = req.body ?? {};
-      if (
-        typeof email !== "string" ||
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-      ) {
-        return res.status(400).json({ error: "Valid email is required" });
-      }
-      if (!isAssignableRole(inviteRole)) {
-        return res
-          .status(400)
-          .json({ error: "role must be ADMIN, EDITOR, or VIEWER" });
-      }
-
-      // TODO: persist a pending Invite record and send via Resend.
-      res.json({
-        success: true,
-        message: `Invite sent to ${email}`,
-        email,
-        role: inviteRole,
-      });
-    } catch (err) {
-      next(err);
-    }
+/** GET /workspace/members — older shape, kept for existing callers. */
+router.get("/members", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const members = await prisma.workspaceMember.findMany({
+      where: { workspaceId: workspace.id },
+      include: { user: { select: { id: true, name: true, email: true, plan: true } } },
+      orderBy: [{ createdAt: "asc" }],
+    });
+    res.json(members);
+  } catch (err) {
+    next(err);
   }
-);
+});
 
-/**
- * PUT /workspace/members/:memberId/role
- */
-router.put(
-  "/members/:memberId/role",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const workspace = await requireWorkspace(req.dbUserId!);
-      const myRole = await getUserRoleInWorkspace(req.dbUserId!, workspace.id);
-      if (myRole !== "OWNER" && myRole !== "ADMIN") {
-        return res
-          .status(403)
-          .json({ error: "Only owners and admins can change roles" });
-      }
-
-      const { role } = req.body ?? {};
-      if (!isAssignableRole(role)) {
-        return res
-          .status(400)
-          .json({ error: "role must be ADMIN, EDITOR, or VIEWER" });
-      }
-
-      const target = await prisma.workspaceMember.findFirst({
-        where: { id: req.params.memberId, workspaceId: workspace.id },
-      });
-      if (!target) {
-        return res.status(404).json({ error: "Member not found" });
-      }
-      if (target.role === "OWNER") {
-        return res
-          .status(400)
-          .json({ error: "Cannot change role of the workspace owner" });
-      }
-
-      const updated = await prisma.workspaceMember.update({
-        where: { id: target.id },
-        data: { role },
-        include: {
-          user: { select: { id: true, name: true, email: true } },
-        },
-      });
-      res.json(updated);
-    } catch (err) {
-      next(err);
-    }
+/** POST /workspace/invites { emails: string[], role, clientIds? } — one result per email. */
+router.post("/invites", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.status(201).json(await createInvites(await access(req), req.dbUserId!, req.body ?? {}));
+  } catch (err) {
+    next(err);
   }
-);
+});
 
-/**
- * DELETE /workspace/members/:memberId
- */
-router.delete(
-  "/members/:memberId",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const workspace = await requireWorkspace(req.dbUserId!);
-      const myRole = await getUserRoleInWorkspace(req.dbUserId!, workspace.id);
-      if (myRole !== "OWNER") {
-        return res
-          .status(403)
-          .json({ error: "Only the workspace owner can remove members" });
-      }
-
-      const target = await prisma.workspaceMember.findFirst({
-        where: { id: req.params.memberId, workspaceId: workspace.id },
-      });
-      if (!target) {
-        return res.status(404).json({ error: "Member not found" });
-      }
-      if (target.role === "OWNER") {
-        return res
-          .status(400)
-          .json({ error: "Cannot remove the workspace owner" });
-      }
-
-      await prisma.workspaceMember.delete({ where: { id: target.id } });
-      res.json({ success: true });
-    } catch (err) {
-      next(err);
-    }
+/** POST /workspace/invite { email, role } — older single-invite shape. */
+router.post("/invite", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const out = await createInvites(await access(req), req.dbUserId!, { emails: [req.body?.email], role: req.body?.role, clientIds: req.body?.clientIds });
+    const r = out.results[0];
+    if (!r.ok) return res.status(400).json({ error: r.error });
+    res.status(201).json(r);
+  } catch (err) {
+    next(err);
   }
-);
+});
 
-/**
- * PATCH /workspace
- */
-router.patch(
-  "/",
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const workspace = await requireWorkspace(req.dbUserId!);
-      const myRole = await getUserRoleInWorkspace(req.dbUserId!, workspace.id);
-      if (myRole !== "OWNER") {
-        return res
-          .status(403)
-          .json({ error: "Only the workspace owner can update settings" });
-      }
-
-      const { name, slug, industry, companySize } = req.body ?? {};
-      const data: Prisma.WorkspaceUpdateInput = {};
-      if (typeof name === "string" && name.trim()) data.name = name.trim();
-      if (slug !== undefined) {
-        if (slug === null || slug === "") {
-          data.slug = null;
-        } else if (typeof slug === "string") {
-          const cleaned = slug
-            .toLowerCase()
-            .trim()
-            .replace(/[^a-z0-9-]/g, "-")
-            .replace(/-+/g, "-")
-            .replace(/^-|-$/g, "");
-          if (cleaned) data.slug = cleaned;
-        }
-      }
-      if (industry !== undefined) {
-        data.industry =
-          typeof industry === "string" && industry.trim()
-            ? industry.trim()
-            : null;
-      }
-      if (companySize !== undefined) {
-        data.companySize =
-          typeof companySize === "string" && companySize.trim()
-            ? companySize.trim()
-            : null;
-      }
-
-      if (Object.keys(data).length === 0) {
-        return res.json(workspace);
-      }
-
-      const updated = await prisma.workspace.update({
-        where: { id: workspace.id },
-        data,
-      });
-      res.json(updated);
-    } catch (err) {
-      next(err);
-    }
+/** POST /workspace/invites/:id/resend — new 7-day window, email again. */
+router.post("/invites/:id/resend", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await resendInvite(await access(req), req.dbUserId!, req.params.id));
+  } catch (err) {
+    next(err);
   }
-);
+});
+
+/** DELETE /workspace/invites/:id — cancel; the link stops working. */
+router.delete("/invites/:id", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await revokeInvite(await access(req), req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** PUT /workspace/members/:memberId { role?, clientIds? } (also at …/role for older callers). */
+const updateHandler = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await updateMember(await access(req), req.dbUserId!, req.params.memberId, req.body ?? {});
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};
+router.put("/members/:memberId", updateHandler);
+router.put("/members/:memberId/role", updateHandler);
+
+/** DELETE /workspace/members/:memberId */
+router.delete("/members/:memberId", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    await removeMember(await access(req), req.dbUserId!, req.params.memberId);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** PATCH /workspace — name, slug, industry, company size (owner only, via roleGuard). */
+router.patch("/", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const { name, slug, industry, companySize } = req.body ?? {};
+    const data: Prisma.WorkspaceUpdateInput = {};
+    if (typeof name === "string" && name.trim()) data.name = name.trim();
+    if (slug !== undefined) {
+      if (slug === null || slug === "") {
+        data.slug = null;
+      } else if (typeof slug === "string") {
+        const cleaned = slug
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9-]/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-|-$/g, "");
+        if (cleaned) data.slug = cleaned;
+      }
+    }
+    if (industry !== undefined) data.industry = typeof industry === "string" && industry.trim() ? industry.trim() : null;
+    if (companySize !== undefined) data.companySize = typeof companySize === "string" && companySize.trim() ? companySize.trim() : null;
+    if (Object.keys(data).length === 0) return res.json(workspace);
+    res.json(await prisma.workspace.update({ where: { id: workspace.id }, data }));
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;

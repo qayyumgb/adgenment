@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useAppRouter } from "@/hooks/useAppRouter";
+import { useAccess } from "@/components/app/team/access";
 import type { ReactNode } from "react";
 import { Check, Copy, ExternalLink, MoreHorizontal, Pause, Play, Rocket, Sparkles, Trash2, Clock } from "lucide-react";
 import type { Campaign, Suggestion } from "@/lib/api";
@@ -25,6 +26,10 @@ export type CampaignRow = {
 };
 
 const STATUS_LABEL: Record<Campaign["status"], string> = { ACTIVE: "Active", PAUSED: "Paused", DRAFT: "Draft", ENDED: "Ended" };
+
+/** Active Meta campaigns show their ad sets' learning phase (B4). */
+const statusLabel = (c: Campaign) =>
+  c.status === "ACTIVE" && c.learning === "LEARNING" ? "Learning" : c.status === "ACTIVE" && c.learning === "LIMITED" ? "Learning limited" : STATUS_LABEL[c.status];
 const roasOf = (r: CampaignRow) => (r.spend > 0 ? r.revenue / r.spend : null);
 const PLATFORM_NAME: Record<string, string> = { GOOGLE: "Google Ads", TIKTOK: "TikTok Ads Manager", LINKEDIN: "LinkedIn Campaign Manager" };
 
@@ -77,6 +82,8 @@ export function CampaignsGrid({
   onEditBudgets: (campaigns: Campaign[]) => void;
 }) {
   const router = useAppRouter();
+  // Read-only roles (B6): no toggles, Apply, menus or selection.
+  const canEdit = useAccess().can("edit");
   const sum = (pick: (r: CampaignRow) => number) => rows.reduce((n, r) => n + pick(r), 0);
   // Footer money uses the first row's currency; the page warns when currencies mix.
   const cur = rows[0]?.currency ?? null;
@@ -109,11 +116,11 @@ export function CampaignsGrid({
     {
       id: "status",
       label: "Status",
-      width: 150,
-      sortValue: (r) => STATUS_LABEL[r.c.status],
+      width: 176,
+      sortValue: (r) => statusLabel(r.c),
       render: (r) => (
         <span className="flex items-center gap-2.5">
-          {canToggle(r.c) && (
+          {canToggle(r.c) && canEdit && (
             <Toggle
               checked={r.c.status === "ACTIVE"}
               disabled={mutations.busy(r.c.id)}
@@ -122,7 +129,7 @@ export function CampaignsGrid({
             />
           )}
           <span title={isReadOnlySync(r.c) ? `Change the status in ${PLATFORM_NAME[r.c.platform] ?? "the platform"}` : undefined}>
-            <StatusPill status={STATUS_LABEL[r.c.status]} />
+            <StatusPill status={statusLabel(r.c)} />
           </span>
         </span>
       ),
@@ -208,7 +215,13 @@ export function CampaignsGrid({
   const primaryAction = (r: CampaignRow, h: string): ReactNode => {
     const s = r.suggestion;
     let primary: ReactNode;
-    if (s?.status === "OPEN") {
+    if (!canEdit) {
+      primary = (
+        <Button variant="secondary" size="sm" className={cn(h, "font-medium")} onClick={() => router.push(`/campaigns/${r.c.id}`)}>
+          Open
+        </Button>
+      );
+    } else if (s?.status === "OPEN") {
       primary = s.executable ? (
         <Button variant="soft" className={h} loading={suggestions.busy === s.id} onClick={() => void suggestions.apply(s)}>
           {s.actionLabel}
@@ -242,6 +255,7 @@ export function CampaignsGrid({
   };
 
   const rowMenu = (r: CampaignRow) => {
+    if (!canEdit) return null;
     const s = r.suggestion;
     return (
         <Menu
@@ -263,7 +277,7 @@ export function CampaignsGrid({
                   Publish to Meta
                 </MenuItem>
               )}
-              {canToggle(r.c) && (
+              {canToggle(r.c) && canEdit && (
                 <MenuItem icon={r.c.status === "ACTIVE" ? <Pause size={15} /> : <Play size={15} />} onSelect={() => (close(), void mutations.toggle(r.c))}>
                   {r.c.status === "ACTIVE" ? "Pause" : "Resume"}
                 </MenuItem>
@@ -315,7 +329,7 @@ export function CampaignsGrid({
         <div className="flex items-center justify-between gap-2">
           <PlatformBadge platform={r.c.platform as PlatformKey} size={22} withName />
           <span className="flex items-center gap-2">
-            {canToggle(r.c) && (
+            {canToggle(r.c) && canEdit && (
               <Toggle
                 checked={r.c.status === "ACTIVE"}
                 disabled={mutations.busy(r.c.id)}
@@ -324,7 +338,7 @@ export function CampaignsGrid({
               />
             )}
             <span title={isReadOnlySync(r.c) ? `Change the status in ${PLATFORM_NAME[r.c.platform] ?? "the platform"}` : undefined}>
-              <StatusPill status={STATUS_LABEL[r.c.status]} />
+              <StatusPill status={statusLabel(r.c)} />
             </span>
           </span>
         </div>
@@ -379,7 +393,7 @@ export function CampaignsGrid({
       columns={columns}
       defaultSort={{ id: "spend", dir: "desc" }}
       loading={loading}
-      selectable
+      selectable={canEdit}
       rowLabel={(r) => `Select ${r.c.name}`}
       filters={filters}
       empty={empty}

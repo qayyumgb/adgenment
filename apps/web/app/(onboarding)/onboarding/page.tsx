@@ -66,6 +66,11 @@ export default function OnboardingPage() {
           router.replace("/dashboard");
           return;
         }
+        // Invited (B6): join that workspace instead of creating one.
+        if (me.pendingInvite) {
+          router.replace(`/invite/${encodeURIComponent(me.pendingInvite.token)}`);
+          return;
+        }
       } catch {
         // Not authenticated or API down — just let the wizard render and
         // surface the error on submit. Clerk middleware handles unauth above.

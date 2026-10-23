@@ -27,6 +27,7 @@ import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
 import { MetaAdPreview } from "./MetaAdPreview";
 import type {
+  Audience,
   MetaPage,
   MetaCallToAction,
   MetaTargetingSpec,
@@ -63,6 +64,8 @@ export interface WizardState {
   genders: number[]; // [] = all, [1] = male, [2] = female
   interests: SelectedInterest[];
   customAudiences: SelectedAudience[];
+  /** The saved audience these fields were loaded from (A9) — recorded on the campaign. */
+  libraryAudienceId?: string | null;
   excludedCustomAudiences: SelectedAudience[];
   savedAudiences: SelectedAudience[];
   // Step 4 (schedule is taken from the campaign — confirmed here)
@@ -334,6 +337,7 @@ export function initialState(defaults: { headline?: string } = {}): WizardState 
     genders: [],
     interests: [],
     customAudiences: [],
+    libraryAudienceId: null,
     excludedCustomAudiences: [],
     savedAudiences: [],
     creativeSource: "library",
@@ -467,6 +471,25 @@ export function Step1Page({
 
 /** Prefill the whole targeting step from a reusable audience the user built
  *  on the Audiences page. Hidden when there are none saved. */
+/** Wizard audience fields from a Meta targeting spec (a saved audience, or a draft's targeting). */
+export function targetingToState(t: Partial<Audience["targeting"]> | null | undefined): Partial<WizardState> {
+  if (!t || typeof t !== "object") return {};
+  return {
+    ageMin: t.age_min ?? 18,
+    ageMax: t.age_max ?? 65,
+    genders: t.genders ?? [],
+    countries: t.geo_locations?.countries ?? [],
+    cities: (t.geo_locations?.cities ?? []).map((c) => ({ key: c.key, name: c.name ?? c.key })),
+    interests: (t.interests ?? []).map((i) => ({ id: i.id, name: i.name ?? i.id })),
+    customAudiences: (t.custom_audiences ?? []).map((c) => ({ id: c.id, name: c.name ?? c.id })),
+  };
+}
+
+/** Wizard audience fields from a saved audience (Audiences page or ?audience=). */
+export function audienceToState(a: Audience): Partial<WizardState> {
+  return { ...targetingToState(a.targeting), libraryAudienceId: a.id };
+}
+
 function LoadSavedAudience({
   patch,
 }: {
@@ -486,25 +509,7 @@ function LoadSavedAudience({
           const a = audiences.find((x) => x.id === e.target.value);
           e.currentTarget.value = "";
           if (!a) return;
-          const t = a.targeting;
-          patch({
-            ageMin: t.age_min ?? 18,
-            ageMax: t.age_max ?? 65,
-            genders: t.genders ?? [],
-            countries: t.geo_locations?.countries ?? [],
-            cities: (t.geo_locations?.cities ?? []).map((c) => ({
-              key: c.key,
-              name: c.key,
-            })),
-            interests: (t.interests ?? []).map((i) => ({
-              id: i.id,
-              name: i.name ?? i.id,
-            })),
-            customAudiences: (t.custom_audiences ?? []).map((c) => ({
-              id: c.id,
-              name: c.id,
-            })),
-          });
+          patch(audienceToState(a));
           toast.success(`Loaded "${a.name}" — tweak below as needed.`);
         }}
         className="h-10 w-full cursor-pointer rounded-lg border border-line-2 bg-surface px-3 text-sm font-medium text-ink transition focus:border-brand focus:outline-none"

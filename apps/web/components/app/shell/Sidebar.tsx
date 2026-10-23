@@ -13,6 +13,7 @@ import { PlatformBadge, type PlatformKey } from "@/components/app/ui";
 import { useClientScope } from "./ClientContext";
 import { ClientSwitcherMenu } from "./ClientSwitcher";
 import { ACCOUNT_NAV, WORKSPACE_NAV, isActive, type NavItem } from "./nav";
+import { ROLE_LABEL } from "@/components/app/team/access";
 
 /**
  * Sidebar content (guide §3.1): logo, client switcher, workspace nav,
@@ -137,7 +138,7 @@ function UserRow() {
       )}
       <span className="flex min-w-0 flex-col leading-tight">
         <span className="truncate font-semibold">{name}</span>
-        {me.data?.workspace && <span className="text-xs text-ink-2">{isOwner ? "Owner" : "Member"}</span>}
+        {me.data?.workspace && <span className="text-xs text-ink-2">{me.data.access ? ROLE_LABEL[me.data.access.role] : isOwner ? "Owner" : "Member"}</span>}
       </span>
     </div>
   );

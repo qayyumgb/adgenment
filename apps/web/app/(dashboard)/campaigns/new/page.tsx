@@ -12,10 +12,10 @@ import { ApiError, useApiClient, type Platform } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
 import { useClientScope } from "@/components/app/shell/ClientContext";
+import { useAccess } from "@/components/app/team/access";
 import { Button, ButtonLink, Skeleton } from "@/components/app/ui";
-import { COMMON_COUNTRIES } from "@/components/targeting/pickers";
-import { buildPublishPayload, initialState } from "@/components/campaigns/publish/metaSteps";
-import { AUTOSAVE_KEY, GOALS, WIZARD_PLATFORMS, budgetOf, emptyDraft, hasMeta, stepValid, type Draft, type PlanPrefill } from "@/components/app/new-campaign/model";
+import { audienceToState, buildPublishPayload, initialState, targetingToState } from "@/components/campaigns/publish/metaSteps";
+import { AUTOSAVE_KEY, GOALS, WIZARD_PLATFORMS, budgetOf, emptyDraft, hasMeta, stepValid, type Draft } from "@/components/app/new-campaign/model";
 import { AdsStep, AudienceStep, GoalStep, PlatformsStep } from "@/components/app/new-campaign/steps";
 import { DoneScreen, ReviewStep, SidePanel, type LaunchResult } from "@/components/app/new-campaign/review";
 
@@ -24,8 +24,8 @@ import { DoneScreen, ReviewStep, SidePanel, type LaunchResult } from "@/componen
  * Ads → Review & launch, with a live forecast and setup strength. The one
  * create + publish flow: Meta campaigns are created and published (paused, or
  * started), other platforms saved as drafts. The draft autosaves in this
- * browser; `?from=<id>` resumes an existing unpublished campaign; the AI
- * Planner's prefill (sessionStorage "aiPlanPrefill") is applied on open.
+ * browser; `?from=<id>` resumes an existing unpublished campaign (AI Planner
+ * drafts open this way, with their budget, dates and targeting).
  */
 
 const STEPS = ["Goal", "Platforms & budget", "Audience", "Ads", "Review & launch"];
@@ -48,15 +48,20 @@ export default function NewCampaignPage() {
   const fromId = searchParams.get("from");
   const api = useApiClient();
   const { clients } = useClientScope();
+  const access = useAccess();
   const storageKey = fromId ? `${AUTOSAVE_KEY}:${fromId}` : AUTOSAVE_KEY;
 
   const accountsQ = useApi((c) => c.getAdAccounts(), [], { key: "ad-accounts" });
   const fromQ = useApi((c) => (fromId ? c.getCampaign(fromId) : Promise.resolve(null)), [fromId], { key: "wizard-from" });
+  // ?audience=<id> (Audiences page "Use in campaign"): start from that saved audience.
+  const audienceParam = searchParams.get("audience");
+  const audienceQ = useApi((c) => (audienceParam ? c.getAudiences({ limit: "100" }) : Promise.resolve(null)), [audienceParam], { key: "wizard-audience" });
   const accounts = useMemo(() => (accountsQ.data ?? []).filter((a) => a.isActive), [accountsQ.data]);
 
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [hydrated, setHydrated] = useState(false);
   const [restored, setRestored] = useState(false);
+  const [audienceLoaded, setAudienceLoaded] = useState<string | null>(null);
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; detail?: string; step?: string } | null>(null);
@@ -66,11 +71,24 @@ export default function NewCampaignPage() {
   const patch = useCallback((p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p })), []);
   const patchMeta = useCallback((u: Partial<Draft["meta"]>) => setDraft((d) => ({ ...d, meta: { ...d.meta, ...u } })), []);
 
-  // Hydrate once: resume a campaign, or restore the autosaved draft, or apply the AI Planner prefill.
+  // Hydrate once: resume a campaign, or restore the autosaved draft.
   useEffect(() => {
-    if (hydrated || accountsQ.loading || (fromId && fromQ.loading)) return;
+    if (hydrated || accountsQ.loading || (fromId && fromQ.loading) || (audienceParam && audienceQ.loading)) return;
     const saved = readSaved(storageKey);
-    if (saved) {
+    const fromAudience = audienceParam ? audienceQ.data?.audiences.find((a) => a.id === audienceParam) : undefined;
+    if (fromAudience && !fromId) {
+      // Keep an unfinished draft, but put this audience on it (Meta targeting).
+      const base = saved ?? emptyDraft();
+      const meta = accounts.find((a) => a.platform === "META");
+      setDraft({
+        ...base,
+        platforms: meta && !base.platforms.includes("META") ? [...base.platforms, "META"] : base.platforms,
+        accountIds: meta && !base.accountIds.META ? { ...base.accountIds, META: meta.id } : base.accountIds,
+        meta: { ...base.meta, ...audienceToState(fromAudience) },
+      });
+      setRestored(Boolean(saved));
+      setAudienceLoaded(fromAudience.name);
+    } else if (saved) {
       setDraft(saved);
       setRestored(true);
     } else if (fromId && fromQ.data) {
@@ -88,50 +106,13 @@ export default function NewCampaignPage() {
         startDate: c.startDate && c.startDate.slice(0, 10) >= new Date().toISOString().slice(0, 10) ? c.startDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
         endDate: c.endDate ? c.endDate.slice(0, 10) : "",
         runContinuously: !c.endDate,
-        meta: initialState({ headline: c.name }),
+        meta: { ...initialState({ headline: c.name }), ...targetingToState(c.targeting as Parameters<typeof targetingToState>[0]) },
         createdIds: { [c.platform]: c.id },
       });
       setStep(c.platform === "META" ? 3 : 2);
-    } else {
-      try {
-        const raw = window.sessionStorage.getItem("aiPlanPrefill");
-        if (raw) {
-          window.sessionStorage.removeItem("aiPlanPrefill");
-          const p = JSON.parse(raw) as PlanPrefill;
-          const d = emptyDraft();
-          const goal = p.objective ? GOALS.find((g) => [g.id, g.value.toLowerCase(), g.name.toLowerCase()].includes(p.objective!.toLowerCase())) : undefined;
-          const platforms = (p.platforms ?? []).map((x) => x.toUpperCase() as Platform).filter((x) => accounts.some((a) => a.platform === x));
-          const [ageMin, ageMax] = (p.audience?.ageRange ?? "").split(/[-–]/).map((n) => parseInt(n, 10));
-          const genders = (p.audience?.genders ?? []).map((g) => g.toLowerCase());
-          const countries = (p.audience?.locations ?? [])
-            .map((l) => COMMON_COUNTRIES.find((c) => c.name.toLowerCase() === l.toLowerCase() || c.code.toLowerCase() === l.toLowerCase())?.code)
-            .filter((c): c is string => !!c);
-          setDraft({
-            ...d,
-            goal: goal?.id ?? null,
-            name: p.name ?? "",
-            nameTouched: !!p.name,
-            platforms,
-            accountIds: Object.fromEntries(platforms.map((x) => [x, accounts.find((a) => a.platform === x)!.id])),
-            budgetInput: p.budget && p.budget > 0 ? String(Math.round(p.budget)) : "",
-            startDate: p.startDate && p.startDate >= d.startDate ? p.startDate : d.startDate,
-            endDate: p.endDate ?? "",
-            runContinuously: !p.endDate,
-            meta: {
-              ...d.meta,
-              headline: p.name ?? "",
-              ...(ageMin >= 13 && ageMax > ageMin ? { ageMin, ageMax: Math.min(65, ageMax) } : {}),
-              ...(genders.length === 1 ? { genders: genders[0].startsWith("f") || genders[0].startsWith("w") ? [2] : [1] } : {}),
-              countries,
-            },
-          });
-        }
-      } catch {
-        // unreadable prefill: start fresh
-      }
     }
     setHydrated(true);
-  }, [hydrated, accountsQ.loading, fromId, fromQ.loading, fromQ.data, storageKey, accounts]);
+  }, [hydrated, accountsQ.loading, fromId, fromQ.loading, fromQ.data, storageKey, accounts, audienceParam, audienceQ.loading, audienceQ.data]);
 
   // Autosave (minus the File, which can't be stored).
   useEffect(() => {
@@ -199,9 +180,9 @@ export default function NewCampaignPage() {
       for (const p of draft.platforms) {
         if (created[p]) {
           // Reusing a row from a failed attempt or `?from=`: bring it up to date first (local only — not published yet).
-          await api.updateCampaign(created[p]!, { name: nameFor(p), budget: base.budget, budgetType: base.budgetType, startDate: base.startDate, endDate: base.endDate });
+          await api.updateCampaign(created[p]!, { name: nameFor(p), budget: base.budget, budgetType: base.budgetType, startDate: base.startDate, endDate: base.endDate, ...(p === "META" ? { audienceId: draft.meta.libraryAudienceId ?? null } : {}) });
         } else {
-          const c = await api.createCampaign({ ...base, name: nameFor(p), platform: p, adAccountId: draft.accountIds[p]!, targeting: null });
+          const c = await api.createCampaign({ ...base, name: nameFor(p), platform: p, adAccountId: draft.accountIds[p]!, targeting: null, audienceId: p === "META" ? draft.meta.libraryAudienceId ?? null : null });
           created[p] = c.id;
           setDraft((d) => ({ ...d, createdIds: { ...d.createdIds, [p]: c.id } }));
         }
@@ -243,6 +224,20 @@ export default function NewCampaignPage() {
   }
 
   if (done) return <DoneScreen result={done} />;
+  // Read-only roles (B6) can't create campaigns; the API refuses too.
+  if (!access.loading && access.role && !access.can("edit")) {
+    return (
+      <PageBody>
+        <div className="mx-auto flex max-w-[520px] flex-col items-start gap-3 rounded-card border border-line bg-surface p-7 shadow-card">
+          <span className="text-lg font-semibold">Creating campaigns needs Media buyer access</span>
+          <span className="text-sm text-ink-2">{access.why("edit")}</span>
+          <ButtonLink href="/campaigns" variant="secondary">
+            Back to Campaigns
+          </ButtonLink>
+        </div>
+      </PageBody>
+    );
+  }
 
   const meta = hasMeta(draft);
   const launchLabel = !meta || draft.launch === "draft" ? (draft.platforms.length > 1 ? "Save drafts" : "Save draft") : draft.launch === "start" ? "Publish and start" : "Publish to Meta";
@@ -311,9 +306,11 @@ export default function NewCampaignPage() {
         }
       />
       <PageBody className="gap-4">
-        {restored && (
+        {(restored || audienceLoaded) && (
           <div className="flex flex-wrap items-center gap-3 rounded-menu bg-brand-soft px-4 py-3 text-[13px]">
-            <span className="flex-1">Picked up where you left off.</span>
+            <span className="flex-1">
+              {[restored ? "Picked up where you left off." : null, audienceLoaded ? `Audience “${audienceLoaded}” is on the Audience step; adjust it there.` : null].filter(Boolean).join(" ")}
+            </span>
             <Button variant="ghost" size="sm" icon={<RotateCcw size={14} />} onClick={startOver} className="font-semibold text-brand hover:bg-surface hover:text-brand">
               Start over
             </Button>

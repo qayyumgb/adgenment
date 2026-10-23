@@ -1,44 +1,18 @@
-export default function AIPlannerLoading() {
+import { Skeleton } from "@/components/app/ui";
+
+/** Route-level skeleton for /ai-planner: page header, chat panel, plan placeholder. */
+export default function AiPlannerLoading() {
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <div className="h-7 w-40 animate-pulse rounded bg-slate-200/70" />
-        <div className="h-4 w-96 animate-pulse rounded bg-slate-200/70" />
+    <>
+      <div className="flex flex-col gap-2 border-b border-line bg-surface px-[clamp(16px,4vw,32px)] pb-3.5 pt-3">
+        <Skeleton className="h-3 w-48" />
+        <Skeleton className="h-7 w-36" />
+        <Skeleton className="h-3.5 w-80 max-w-full" />
       </div>
-
-      {/* Prompt card */}
-      <div className="rounded-2xl border border-slate-200/70 bg-white p-6 shadow-card space-y-4">
-        <div className="space-y-2">
-          <div className="h-4 w-32 animate-pulse rounded bg-slate-200/70" />
-          <div className="h-24 w-full animate-pulse rounded-xl bg-slate-100" />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="space-y-2">
-              <div className="h-4 w-24 animate-pulse rounded bg-slate-200/70" />
-              <div className="h-10 w-full animate-pulse rounded-xl bg-slate-100" />
-            </div>
-          ))}
-        </div>
-
-        <div className="flex justify-end">
-          <div className="h-11 w-40 animate-pulse rounded-xl bg-slate-200/70" />
-        </div>
+      <div className="flex flex-wrap items-start gap-4 px-[clamp(16px,4vw,32px)] pb-10 pt-6">
+        <Skeleton className="h-[calc(100vh-210px)] min-h-[520px] min-w-0 flex-[1_1_420px] rounded-card" />
+        <Skeleton className="h-[520px] min-w-0 flex-[1.2_1_460px] rounded-card" />
       </div>
-
-      {/* Example chips */}
-      <div className="space-y-3">
-        <div className="h-4 w-32 animate-pulse rounded bg-slate-200/70" />
-        <div className="flex flex-wrap gap-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-9 w-48 animate-pulse rounded-full bg-slate-200/70"
-            />
-          ))}
-        </div>
-      </div>
-    </div>
+    </>
   );
 }

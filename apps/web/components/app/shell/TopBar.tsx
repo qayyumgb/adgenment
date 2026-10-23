@@ -14,6 +14,7 @@ import { useClientScope } from "./ClientContext";
 import { ClientSwitcherMenu } from "./ClientSwitcher";
 import { SidebarContent } from "./Sidebar";
 import { MOBILE_TABS, isActive } from "./nav";
+import { ROLE_LABEL } from "@/components/app/team/access";
 
 // Dark mode is hidden from users until every page is rebuilt on the tokens
 // (docs/DASHBOARD_REDESIGN_PLAN.md § 11, A1). Available in development.
@@ -45,15 +46,16 @@ function RolePill() {
   const { client, hasMultiple } = useClientScope();
   const me = useApi((api) => api.getMe(), [], { key: "me" });
   if (!me.data?.workspace) return null;
-  const owner = me.data.user && me.data.workspace.ownerId === me.data.user.id;
+  const role = me.data.access?.role ?? (me.data.user && me.data.workspace.ownerId === me.data.user.id ? "OWNER" : null);
+  const viewOnly = role === "ANALYST" || role === "CLIENT_VIEWER";
   const scope = client ? client.name : hasMultiple ? "all clients" : "workspace";
   return (
     <span
-      title="Your access level"
+      title={viewOnly ? "You can view and export; changes need a Media buyer or Owner." : "Your access level"}
       className="mr-2 hidden h-9 flex-none items-center gap-[7px] whitespace-nowrap rounded-full border border-brand-soft-2 bg-brand-soft px-3.5 text-[13px] font-semibold text-brand-ink min-[1100px]:inline-flex"
     >
       <ShieldCheck size={15} aria-hidden="true" />
-      {owner ? "Owner" : "Member"} · {scope}
+      {role ? ROLE_LABEL[role] : "Member"} · {viewOnly ? "view only" : scope}
     </span>
   );
 }

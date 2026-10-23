@@ -485,6 +485,69 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-22 — Dashboard redesign A12 (AI Planner)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `/ai-planner` rebuilt as chat + plan.
+  - **What Advertix reads first:** the client's last 30 days per platform and campaign, response curves, fatigued ads, shared audiences and the month's budget (new `GET /ai/planner/context`). The reasoning steps show what it found.
+  - **Who does what:** the model (Claude Opus 5.5, structured outputs, server-side refusal fallback) drafts campaigns, split and timeline. The server computes daily budgets and a forecast from the client's own history; there's no forecast where there's no history.
+- Clarify questions with tappable answers, refinement chips and starters from real data.
+- Plans and every refinement are saved, with the conversation (B5 `Plan` / `PlanVersion`). Includes a Saved plans dialog and a version menu.
+- **Create campaigns as drafts** (`POST /plans/:id/drafts`): paused DRAFT campaigns on the client's accounts, with budget, dates and targeting, linked to the plan. Meta drafts finish in the wizard (`?from=` now loads targeting).
+- Removed the old planner page, prompt and sessionStorage wizard hand-off.
+- **Schema:** `Campaign.planId`, `Campaign.planVersion`. Run `prisma db push` on production before deploying the API.
+
+### 2026-10-22 — Dashboard redesign A11 (Budgets)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `/budgets` replaces `/budget-optimizer` (which redirects there).
+- **Cross-platform allocator:** response curves are fitted from each platform's last 60 days of daily results. Platforms without enough varied history are kept fixed, with the reason shown. Includes sliders with Advertix's mix, a live projection and "Fit to the monthly budget". New `GET /budgets/allocator`.
+- **Apply:** a platform's new total is split across its campaigns in proportion to today's budgets. Live Meta campaigns change on Meta, with change-log entries and Undo; other platforms are listed to change by hand. New `POST /budgets/allocator/apply` (edit rights).
+- **Monthly pacing grid** per client (owners set the monthly budget inline), plus the per-campaign Budget shift suggestions and "Review budgets".
+- No schema change.
+
+### 2026-10-22 — Dashboard redesign B6 (Team: roles, invites, seats)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- Roles are now Owner / Media buyer / Analyst / Client viewer, enforced on every API request (`lib/access.ts` `roleGuard`). Members can be limited to some clients; client viewers always are. Old Admin / Editor → Media buyer, Viewer → Analyst.
+- Real invites: stored, emailed via Resend, 7-day links for the invited email only, seats per plan (client viewers free on Agency), resend / cancel / copy link. Accepting at `/invite/<token>`. The old invite endpoint pretended to send; it no longer does.
+- Settings › Team rebuilt (seats, members, pending invites, D4 invite / change-access dialog). The role pill shows the real role. Read-only roles get disabled actions with a reason.
+- New `Invite` and `MemberClientAccess` models; `WorkspaceMember.createdAt`.
+- **Production, before deploying the API:** `npx prisma db push`, then `npx tsx --env-file=.env scripts/migrate-roles.ts`.
+- **API env:** set `RESEND_API_KEY` and `INVITE_FROM` (verified sender), and check `FRONTEND_URL`.
+
+### 2026-10-22 — Dashboard redesign A9 (Audiences)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `/audiences` rebuilt as one board of saved audiences and the custom / lookalike / saved audiences on each Meta account in scope. Each shows size, the campaigns using it, ROAS / CPA, status, verified overlap warnings (no estimated %) and lookalike ideas. New `GET /audiences/board`.
+- New Create audience dialog: Describe it (AI), Build it, and Lookalike (now creatable from Advertix, on the seed's ad account).
+- "Use in campaign" opens the wizard with the audience loaded. Campaigns record the saved audience they came from (`Campaign.audienceId`).
+- Fixes: names instead of ids when editing, uncommon countries visible, age validation, client-scoped audiences, honest Meta error messages.
+- **Run `prisma db push` on production before deploying the API.**
+
+### 2026-10-22 — Dashboard redesign A8 (Creatives)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `/creatives` rebuilt as one board of library creatives and synced Meta ads, with real 30-day results, delivery status (Live / Learning / Fatigued / Paused / Draft…) and creative fatigue. New `GET /creatives/board`. Publishing a library creative now links it to its campaign.
+- Creative studio: prompt, kind, format, tone and images give four drafts (or a carousel) that build on the best-performing hook. Drafts are saved on request, and AI failures are shown honestly (no placeholder copy).
+- Upload, carousel builder and the copy-variant editor carry over. Image hashes are saved, existing images can be replaced, and new creatives belong to the client in scope.
+- No schema change.
+
+### 2026-10-22 — Dashboard redesign B4 (Ad sets, ads, ad-level metrics — Meta)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- New `AdSet`, `Ad` and `AdMetrics` models plus `AdAccount.backfilledAt`. Meta sync now pulls ad sets, ads and daily ad-level results (including landing-page views and add-to-cart). The first sync of each account backfills 90 days.
+- `GET /campaigns/:id/structure`; pause / resume ad sets and ads and change ad set budgets on Meta, all in the change log with Undo; `learning` on `/campaigns`; `adLevel` funnel totals on `/analytics/overview`.
+- Campaign detail: real Ad sets and Ads tabs, plus the ad-set grid and ad tiles with creative-fatigue reads on Overview. Campaigns grid: Learning / Learning limited. Analytics funnel: real landing-page views and add-to-cart.
+- Navigation: a top progress bar on every in-app click, and route skeletons for Budgets and New campaign.
+- **Run `prisma db push` on production before deploying the API.** The first sync after deploy pulls 90 days per Meta account, so it takes longer than usual.
+
 ### 2026-10-22 — Dashboard redesign A7 (New campaign wizard)
 
 Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).

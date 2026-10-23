@@ -11,6 +11,7 @@ import ConnectModal from "@/components/connect/ConnectModal";
 import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
 import { useClientScope } from "@/components/app/shell/ClientContext";
 import { Button, ButtonLink, Card, KpiCard } from "@/components/app/ui";
+import { useAccess } from "@/components/app/team/access";
 import { SpendRevenueChart, type DayPoint } from "@/components/app/overview/SpendRevenueChart";
 import { OverviewSuggestions } from "@/components/app/overview/OverviewSuggestions";
 import { ClientsPacingTable } from "@/components/app/overview/ClientsPacingTable";
@@ -68,6 +69,7 @@ export default function OverviewPage() {
   const { user } = useUser();
   const { clientId, client, clients, hasMultiple } = useClientScope();
   const [connectOpen, setConnectOpen] = useState(false);
+  const access = useAccess();
 
   const me = useApi((c) => c.getMe(), [], { key: "me" });
   const accounts = useApi((c) => c.getAdAccounts(), [], { key: "ad-accounts" });
@@ -154,9 +156,15 @@ export default function OverviewPage() {
             <Button variant="secondary" icon={<Download size={16} />} disabled title="Report export is coming soon">
               Export report
             </Button>
-            <ButtonLink href="/campaigns/new" variant="primary" icon={<Plus size={16} strokeWidth={2.5} />}>
-              New campaign
-            </ButtonLink>
+            {access.can("edit") ? (
+              <ButtonLink href="/campaigns/new" variant="primary" icon={<Plus size={16} strokeWidth={2.5} />}>
+                New campaign
+              </ButtonLink>
+            ) : (
+              <Button variant="primary" icon={<Plus size={16} strokeWidth={2.5} />} disabled title={access.why("edit")}>
+                New campaign
+              </Button>
+            )}
           </>
         }
       />

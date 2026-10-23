@@ -25,11 +25,26 @@ enum PlanType {
   ENTERPRISE
 }
 
+/// Team roles (plan B6, decision 7). Owner: everything. Media buyer: runs
+/// campaigns, creatives, audiences, connections. Analyst: sees and exports
+/// everything, changes nothing. Client viewer: read-only, own clients only.
 enum WorkspaceRole {
   OWNER
+  MEDIA_BUYER
+  ANALYST
+  CLIENT_VIEWER
+  /// Legacy values, no longer assigned: scripts/migrate-roles.ts moves rows off
+  /// them (ADMIN / EDITOR → MEDIA_BUYER, VIEWER → ANALYST). Kept so the push
+  /// never has to drop enum values; read as their new equivalents.
   ADMIN
   EDITOR
   VIEWER
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
 }
 
 enum CampaignStatus {
@@ -119,6 +134,7 @@ model Workspace {
   suggestions           Suggestion[]
   plans                 Plan[]
   changeLogs            ChangeLog[]
+  invites               Invite[]
 
   @@index([ownerId])
 }
@@ -146,24 +162,69 @@ model Client {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  adAccounts  AdAccount[]
-  creatives   Creative[]
-  audiences   Audience[]
-  suggestions Suggestion[]
-  plans       Plan[]
+  workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adAccounts   AdAccount[]
+  creatives    Creative[]
+  audiences    Audience[]
+  suggestions  Suggestion[]
+  plans        Plan[]
+  memberAccess MemberClientAccess[]
 
   @@index([workspaceId])
+}
+
+/// A member limited to some clients (plan B6).
+model MemberClientAccess {
+  id        String   @id @default(cuid())
+  memberId  String
+  clientId  String
+  createdAt DateTime @default(now())
+
+  member WorkspaceMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  client Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, clientId])
+  @@index([clientId])
+}
+
+/// A pending invitation to join a workspace (plan B6). The link carries
+/// `token`; it works for 7 days and only for the invited email.
+model Invite {
+  id           String        @id @default(cuid())
+  workspaceId  String
+  email        String
+  role         WorkspaceRole
+  /// Clients the new member will be limited to (empty = all).
+  clientIds    String[]
+  token        String        @unique
+  invitedById  String?
+  status       InviteStatus  @default(PENDING)
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  acceptedById String?
+  emailSentAt  DateTime?
+  /// Why the email didn't go out (no email key, Resend error). The link still works.
+  emailError   String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([email])
 }
 
 model WorkspaceMember {
   id          String        @id @default(cuid())
   workspaceId String
   userId      String
-  role        WorkspaceRole @default(VIEWER)
+  role        WorkspaceRole @default(ANALYST)
+  createdAt   DateTime      @default(now())
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Clients this member may see. Empty = all clients (client viewers always have some).
+  clientAccess MemberClientAccess[]
 
   @@unique([workspaceId, userId])
   @@index([workspaceId])
@@ -209,6 +270,9 @@ model AdAccount {
   /// long-lived tokens ≈ 60 days, LinkedIn refresh tokens ≈ 1 year). Set at
   /// OAuth time. Null = no known expiry (Google refresh tokens, TikTok).
   tokenExpiresAt  DateTime?
+  /// When the first sync pulled 90 days of history (campaign + ad level).
+  /// Null = not yet; later syncs only refresh the last 30 days.
+  backfilledAt    DateTime?
 
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
@@ -257,6 +321,12 @@ model Campaign {
   /// Last publish error message if the most recent attempt failed. Cleared
   /// on next successful publish.
   publishError       String?
+  /// The saved audience (library) this campaign's targeting came from, set by
+  /// the New campaign wizard (A9). Null = built by hand or synced.
+  audienceId         String?
+  /// The saved AI plan (and its version) this draft was created from (A12).
+  planId             String?
+  planVersion        Int?
 
   workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   adAccount   AdAccount         @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
@@ -264,6 +334,10 @@ model Campaign {
   creatives   Creative[]
   suggestions Suggestion[]
   changeLogs  ChangeLog[]
+  adSets      AdSet[]
+  ads         Ad[]
+  audience    Audience?         @relation(fields: [audienceId], references: [id], onDelete: SetNull)
+  plan        Plan?             @relation(fields: [planId], references: [id], onDelete: SetNull)
 
   @@unique([adAccountId, externalId])
   @@index([workspaceId])
@@ -272,6 +346,8 @@ model Campaign {
   @@index([workspaceId, status])
   @@index([workspaceId, platform])
   @@index([externalId])
+  @@index([audienceId])
+  @@index([planId])
 }
 
 model CampaignMetrics {
@@ -293,6 +369,89 @@ model CampaignMetrics {
 
   @@unique([campaignId, date])
   @@index([campaignId])
+  @@index([date])
+}
+
+/// An ad set synced from the platform (plan B4, Meta first). Budgets live
+/// here unless the campaign has its own (campaign budget optimisation).
+model AdSet {
+  id               String         @id @default(cuid())
+  campaignId       String
+  externalId       String
+  name             String
+  status           CampaignStatus
+  /// The platform's delivery state (e.g. ACTIVE, CAMPAIGN_PAUSED, WITH_ISSUES).
+  effectiveStatus  String?
+  dailyBudget      Decimal?       @db.Decimal(12, 2)
+  lifetimeBudget   Decimal?       @db.Decimal(12, 2)
+  optimizationGoal String?
+  /// Meta learning phase: LEARNING | SUCCESS | FAIL ("learning limited"). Null = unknown.
+  learningStage    String?
+  targeting        Json?
+  startTime        DateTime?
+  endTime          DateTime?
+  /// Range-level unique reach and frequency for the last 30 days (not summable from days).
+  reach30d         Int            @default(0)
+  frequency30d     Float          @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  ads      Ad[]
+
+  @@unique([campaignId, externalId])
+  @@index([campaignId])
+}
+
+/// An ad synced from the platform, with what its creative shows.
+model Ad {
+  id                 String         @id @default(cuid())
+  campaignId         String
+  adSetId            String
+  externalId         String
+  name               String
+  status             CampaignStatus
+  effectiveStatus    String?
+  creativeExternalId String?
+  /// IMAGE | VIDEO | CAROUSEL | UNKNOWN
+  format             String         @default("UNKNOWN")
+  imageUrl           String?
+  headline           String?
+  body               String?
+  callToAction       String?
+  linkUrl            String?
+  reach30d           Int            @default(0)
+  frequency30d       Float          @default(0)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  campaign Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  adSet    AdSet       @relation(fields: [adSetId], references: [id], onDelete: Cascade)
+  metrics  AdMetrics[]
+
+  @@unique([adSetId, externalId])
+  @@index([campaignId])
+}
+
+/// Daily ad-level results. Reach is per day (unique within the day), so it
+/// can't be summed across days; the 30-day figure is on the Ad.
+model AdMetrics {
+  id               String   @id @default(cuid())
+  adId             String
+  date             DateTime
+  impressions      Int      @default(0)
+  reach            Int      @default(0)
+  clicks           Int      @default(0)
+  spend            Decimal  @default(0) @db.Decimal(12, 2)
+  conversions      Int      @default(0)
+  revenue          Decimal  @default(0) @db.Decimal(12, 2)
+  landingPageViews Int      @default(0)
+  addToCart        Int      @default(0)
+  updatedAt        DateTime @updatedAt
+
+  ad Ad @relation(fields: [adId], references: [id], onDelete: Cascade)
+
+  @@unique([adId, date])
   @@index([date])
 }
 
@@ -362,8 +521,9 @@ model Audience {
   /// Owning client. Null = shared template, shown for every client.
   clientId    String?
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  campaigns Campaign[]
 
   @@index([workspaceId])
   @@index([workspaceId, type])
@@ -543,6 +703,7 @@ model Plan {
   workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   client    Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
   versions  PlanVersion[]
+  campaigns Campaign[]
 
   @@index([workspaceId, updatedAt])
   @@index([clientId])
@@ -593,7 +754,8 @@ model ChangeLog {
   actorUserId    String?
   /// "campaign.budget" | "campaign.status" | "campaign.rename" | "campaign.schedule" |
   /// "campaign.targeting" | "campaign.create" | "campaign.duplicate" |
-  /// "campaign.publish" | "campaign.delete"
+  /// "campaign.publish" | "campaign.delete" | "adset.status" | "adset.budget" | "ad.status"
+  /// (ad set / ad entries carry `adSetId` / `adId` and the name in before / after)
   action         String
   /// Human-readable line ("Raised daily budget from $480 to $550").
   summary        String

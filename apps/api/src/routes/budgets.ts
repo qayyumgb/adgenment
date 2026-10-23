@@ -3,6 +3,8 @@ import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
 import { clientMark, ensureClients, parseClientScope } from "../lib/clients";
+import { allocatorData, applyAllocation } from "../services/allocator.service";
+import { getAccess } from "../lib/access";
 
 /**
  * Budgets — /api/budgets (docs/DASHBOARD_REDESIGN_PLAN.md, B1 + A11).
@@ -117,6 +119,33 @@ router.get("/pacing", async (req: Request, res: Response, next: NextFunction) =>
       expectedPct: Math.round(expectedPct * 1000) / 10,
       clients: rows,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /budgets/allocator?clientId= — one client's daily budget per platform,
+ * fitted response curves, bounds, and this month's budget (plan A11).
+ */
+router.get("/allocator", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const scope = await parseClientScope(req, workspace.id);
+    res.json(await allocatorData(workspace.id, scope));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /budgets/allocator/apply { clientId, targets: { META: 600, … } } — proportional split, Meta now. */
+router.post("/allocator/apply", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const clientId = typeof req.body?.clientId === "string" ? req.body.clientId : "";
+    const access = await getAccess(req);
+    if (access?.clientIds && !access.clientIds.includes(clientId)) return res.status(404).json({ error: "Client not found" });
+    res.json(await applyAllocation(workspace.id, req.dbUserId!, clientId, req.body?.targets ?? {}));
   } catch (err) {
     next(err);
   }

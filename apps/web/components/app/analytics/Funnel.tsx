@@ -8,28 +8,44 @@ const compact = (n: number) =>
 
 /**
  * Conversion funnel (Analytics, guide §5.7). Impressions, clicks and
- * conversions are real; landing-page views and add-to-cart need ad-level
- * event sync (B4), so those steps say so instead of showing made-up numbers.
+ * conversions cover every platform; landing-page views and add-to-cart come
+ * from Meta's ad-level results (B4). Until those have synced the two steps
+ * say so instead of showing made-up numbers, and when other platforms are in
+ * scope their rates are taken against Meta's own clicks.
  */
+type AdLevel = { impressions: number; clicks: number; conversions: number; landingPageViews: number; addToCart: number };
+
 export function Funnel({
   impressions,
   clicks,
   conversions,
   scopeLabel,
+  adLevel = null,
   loading = false,
 }: {
   impressions: number;
   clicks: number;
   conversions: number;
   scopeLabel: string;
+  /** Meta ad-level totals for the same scope; null until synced. */
+  adLevel?: AdLevel | null;
   loading?: boolean;
 }) {
-  const steps: { label: string; value: number | null; prev?: number }[] = [
+  // Ad-level data covers only part of the scope when other platforms delivered too.
+  const metaOnly = adLevel !== null && adLevel.impressions < impressions * 0.98;
+  const lpv = adLevel?.landingPageViews ?? null;
+  const atc = adLevel?.addToCart ?? null;
+  const steps: { label: string; value: number | null; prev?: number; of?: string }[] = [
     { label: "Impressions", value: impressions },
     { label: "Clicks", value: clicks, prev: impressions },
-    { label: "Landing page views", value: null },
-    { label: "Added to cart", value: null },
-    { label: "Conversions", value: conversions, prev: clicks },
+    { label: "Landing page views", value: lpv, prev: adLevel ? (metaOnly ? adLevel.clicks : clicks) : undefined, of: metaOnly ? "of Meta clicks" : undefined },
+    { label: "Added to cart", value: atc, prev: lpv ?? undefined },
+    {
+      label: "Conversions",
+      value: conversions,
+      prev: !metaOnly && atc ? atc : !metaOnly && lpv ? lpv : clicks,
+      of: metaOnly || !(atc || lpv) ? "of clicks" : undefined,
+    },
   ];
   const ctr = impressions > 0 ? (clicks / impressions) * 100 : null;
   const cvr = clicks > 0 ? (conversions / clicks) * 100 : null;
@@ -56,7 +72,7 @@ export function Funnel({
           {steps.map((s) => {
             const missing = s.value === null;
             const w = missing ? 0 : impressions > 0 ? Math.max(4, 100 * Math.pow((s.value as number) / impressions, 0.28)) : 0;
-            const rate = !missing && s.prev ? ((s.value as number) / s.prev) * 100 : null;
+            const rate = !missing && s.prev ? Math.min(100, ((s.value as number) / s.prev) * 100) : null;
             return (
               <li key={s.label} className="flex items-center gap-3">
                 <span className={cn("w-28 flex-none text-sm font-medium min-[700px]:w-44", missing && "text-ink-3")}>{s.label}</span>
@@ -67,15 +83,19 @@ export function Funnel({
                   {missing ? "—" : compact(s.value as number)}
                 </span>
                 <span className="hidden w-32 flex-none text-right text-xs text-ink-2 min-[700px]:block">
-                  {missing ? "Not synced yet" : rate === null ? "100%" : `${rate.toFixed(rate < 1 ? 2 : 1)}% of previous`}
+                  {missing ? "Not synced yet" : rate === null ? (s.prev === 0 ? "—" : "100%") : `${rate.toFixed(rate < 1 ? 2 : 1)}% ${s.of ?? "of previous"}`}
                 </span>
               </li>
             );
           })}
         </ol>
       )}
-      {!loading && (
-        <p className="text-xs text-ink-3">Landing page views and add-to-cart arrive with ad-level event sync.</p>
+      {!loading && (!adLevel || metaOnly) && (
+        <p className="text-xs text-ink-3">
+          {!adLevel
+            ? "Landing page views and add-to-cart come from Meta ad-level results. They show after the next Meta sync."
+            : "Landing page views and add-to-cart are from Meta ads only; the other platforms don't report them to Advertix yet."}
+        </p>
       )}
       {!loading && read && <AiNote title="Where people drop off">{read}</AiNote>}
     </Card>

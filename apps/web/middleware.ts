@@ -71,11 +71,13 @@ const APP_ONLY_PREFIXES = [
   "/creatives",
   "/insights",
   "/budget-optimizer",
+  "/budgets",
   "/ai-planner",
   "/billing",
   "/settings",
   "/onboarding",
   "/connect", // /connect/done — popup callback page
+  "/invite", // /invite/<token> — team invites (B6)
   "/sign-in",
   "/sign-up",
 ];

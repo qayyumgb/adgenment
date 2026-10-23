@@ -1,6 +1,7 @@
 import { Router } from "express";
 import authRouter from "./auth";
 import campaignRouter from "./campaigns";
+import campaignStructureRouter from "./campaign-structure";
 import analyticsRouter from "./analytics";
 import aiRouter from "./ai";
 import adAccountRouter from "./ad-accounts";
@@ -18,11 +19,17 @@ import budgetsRouter from "./budgets";
 import suggestionsRouter from "./suggestions";
 import plansRouter from "./plans";
 import changeLogRouter from "./change-log";
+import invitesRouter from "./invites";
+import { roleGuard } from "../lib/access";
 
 const router = Router();
 
+// Team roles (B6): every request with a token is checked here first.
+router.use(roleGuard);
+
 router.use("/auth", authRouter);
 router.use("/campaigns", campaignRouter);
+router.use("/campaigns", campaignStructureRouter);
 router.use("/analytics", analyticsRouter);
 router.use("/ai", aiRouter);
 router.use("/ad-accounts", adAccountRouter);
@@ -40,5 +47,6 @@ router.use("/budgets", budgetsRouter);
 router.use("/suggestions", suggestionsRouter);
 router.use("/plans", plansRouter);
 router.use("/change-log", changeLogRouter);
+router.use("/invites", invitesRouter);
 
 export default router;

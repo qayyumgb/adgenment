@@ -46,7 +46,9 @@ export type Platform =
   | "X";
 
 export type PlanType = "FREE" | "STARTER" | "PRO" | "ENTERPRISE";
-export type WorkspaceRole = "OWNER" | "ADMIN" | "EDITOR" | "VIEWER";
+/** Team roles (B6). The API reads legacy ADMIN / EDITOR / VIEWER rows as MEDIA_BUYER / ANALYST. */
+export type WorkspaceRole = "OWNER" | "MEDIA_BUYER" | "ANALYST" | "CLIENT_VIEWER";
+export type Capability = "view" | "export" | "edit" | "connect" | "clients" | "team" | "workspace";
 export type CampaignStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "ENDED";
 export type BudgetType = "DAILY" | "LIFETIME";
 export type CreativeType = "IMAGE" | "VIDEO" | "CAROUSEL" | "TEXT";
@@ -180,6 +182,43 @@ export interface PacingResponse {
   clients: ClientPacing[];
 }
 
+/** One platform in the Budgets allocator (A11). */
+export interface AllocatorPlatform {
+  platform: Platform;
+  name: string;
+  /** Sum of the platform's active daily-budget campaigns. */
+  currentDaily: number;
+  /** value(b) = A · (1 − e^(−b/k)); null when it couldn't be fitted. */
+  curve: { A: number; k: number } | null;
+  fit: { r2: number; points: number; observedMax: number } | null;
+  noCurveReason: string | null;
+  /** Safe range for this platform's daily total (fixed when there's no curve). */
+  bounds: { min: number; max: number };
+  avgDaily: { spend: number; value: number };
+  /** Meta changes go to the platform; the others are read-only syncs. */
+  writable: boolean;
+  campaigns: { id: string; name: string; budget: number; blocker: string | null; minDailyBudget: number | null }[];
+}
+
+export interface AllocatorData {
+  clients: { id: string; name: string }[];
+  clientId: string | null;
+  windowDays: number;
+  currency: string | null;
+  mixedCurrency: boolean;
+  /** Revenue when recorded, otherwise conversions. */
+  metric: "revenue" | "conversions";
+  platforms: AllocatorPlatform[];
+  month: { budget: number; spent: number; daysLeft: number; daysInMonth: number } | null;
+}
+
+export interface AllocationResult {
+  results: { campaignId: string; name: string; platform: Platform; from: number; to: number; status: "applied" | "skipped" | "failed"; reason: string | null }[];
+  applied: number;
+  skipped: number;
+  failed: number;
+}
+
 export interface ClientBreakdown {
   /** Null = ad accounts not assigned to a client. */
   clientId: string | null;
@@ -269,6 +308,77 @@ export interface Campaign {
     conversions: number;
     revenue: number;
   };
+  /** Meta learning phase from its ad sets (B4, /campaigns list): an active ad set still learning, or stuck ("learning limited"). */
+  learning?: "LEARNING" | "LIMITED" | null;
+}
+
+/** Results of one ad or ad set over the requested period (B4). */
+export interface StructureTotals {
+  spend: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  revenue: number;
+  landingPageViews: number;
+  addToCart: number;
+}
+
+export interface CampaignAdSet {
+  id: string;
+  externalId: string;
+  name: string;
+  status: CampaignStatus;
+  /** Meta delivery state, e.g. ACTIVE, CAMPAIGN_PAUSED, WITH_ISSUES. */
+  effectiveStatus: string | null;
+  dailyBudget: number | null;
+  lifetimeBudget: number | null;
+  optimizationGoal: string | null;
+  /** LEARNING | SUCCESS | FAIL (learning limited) | null */
+  learningStage: string | null;
+  /** Plain targeting line, e.g. "Women 25–44 · US, CA · Skincare +2". */
+  audience: string;
+  reach30d: number;
+  frequency30d: number;
+  adCount: number;
+  totals: StructureTotals;
+  /** Its own on / off switch (it can be on while the campaign is off). */
+  switchOn: boolean;
+  /** Why the budget / status can't be changed from Advertix, or null. */
+  budgetBlocker: string | null;
+  statusBlocker: string | null;
+}
+
+export interface CampaignAd {
+  id: string;
+  adSetId: string;
+  externalId: string;
+  name: string;
+  status: CampaignStatus;
+  effectiveStatus: string | null;
+  format: "IMAGE" | "VIDEO" | "CAROUSEL" | "UNKNOWN";
+  imageUrl: string | null;
+  headline: string | null;
+  body: string | null;
+  callToAction: string | null;
+  linkUrl: string | null;
+  reach30d: number;
+  frequency30d: number;
+  totals: StructureTotals;
+  /** Frequency (30 days) + week-on-week CTR read. */
+  fatigue: { level: "ok" | "watch" | "fatigued"; reason: string | null };
+  /** Its own on / off switch (it can be on while its ad set or campaign is off). */
+  switchOn: boolean;
+  statusBlocker: string | null;
+}
+
+export interface CampaignStructure {
+  platform: Platform;
+  syncedAt: string | null;
+  days: number;
+  /** One budget for the whole campaign (campaign budget optimisation). */
+  campaignBudget: boolean;
+  adSets: CampaignAdSet[];
+  ads: CampaignAd[];
 }
 
 export interface CampaignMetric {
@@ -298,6 +408,8 @@ export interface Creative {
   aiGenerated: boolean;
   createdAt: string;
   campaign?: { name: string; platform: Platform } | null;
+  /** Owning client (B1); null = shared across clients. */
+  clientId?: string | null;
 }
 
 /* ───────────────────────────── */
@@ -328,6 +440,8 @@ export interface CreateCampaignInput {
   endDate?: string | null;
   adAccountId: string;
   targeting?: unknown;
+  /** The saved audience the targeting came from (A9); null clears it. */
+  audienceId?: string | null;
 }
 
 export interface CreateCreativeInput {
@@ -337,6 +451,62 @@ export interface CreateCreativeInput {
   campaignId?: string | null;
   aiGenerated?: boolean;
   status?: CreativeStatus;
+  /** Owning client (B1); null / omitted = shared library item. */
+  clientId?: string | null;
+}
+
+export type CreativeBoardStatus = "Live" | "Learning" | "Fatigued" | "Paused" | "In review" | "Rejected" | "Ended" | "Draft" | "Archived";
+
+/** One card on the Creatives board (A8): a library creative or a synced Meta ad. */
+export interface CreativeBoardItem {
+  key: string;
+  source: "library" | "meta";
+  creativeId: string | null;
+  adId: string | null;
+  campaignId: string | null;
+  campaignName: string | null;
+  name: string;
+  format: "IMAGE" | "VIDEO" | "CAROUSEL" | "TEXT" | "UNKNOWN";
+  imageUrl: string | null;
+  videoId: string | null;
+  headline: string | null;
+  body: string | null;
+  callToAction: string | null;
+  linkUrl: string | null;
+  cardCount: number;
+  status: CreativeBoardStatus;
+  platform: Platform;
+  clientId: string | null;
+  currency: string | null;
+  aiGenerated: boolean;
+  createdAt: string;
+  /** Library item with no image / video yet. */
+  needsMedia: boolean;
+  totals: StructureTotals;
+  frequency: number;
+  fatigue: { level: "ok" | "watch" | "fatigued"; reason: string | null };
+  adCount: number;
+  /** Meta ads only: its own on / off switch, and why it can't be changed. */
+  switchOn: boolean | null;
+  statusBlocker: string | null;
+  /** Library items: the raw content (for the edit dialog). */
+  content: unknown;
+}
+
+export interface CreativeBoard {
+  days: number;
+  items: CreativeBoardItem[];
+  /** Best-returning item with copy: the studio builds on its hook. */
+  bestHook: { key: string; name: string; text: string; roas: number; ctr: number | null } | null;
+}
+
+/** AI copy variants (POST /ai/generate-copy). Carousel requests return `cards` instead of headlines. */
+export interface GeneratedCopy {
+  headlines?: string[];
+  primary_texts: string[];
+  descriptions?: string[];
+  ctas: string[];
+  cards?: { headline: string; description?: string }[];
 }
 
 /* ───────────────────────────── */
@@ -365,6 +535,8 @@ export interface Audience {
   approxSize: number | null;
   createdAt: string;
   updatedAt: string;
+  /** Owning client (B1); null = shared across clients. */
+  clientId?: string | null;
 }
 
 export interface AudiencesResponse {
@@ -382,6 +554,58 @@ export interface CreateAudienceInput {
   targeting: MetaTargetingSpec;
   aiGenerated?: boolean;
   approxSize?: number | null;
+  /** Owning client (B1); null = shared. */
+  clientId?: string | null;
+}
+
+export type AudienceBoardStatus = "Ready" | "Unused" | "Building" | "Learning limited" | "Underperforming";
+
+/** One row on the Audiences board (A9): a saved audience or one on the client's Meta account. */
+export interface AudienceBoardItem {
+  key: string;
+  source: "library" | "meta-custom" | "meta-saved";
+  id: string;
+  name: string;
+  typeLabel: string;
+  summary: string;
+  description: string | null;
+  sizeLower: number | null;
+  sizeUpper: number | null;
+  clientId: string | null;
+  /** Meta items: the ad account (our id) it lives on. */
+  adAccountId: string | null;
+  aiGenerated: boolean;
+  updatedAt: string | null;
+  ready: boolean;
+  /** Campaigns using it; null when Meta doesn't say (saved audiences on Meta). */
+  usedIn: number | null;
+  campaigns: { id: string; name: string }[];
+  totals: StructureTotals;
+  status: AudienceBoardStatus;
+  /** Verified only: lookalike next to its seed, shared ad sets, near-duplicates. */
+  warnings: { kind: "lookalike-seed" | "shared-ad-sets" | "duplicate"; text: string; campaignId: string | null }[];
+  lookalikeOf: string[];
+  canSeedLookalike: boolean;
+  library: { type: AudienceType; targeting: MetaTargetingSpec } | null;
+}
+
+export interface AudienceBoardTip {
+  key: string;
+  kind: "warning" | "lookalike";
+  title: string;
+  detail: string;
+  audienceKey: string;
+  campaignId: string | null;
+  seedId: string | null;
+}
+
+export interface AudienceBoard {
+  days: number;
+  metaAccounts: { id: string; name: string; clientId: string | null }[];
+  /** Why Meta audiences couldn't be loaded (expired connection, rate limit…). */
+  metaError: string | null;
+  items: AudienceBoardItem[];
+  tips: AudienceBoardTip[];
 }
 
 /* ───────────────────────────── */
@@ -531,103 +755,123 @@ export interface PlannerTurn {
   content: string;
 }
 
-/** Real account facts the planner grounded its numbers in. Shown in the UI so
- *  the user can see the advice is about THEIR account, not a generic one. */
-export interface PlannerContext {
-  currency: string | null;
+/** One platform as the planner read it (A12): last 30 days for the client. */
+export interface PlannerPlatform {
+  platform: Platform;
+  name: string;
   minDailyBudget: number | null;
-  connectedPlatforms: string[];
-  hasPixel?: boolean;
+  currentDaily: number;
+  spend: number;
+  value: number;
+  /** ROAS (revenue) or cost per result (conversions). */
+  ratio: number | null;
+  daysWithSpend: number;
 }
 
-export interface PlanScenario {
-  label: string;
-  detail: string;
-  metric: string;
-}
-
-export interface PlanMistake {
+export interface PlannerStarter {
+  clientId: string;
+  clientName: string;
+  short: string;
   title: string;
-  detail: string;
-  fix: string;
+  meta: string;
+  brief: string;
+  /** False = a fill-in brief: put it in the composer instead of sending. */
+  send: boolean;
 }
 
-export interface CampaignPlan {
-  strategy: {
-    platform: string[];
-    objective: string;
-    duration_days: number;
-    daily_budget?: number;
-    total_budget: number;
-    currency: string;
-    summary: string;
-  };
-  budget_recommendation?: {
-    amount: number;
-    period: string;
-    rationale: string;
-  };
-  budget_allocation: Array<{
-    channel: string;
-    percentage: number;
-    amount: number;
-    rationale: string;
-  }>;
-  target_audience: {
-    age_range: string;
-    genders: string[];
-    interests: string[];
-    locations: string[];
-    behaviors: string[];
-    estimated_reach: string;
-    persona?: string;
-  };
-  ad_formats: Array<{
-    format: string;
-    count: number;
-    placement: string;
-    rationale: string;
-  }>;
-  expected_results: {
-    primary_metric: string;
-    estimated_min: number;
-    estimated_max: number;
-    estimated_reach_min: number;
-    estimated_reach_max: number;
-    estimated_cpl_min: number;
-    estimated_cpl_max: number;
-    confidence: "low" | "medium" | "high";
-  };
-  realistic_expectations?: {
-    assumption: string;
-    best_case: PlanScenario;
-    realistic_case: PlanScenario;
-    worst_case: PlanScenario;
-  };
-  common_mistakes?: PlanMistake[];
-  next_steps?: {
-    first_24h: string[];
-    first_48h: string[];
-    first_7d: string[];
-  };
-  ai_insights: string[];
-  recommended_campaign_name: string;
+/** GET /ai/planner/context: what Advertix reads before planning. */
+export interface PlannerContextData {
+  clients: { id: string; name: string; short: string }[];
+  client: { id: string; name: string; short: string } | null;
+  currency: string | null;
+  mixedCurrency: boolean;
+  metric: "revenue" | "conversions";
+  hasPixel: boolean | null;
+  platforms: PlannerPlatform[];
+  totals: { campaigns: number; spend: number; value: number };
+  fatigued: { ad: string; campaign: string; reason: string }[];
+  shared: { audience: string; campaigns: string[] }[];
+  month: { name: string; budget: number; spent: number; daysLeft: number } | null;
+  steps: PlannerSteps;
+  starters: PlannerStarter[];
 }
 
-/** Discriminated union — Alex either asks for more detail or produces a plan. */
+/** What each reasoning step found, in words. */
+export interface PlannerSteps {
+  performance: string;
+  compare: string;
+  checks: string;
+}
+
+export type PlanGoal = "Traffic" | "Lead Generation" | "Conversions" | "Awareness" | "Video Views";
+
+export interface PlanCampaign {
+  platform: Platform;
+  name: string;
+  objective: PlanGoal;
+  audience: string;
+  ageMin: number;
+  ageMax: number;
+  genders: "all" | "men" | "women";
+  countries: string[];
+  interests: string[];
+  share: number;
+  startDay: number;
+  endDay: number;
+  needs: string[];
+  rationale: string;
+  buildsOn: string;
+  start: string;
+  end: string;
+  total: number;
+  daily: number;
+  blocker: string | null;
+  warning: string | null;
+  expected: { ratio: number; basis: "curve" | "average" } | null;
+}
+
+/** A plan (v2): the model's draft plus budgets and a forecast computed from the client's history. */
+export interface AiPlan {
+  version: 2;
+  clientId: string | null;
+  clientName: string;
+  currency: string | null;
+  metric: "revenue" | "conversions";
+  title: string;
+  budget: number;
+  days: number;
+  start: string;
+  end: string;
+  target: { metric: "roas" | "cpa" | "none"; value: number };
+  phases: { name: string; startDay: number; endDay: number; start: string; end: string }[];
+  campaigns: PlanCampaign[];
+  forecast: {
+    value: number;
+    low: number | null;
+    high: number | null;
+    ratio: number;
+    covered: number;
+    uncovered: { budget: number; platforms: string[] };
+    basis: string;
+  } | null;
+  forecastNote: string | null;
+  meetsTarget: boolean | null;
+  watchOuts: string[];
+  assumptions: string[];
+  checks: { first24h: string[]; first48h: string[]; first7d: string[] };
+  /** The model's draft; sent back on follow-ups. */
+  input: Record<string, unknown>;
+}
+
 export type PlannerResponse =
-  | {
-      mode: "clarify";
-      reply: string;
-      questions: string[];
-      context: PlannerContext;
-    }
-  | {
-      mode: "plan";
-      reply: string;
-      plan: CampaignPlan;
-      context: PlannerContext;
-    };
+  | { mode: "clarify"; reply: string; questions: string[]; suggestions: string[]; steps: PlannerSteps }
+  | { mode: "plan"; reply: string; plan: AiPlan; steps: PlannerSteps };
+
+/** POST /plans/:id/drafts */
+export interface PlanDraftsResult {
+  created: { id: string; name: string; platform: Platform }[];
+  skipped: { name: string; platform: string; reason: string }[];
+}
 
 export interface ConnectAdAccountInput {
   platform: Platform;
@@ -668,6 +912,14 @@ export interface AnalyticsOverview {
     clicks: number;
     conversions: number;
   };
+  /** Ad-level results for the same scope (B4, Meta only); null until synced. */
+  adLevel?: {
+    impressions: number;
+    clicks: number;
+    conversions: number;
+    landingPageViews: number;
+    addToCart: number;
+  } | null;
 }
 
 /** Change log entry (B3). `canUndo`: budget / status / name changes within 7 days, not yet undone. */
@@ -704,6 +956,7 @@ export interface PlanSummary {
   status: PlanStatus;
   latestVersion: number;
   clientId: string | null;
+  clientName: string | null;
   createdById: string;
   createdAt: string;
   updatedAt: string;
@@ -721,6 +974,8 @@ export interface PlanVersion {
 
 export interface PlanDetail extends PlanSummary {
   versions: PlanVersion[];
+  /** Drafts created from this plan (A12). */
+  campaigns?: { id: string; name: string; platform: Platform; status: CampaignStatus; planVersion: number | null }[];
 }
 
 export interface TimeseriesPoint {
@@ -768,6 +1023,72 @@ export interface MeResponse {
   workspace:
     | (Workspace & { _count: { members: number } })
     | null;
+  /** Role and client access in the workspace (B6); clientIds null = all clients. */
+  access?: { role: WorkspaceRole; clientIds: string[] | null } | null;
+  /** Someone without a workspace who has been invited to one. */
+  pendingInvite?: { token: string; workspaceName: string } | null;
+}
+
+export interface TeamMember {
+  id: string;
+  userId: string;
+  name: string | null;
+  email: string;
+  role: WorkspaceRole;
+  /** Empty = all clients. */
+  clientIds: string[];
+  joinedAt: string;
+  isYou: boolean;
+}
+
+export interface TeamInvite {
+  id: string;
+  email: string;
+  role: WorkspaceRole;
+  clientIds: string[];
+  expired: boolean;
+  expiresAt: string;
+  createdAt: string;
+  invitedBy: string | null;
+  emailSent: boolean;
+  /** Why the email didn't go out; the link still works. */
+  emailError: string | null;
+  url: string;
+}
+
+export interface TeamSeats {
+  used: number;
+  /** null = unlimited. */
+  limit: number | null;
+  clientViewersFree: boolean;
+  plan: PlanType;
+}
+
+export interface Team {
+  you: { memberId: string; role: WorkspaceRole };
+  seats: TeamSeats;
+  clients: { id: string; name: string }[];
+  members: TeamMember[];
+  invites: TeamInvite[];
+}
+
+export interface InviteResult {
+  email: string;
+  ok: boolean;
+  error?: string;
+  inviteId?: string;
+  url?: string;
+  emailSent?: boolean;
+}
+
+export interface InviteInfo {
+  workspaceName: string;
+  inviterName: string | null;
+  role: WorkspaceRole;
+  email: string;
+  status: "open" | "expired" | "accepted" | "revoked" | "member";
+  emailMatches: boolean;
+  signedInAs: string;
 }
 
 export interface WorkspaceResponse extends Workspace {
@@ -875,16 +1196,28 @@ export function useApiClient() {
     getPlan: (id: string) => apiFetch<PlanDetail>(`/plans/${id}`),
     createPlan: (data: { brief: string; plan: object; title?: string; clientId?: string | null; note?: string }) =>
       apiFetch<PlanDetail>("/plans", { method: "POST", body: JSON.stringify(data) }),
-    addPlanVersion: (id: string, data: { plan: object; note?: string }) =>
+    addPlanVersion: (id: string, data: { plan: object; note?: string; title?: string }) =>
       apiFetch<PlanVersion>(`/plans/${id}/versions`, { method: "POST", body: JSON.stringify(data) }),
     updatePlan: (id: string, data: { title?: string; status?: PlanStatus; clientId?: string | null }) =>
       apiFetch<PlanSummary>(`/plans/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     deletePlan: (id: string) => apiFetch<void>(`/plans/${id}`, { method: "DELETE" }),
+    createPlanDrafts: (id: string, version: number) =>
+      apiFetch<PlanDraftsResult>(`/plans/${id}/drafts`, { method: "POST", body: JSON.stringify({ version }) }),
 
     deleteCampaign: (id: string) =>
       apiFetch<SuccessResponse>(`/campaigns/${id}`, { method: "DELETE" }),
     getCampaignMetrics: (id: string, days = 30) =>
       apiFetch<CampaignMetric[]>(`/campaigns/${id}/metrics?days=${days}`),
+
+    /* Ad sets and ads (B4, Meta) */
+    getCampaignStructure: (id: string, days = 30) =>
+      apiFetch<CampaignStructure>(`/campaigns/${id}/structure?days=${days}`),
+    setAdSetStatus: (campaignId: string, adSetId: string, status: "ACTIVE" | "PAUSED") =>
+      apiFetch<{ ok: boolean }>(`/campaigns/${campaignId}/adsets/${adSetId}/status`, { method: "POST", body: JSON.stringify({ status }) }),
+    setAdSetBudget: (campaignId: string, adSetId: string, dailyBudget: number) =>
+      apiFetch<{ ok: boolean }>(`/campaigns/${campaignId}/adsets/${adSetId}/budget`, { method: "POST", body: JSON.stringify({ dailyBudget }) }),
+    setAdStatus: (campaignId: string, adId: string, status: "ACTIVE" | "PAUSED") =>
+      apiFetch<{ ok: boolean }>(`/campaigns/${campaignId}/ads/${adId}/status`, { method: "POST", body: JSON.stringify({ status }) }),
 
     /* Analytics */
     getAnalyticsOverview: (days = 30, platform?: Platform, clientId?: string | null) =>
@@ -938,6 +1271,10 @@ export function useApiClient() {
     deleteClient: (id: string) => apiFetch<void>(`/clients/${id}`, { method: "DELETE" }),
 
     /* Budgets */
+    /* Budgets allocator (A11) */
+    getAllocator: (clientId?: string | null) => apiFetch<AllocatorData>(`/budgets/allocator${buildQuery({ clientId: clientId ?? undefined })}`),
+    applyAllocation: (data: { clientId: string; targets: Record<string, number> }) =>
+      apiFetch<AllocationResult>("/budgets/allocator/apply", { method: "POST", body: JSON.stringify(data) }),
     getPacing: (params?: { month?: string; clientId?: string | null }) =>
       apiFetch<PacingResponse>(
         `/budgets/pacing${buildQuery({ month: params?.month, clientId: params?.clientId ?? undefined })}`
@@ -971,6 +1308,17 @@ export function useApiClient() {
         body: JSON.stringify(data),
       }),
     getMembers: () => apiFetch<Member[]>("/workspace/members"),
+    /* Team (B6) */
+    getTeam: () => apiFetch<Team>("/workspace/team"),
+    createInvites: (data: { emails: string[]; role: WorkspaceRole; clientIds: string[] }) =>
+      apiFetch<{ results: InviteResult[]; seats: TeamSeats }>("/workspace/invites", { method: "POST", body: JSON.stringify(data) }),
+    resendInvite: (id: string) => apiFetch<{ emailSent: boolean; url: string }>(`/workspace/invites/${id}/resend`, { method: "POST" }),
+    revokeInvite: (id: string) => apiFetch<SuccessResponse>(`/workspace/invites/${id}`, { method: "DELETE" }),
+    updateMember: (memberId: string, data: { role?: WorkspaceRole; clientIds?: string[] }) =>
+      apiFetch<SuccessResponse>(`/workspace/members/${memberId}`, { method: "PUT", body: JSON.stringify(data) }),
+    getInvite: (token: string) => apiFetch<InviteInfo>(`/invites/${encodeURIComponent(token)}`),
+    acceptInvite: (token: string) =>
+      apiFetch<{ workspaceId: string; alreadyMember: boolean }>(`/invites/${encodeURIComponent(token)}/accept`, { method: "POST" }),
     inviteMember: (email: string, role: WorkspaceRole) =>
       apiFetch<SuccessResponse>("/workspace/invite", {
         method: "POST",
@@ -989,6 +1337,12 @@ export function useApiClient() {
     /* Creatives */
     getCreatives: (params?: Record<string, string | number | undefined>) =>
       apiFetch<CreativesResponse>(`/creatives${buildQuery(params)}`),
+    /** Library creatives + synced Meta ads with results (A8). */
+    getCreativeBoard: (days = 30, clientId?: string | null) =>
+      apiFetch<CreativeBoard>(`/creatives/board${buildQuery({ days, clientId: clientId ?? undefined })}`),
+    /** AI copy variants. Carousel: `kind: "carousel"` with 2–5 cards. */
+    generateCopy: (data: { brief: string; platform: string; objective: string; kind?: "carousel"; cardCount?: number }) =>
+      apiFetch<{ success: boolean; copy: GeneratedCopy }>("/ai/generate-copy", { method: "POST", body: JSON.stringify(data) }),
     createCreative: (data: CreateCreativeInput) =>
       apiFetch<Creative>("/creatives", {
         method: "POST",
@@ -1003,6 +1357,9 @@ export function useApiClient() {
       apiFetch<SuccessResponse>(`/creatives/${id}`, { method: "DELETE" }),
 
     /* Audiences — saved targeting templates (our DB) */
+    /** Saved + Meta audiences with usage, results, warnings and lookalike ideas (A9). */
+    getAudienceBoard: (days = 30, clientId?: string | null) =>
+      apiFetch<AudienceBoard>(`/audiences/board${buildQuery({ days, clientId: clientId ?? undefined })}`),
     getAudiences: (params?: Record<string, string | number | undefined>) =>
       apiFetch<AudiencesResponse>(`/audiences${buildQuery(params)}`),
     createAudience: (data: CreateAudienceInput) =>
@@ -1112,10 +1469,12 @@ export function useApiClient() {
      * Talk to Alex, the AI media buyer. Send the WHOLE transcript every turn —
      * that's what lets the reply reference what the user said earlier.
      */
-    planCampaign: (messages: PlannerTurn[]) =>
+    getPlannerContext: (clientId?: string | null) =>
+      apiFetch<PlannerContextData>(`/ai/planner/context${buildQuery({ clientId: clientId ?? undefined })}`),
+    planCampaign: (data: { messages: PlannerTurn[]; clientId: string | null; currentPlan?: Record<string, unknown> | null }) =>
       apiFetch<PlannerResponse>("/ai/plan-campaign", {
         method: "POST",
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify(data),
       }),
     getMetaCustomAudiences: () =>
       apiFetch<MetaCustomAudience[]>("/meta/custom-audiences"),
@@ -1140,6 +1499,8 @@ export function useApiClient() {
       seedAudienceId: string;
       countryCode: string;
       ratio?: number;
+      /** The Meta ad account (our id) to create it on — the seed's account. */
+      adAccountId?: string | null;
     }) =>
       apiFetch<{ id: string }>("/meta/lookalike", {
         method: "POST",
@@ -1369,12 +1730,12 @@ export interface MetaTargetingSpec {
   geo_locations?: {
     countries?: string[];
     regions?: Array<{ key: string }>;
-    cities?: Array<{ key: string; radius?: number; distance_unit?: "mile" | "kilometer" }>;
+    cities?: Array<{ key: string; name?: string; radius?: number; distance_unit?: "mile" | "kilometer" }>;
     zips?: Array<{ key: string }>;
   };
   excluded_geo_locations?: MetaTargetingSpec["geo_locations"];
   interests?: Array<{ id: string; name?: string }>;
-  custom_audiences?: Array<{ id: string }>;
+  custom_audiences?: Array<{ id: string; name?: string }>;
   excluded_custom_audiences?: Array<{ id: string }>;
   saved_audiences?: Array<{ id: string }>;
   publisher_platforms?: Array<"facebook" | "instagram" | "messenger" | "audience_network">;

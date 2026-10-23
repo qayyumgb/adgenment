@@ -1,6 +1,6 @@
 # Dashboard redesign — implementation plan
 
-**Status (2026-10-22):** **Phase 0, A1, B1, A2, A3, A4, B2, A5, B5, A6, B3, A10 and A7 done** in the working copy (see [§ 11](#11-progress)). Next: B4 (ad sets & ads). A10 was done ahead of A7 (it doesn't depend on it). Pre-launch items (OAuth nonce, Clerk production) stay on their own track.
+**Status (2026-10-22):** **Phase 0, A1, B1, A2, A3, A4, B2, A5, B5, A6, B3, A10, A7, B4, A8, A9, B6, A11 and A12 done** in the working copy (see [§ 11](#11-progress)). Next: A13 (Connections). A10 was done ahead of A7 (it doesn't depend on it). Pre-launch items (OAuth nonce, Clerk production) stay on their own track.
 
 **Goal:** rebuild the logged-in product (`app.advertix.io`) to the new design, keep every feature that works today, and add the new agency features from the mockups. Do it in an order where no button pretends to do something it doesn't.
 
@@ -92,7 +92,7 @@ Recommended answer first.
 4. **Suggestions.** **Recommend:** a unified `Suggestion` model replacing `Insight` and `BudgetRecommendation` (migrate both), with per-kind executors. Phase 1 executes only what we can do for real on Meta (budget change, pause/resume, rotate ad); other kinds show **Review** (opens the item) instead of Apply.
 5. **Ad sets and ads.** **Recommend:** add `AdSet` and `Ad` tables plus ad-level daily metrics (incl. frequency) for **Meta first**. This unlocks Campaign detail tabs, creative performance, fatigue and audience performance.
 6. **New campaign wizard shape.** **Recommend:** keep **one Campaign row per platform** (today's model), grouped as one "launch" in the wizard. Publishing stays Meta-only, and other platforms save as drafts marked "publishing coming soon". The wizard gains the Meta-required fields the mockup omits: Page, destination URL, CTA, placements, gender, geo search, interests, custom/lookalike audiences, plus the live ad preview.
-7. **Roles.** **Recommend:** migrate `WorkspaceRole` to `OWNER | MEDIA_BUYER | ANALYST | CLIENT_VIEWER` (ADMIN/EDITOR → MEDIA_BUYER, VIEWER → ANALYST) plus `MemberClientAccess`.
+7. **Roles — decided 2026-10-22 (B6):** agency roles, enforced on the API. **Was recommended:** migrate `WorkspaceRole` to `OWNER | MEDIA_BUYER | ANALYST | CLIENT_VIEWER` (ADMIN/EDITOR → MEDIA_BUYER, VIEWER → ANALYST) plus `MemberClientAccess`.
 8. **Snapchat and other unbuilt platforms.** **Recommend:** shown as "Coming soon" (never "connected") in the sidebar box, Connections and the wizard, until a connector exists.
 9. **Campaigns grid suggestion flow.** The mockup has Apply → Applied with no Not now or Undo. **Recommend:** follow guide § 6 everywhere (Apply → Applied → Undo; Not now → Snoozed).
 10. **Billing.** **Recommend:** no Stripe in this project. The Billing tab shows the real plan from the DB and usage computed from real data; "Change plan" links to `/pricing` / contact. Prices come from `apps/web/lib/marketing/pricing.ts`, which removes today's $699 vs $499 conflict.
@@ -259,12 +259,12 @@ Suggested order: **Phase 0 → A1 + B1 → A2 + A3 → A4 → B2 → A5 → B5 �
 
 Not blocking the start, but needed before the named phase:
 
-1. **(A9)** Audience overlap: Meta's overlap tool isn't in its public API. Show an estimate (from shared interests and lookalike seeds), or drop the column?
+1. **(A9) — decided:** no overlap %; only warnings Advertix can verify (lookalike next to its unexcluded seed, one audience in several ad sets of a campaign, near-duplicate saved audiences). See A9 in § 11.
 2. **(A7)** Goals: the mockup adds App installs (needs an app object on Meta) and drops Engagement / Video views. Which set?
 3. **(A7)** Age: the mockup's bucket chips can't express gaps on Meta (it takes min / max). Use a min / max range in the same style?
 4. **(A8)** AI video drafts: the studio implies AI video generation, which doesn't exist. Keep studio drafts to images and copy?
-5. **(A8)** Creative statuses: the mockup uses Live / Learning / Fatigued / Draft, while the DB uses DRAFT / APPROVED / REJECTED / ARCHIVED. Derive the new ones from ad delivery (needs B4)?
-6. **(A11)** Budget split: how a platform-level daily amount is divided among that platform's campaigns (proportional to current budgets?).
+5. **(A8) — decided:** creative statuses are derived from ad delivery (Live / Learning / Fatigued / Paused / In review / Rejected / Ended); library items not in an ad are Draft or Archived (see A8 in § 11).
+6. **(A11) — decided:** a platform's new daily total is split across its campaigns in proportion to their current budgets, and applied to live Meta campaigns right away (with Undo); other platforms are listed to change by hand. See A11 in § 11.
 7. **(A14)** The mockup never defines "Pacing rules", "Audit log", "Manage" and the account "Open" buttons. Specs needed, or they open the obvious drawer?
 8. **(A2)** What the AI Planner sidebar badge ("4") counts.
 9. **(C2)** Slack: an OAuth app or incoming webhooks to start?
@@ -405,3 +405,226 @@ Not blocking the start, but needed before the named phase:
   - The AI Planner's sessionStorage prefill maps goal, name, platform, budget, ages, gender and countries.
   - `/campaigns?new=1` redirects here. The New campaign buttons (campaigns page, overview) link here.
 - **Removed:** `components/campaigns/CreateCampaignModal.tsx`, `components/campaigns/publish/PublishToMetaModal.tsx`, `components/ui/WizardRail.tsx`.
+
+### Navigation feedback (2026-10-22)
+
+- A thin progress bar (`components/app/shell/NavigationProgress.tsx`) starts on any in-app link click, or on a button that navigates through `useAppRouter` (`hooks/useAppRouter.ts`, a `useRouter` whose `push` starts the bar), so a click never looks ignored. Budgets and New campaign got route skeletons; the wizard's "Connect" link is a `<Link>` (it was a full reload).
+- Measured: under `next dev`, the first visit to a page waits for it to compile (up to ~10 s). A production build switched pages in ~25 ms. `onDemandEntries` in `next.config.js` keeps compiled pages for an hour in dev.
+
+### B4 — Ad sets, ads, richer metrics (Meta first) ✅ (2026-10-22)
+
+- **Schema:** `AdSet` (budgets, optimisation goal, learning stage, targeting, 30-day reach and frequency), `Ad` (creative format, image, headline, text, CTA, link, 30-day reach and frequency), `AdMetrics` (daily impressions, reach, clicks, spend, conversions, revenue, landing-page views, add-to-cart), and `AdAccount.backfilledAt`.
+- **Sync** (`sync.service.ts`):
+  - Each Meta sync also pulls ad sets, ads, daily ad-level insights, and 30-day reach and frequency per ad and per ad set.
+  - The first sync of an account pulls 90 days, for campaign metrics too (Analytics offers 90 days); later syncs refresh 30.
+  - Ad sets and ads that disappear from Meta are marked ended and keep their history.
+  - This part is non-fatal: if it fails, campaign data still syncs and the backfill is retried next time.
+  - Publish and launch refresh that campaign's ad sets and ads straight away.
+  - Results parsing is shared between campaign and ad level; add-to-cart takes the first of Meta's overlapping action types, so nothing is counted twice.
+- **API:**
+  - `GET /campaigns/:id/structure?days=` returns ad sets and ads with period totals, a plain audience line, a fatigue read, and why each control is blocked.
+  - Fatigue is "fatigued" at frequency ≥ 4, or at ≥ 2.5 with CTR down 30%+ week on week (last 7 complete days against the 7 before, with 1,000+ impressions in each). It's "watch" at frequency ≥ 3 or CTR down 20%+.
+  - `POST /campaigns/:id/adsets/:adSetId/status|budget` and `POST /campaigns/:id/ads/:adId/status` act on Meta first, then locally. Each writes a change-log entry (`adset.status`, `adset.budget`, `ad.status`), undoable for 7 days.
+  - Pause / resume compares against the object's own switch: one that's on while its campaign or ad set is off reads `CAMPAIGN_PAUSED` / `ADSET_PAUSED`.
+  - Advertix-published single-ad-set budgets stay mirrored on the campaign.
+  - `GET /campaigns` adds `learning` (LEARNING / LIMITED); `GET /analytics/overview` adds `adLevel` funnel totals.
+  - `requireAuth` skips a second verification when two routers share a mount path.
+- **Web:**
+  - Campaign detail Overview gains the ad-set grid (status, budget share, spend, ROAS, cost per conversion, frequency, pause switch, budget edit) and the top 4 ad tiles (frequency bar against 5.0, Fatigued badge, fatigue read).
+  - The **Ad sets** tab shows a card per ad set with a plain read (learning phase, share of spend, best or lowest ROAS, frequency), results and controls.
+  - The **Ads** tab shows every ad with headline, text and pause switch, filterable by ad set.
+  - Tab counts. Honest empty states: other platforms, unpublished drafts, and "Sync now" when a live campaign hasn't synced ad sets yet.
+  - The Campaigns grid shows **Learning / Learning limited**.
+  - The Analytics funnel shows real landing-page views and add-to-cart, with rates against Meta's clicks when other platforms are in scope.
+- **Tests:** an integration test (local DB, Meta mocked) covers sync and backfill, ended ads, structure totals, audience line and fatigue, ad set / ad pause + undo, budget + undo, blockers, the campaign-paused case, the learning flag, funnel totals and the publish refresh (11 checks). B2, B3 and B5 still pass.
+- **Later:** creative performance and fatigue on Creatives (A8); audience performance and the audience↔campaign link (A9; the wizard targets Meta audiences directly, so `Campaign.audienceId` waits for the Audiences page); duplicate with ad sets; multiple ads per launch in the wizard; Google / TikTok / LinkedIn ad groups.
+
+### A8 — Creatives ✅ (2026-10-22)
+
+- **`/creatives`** rebuilt (`app/(dashboard)/creatives/page.tsx` + `components/app/creatives/`), following the client switcher. The header shows assets · fatigued · drafts, with Upload and Creative studio.
+- **One board for library creatives and the ads synced from Meta** (`GET /creatives/board?days=30&clientId=`, `services/creative-board.service.ts`):
+  - **Linking:** publishing from the library now sets `Creative.campaignId`, and the campaign's `externalCreativeId` identifies the ad Advertix created, so a library creative shows that ad's real results. Synced ads with no library creative behind them appear as "From Meta" items.
+  - **Statuses** come from delivery (this answers open question 5): Live, Learning, Fatigued (B4 fatigue read), Paused, In review, Rejected and Ended for anything running; Draft or Archived for library items that aren't in an ad.
+  - `bestHook` is the best-returning item with copy.
+  - Fatigue helpers moved to `lib/ad-metrics.ts`, shared with the campaign ad-set view.
+- **Cards:**
+  - Each card shows art (or the headline when there's no media, plus "Needs image"), status, platform, AI mark, carousel card count, ROAS / CTR / spend and a frequency bar against 5.0.
+  - Status tabs with counts: All / Live / Fatigued / Draft, plus Archived when there are any.
+  - Search covers name and headline; Type and Source filters.
+  - Sort by Spend / ROAS / CTR / Frequency / Newest / Name; large or small cards. Sort, card size and studio open/closed persist (`advertix.creatives`).
+- **Drawer:**
+  - Preview (video plays on demand), headline / text / CTA, 30-day Spend / ROAS / CTR / Frequency, and a plain read from the item's own numbers.
+  - **Create variants** opens the studio prefilled from the item's copy.
+  - Library items: Edit / Add image, Download, Open campaign, Archive / Restore, Delete. Meta ads: Open campaign and a pause / resume switch on Meta (B4 endpoint, undoable in the campaign's change log).
+- **Creative studio:**
+  - Inputs: a prompt (Cmd/Ctrl+Enter), Image / Video / Carousel / Text, 1:1 / 9:16 / 16:9, tone, platform and goal, and images per run (none / 1 / 2 / 4, rate-limited to 20 an hour). Carousels take 2–5 cards with an image per card optional. Also a reference image (PNG / JPEG / WebP up to 10 MB) and the six prompt templates from the old page.
+  - The brief can build on the best hook ("Builds on …", toggleable).
+  - Output: four drafts (one for a carousel), unsaved until **Save to library** / Save all. Saved content keeps every copy variant with the chosen one first, so the variant editor and the wizard work as before. Drafts save to the client in scope.
+  - When the AI call fails, it says so and keeps the prompt. The old hard-coded fallback copy is gone.
+- **Kept and moved** (into `components/app/creatives/`, restyled onto design tokens and our `Dialog`):
+  - Upload: image / video / carousel, device or HTTPS link with a live load check and video page-link detection, 8 MB / 200 MB limits, Meta upload with progress and the 3-minute transcode polling, video orientation.
+  - The carousel builder (2–10 cards, AI image per card).
+  - The edit dialog: name, the copy-variant editor, carousel edit, video replace.
+- **Fixed on the way:**
+  - Uploads and attached images save the Meta `imageHash`, so publishing doesn't upload them again.
+  - An existing image can now be replaced, not only attached.
+  - Uploads belong to the client in scope.
+  - The replace-video preview no longer leaks object URLs.
+  - Removed the cards' fake "CTR — · 0 imp." and the sorts that did nothing.
+- **Removed:** the old 5,241-line page and `components/ui/Modal.tsx` (it was only used there). Dev route `/dev/creatives`.
+- **Later:** "Save to library" for synced Meta ads; a Download that bundles carousel cards; a full-screen AI workspace for long briefs (the studio covers the common case).
+
+### A9 — Audiences ✅ (2026-10-22)
+
+- **`/audiences`** rebuilt (`app/(dashboard)/audiences/page.tsx` + `components/app/audiences/`), following the client switcher.
+  - **Header:** audiences · in use · to check, with Build with AI and Create audience.
+  - **Stats:** Audiences (saved / on Meta), In use, To check, Best ROAS.
+  - **Tip cards:** dismissible (`advertix.audiences.dismissed`), then one DataGrid.
+- **One board** (`GET /audiences/board?days=30&clientId=`, `services/audience-board.service.ts`):
+  - **What it lists:** saved audiences (Advertix) plus the custom, lookalike and saved audiences on every Meta ad account in scope (one per client under "All clients"), each tagged with its account.
+  - **Usage and results:**
+    - Saved audiences: campaigns made from them, via the new `Campaign.audienceId`.
+    - Meta custom audiences: synced ad sets (B4) whose targeting includes them.
+    - Meta saved audiences: usage is "—", because Meta copies them into ad sets and doesn't say where they run.
+  - **Status from the numbers:** Ready, Unused, Building (Meta still filling), Learning limited (an active ad set using it), Underperforming (ROAS under 60% of the view's, with 10%+ of spend).
+  - **Sizes:** Meta's own range for Meta audiences; "largest interest" (shown as N+) for saved ones.
+  - **A Meta failure isn't fatal:** the page says why (expired connection, rate limit…) and shows the rest. This replaces the old regex that told users to "connect Meta" for any error.
+- **Overlap (open question 1 — decided: verified warnings only, no %):**
+  - A lookalike running next to its seed in another active ad set that doesn't exclude it.
+  - One custom audience in 2+ active ad sets of a campaign.
+  - Saved audiences with near-identical targeting (same locations, cities, gender and custom audiences, 80%+ age overlap, 75%+ shared interests).
+  - Each warning names the ad sets; the cards link to the campaign's Ad sets tab.
+- **New-audience ideas:** ready custom audiences with 1,000+ people and no lookalike yet → Build lookalike.
+- **D2 Create audience** (`AudienceDialog`):
+  - **Describe it:** AI, resolved against Meta's interest and location search, with the five templates and Cmd/Ctrl+Enter. The draft opens on Build it to review; drafting again asks first if you edited.
+  - **Build it:** name, type, description (new; the AI's rationale fills it), age (validated on blur, min ≤ max), gender, countries, cities, interests, custom audiences (now shown for every type), and size.
+  - **Lookalike:** seed, country, 1–10% similarity, created on the seed's Meta account. This was wired in the API but never offered before. `POST /meta/lookalike` and the other Meta discovery routes take an optional `adAccountId`.
+  - Closing with unsaved changes asks first.
+- **Wizard link:**
+  - Loading a saved audience (Load saved audience, or **Use in campaign** → `/campaigns/new?audience=<id>`, which keeps an unfinished draft) records `libraryAudienceId`, sent as `audienceId` on the Meta campaign.
+  - `audienceToState` keeps city and custom-audience names, so they're no longer shown as ids.
+- **Fixed:**
+  - Countries outside the common 12 (from AI or Meta) are now visible and removable in `CountryPicker`, for the wizard too.
+  - Saved audiences belong to the client in view.
+  - The approx. size no longer goes stale when interests are removed.
+  - Actions are reachable without hover.
+  - Duplicate / Delete / Edit / Use in campaign moved into a row menu.
+- **Shared:** `lib/targeting.ts` (`audienceLine` now reads top-level interests too, `customAudienceIds`, `targetingKey`), used by the campaign ad-set view and this board.
+- **Schema:** `Campaign.audienceId` (nullable, `SetNull`). **Run `prisma db push` on production before deploying the API.**
+- **Tests:** an integration test (local DB, Meta mocked) covers the audienceId link, Meta usage / statuses / error handling, saved-audience results, all three warnings and clearing one, lookalike ideas, client scope, the lookalike account choice, and the route (8 checks). A8, B4 and B3 still pass.
+- **Later:** one-click "add exclusion" on Meta for the lookalike / seed warning (needs ad-set targeting writes); paging past 200 custom / 100 saved Meta audiences.
+
+### B6 — Team ✅ (2026-10-22)
+
+- **Roles (decision 7 — decided: agency roles):**
+  - **The four roles:** Owner (everything), Media buyer (edit campaigns, creatives, audiences, suggestions and AI that saves; connect ad accounts), Analyst (view and export only), Client viewer (view and export, only their clients).
+  - **Client limits:** any non-owner can be limited to some clients (`MemberClientAccess`); client viewers always are. Limited members always work inside one of their clients.
+  - **Legacy values:** ADMIN / EDITOR / VIEWER stay in the enum as legacy values. `scripts/migrate-roles.ts` moves rows to MEDIA_BUYER / ANALYST, and the code reads any leftover as its new equivalent, so `prisma db push` never has to drop enum values.
+- **Enforcement on the API** (`lib/access.ts`): `roleGuard` runs before every router.
+  - **How a request is classified:** every request maps to a capability (view, export, edit, connect, clients, team, workspace). Read-only POSTs (Ask about this campaign, Check again, refresh suggestions) count as view.
+  - **Refusals:** a 403 with a plain reason ("Analysts can view and export, but not change anything here. Ask an owner for Media buyer access.").
+  - **Client limits:** checked on campaign / creative / audience / suggestion / change-log ids. Other clients' objects answer 404, so ids don't leak.
+  - **Lists:** `parseClientScope` forces a limited member's scope to one of their clients and refuses others; `/clients` and the switcher only list their clients.
+  - Client viewers can't open workspace settings or the team list.
+- **Invites** (`Invite` model, `services/team.service.ts`):
+  - **Inviting:** up to 10 emails at a time, with a role and optional client access (required for client viewers). Each link works for 7 days and only for the invited email.
+  - **Email:** sent via Resend from the API (`RESEND_API_KEY`, `INVITE_FROM`, `FRONTEND_URL`). Without a key the invite is still stored, the reason is saved, and the owner gets a copyable link instead of a false "sent".
+  - **Managing:** resend (renews), cancel, copy link.
+  - **Seats from the plan:** Free/Founder 2, Starter/Team 5, Pro/Agency 10 (client viewers free), Enterprise unlimited. Pending invites count.
+  - **Accepting** (`/invite/<token>`):
+    - Sign-in is required, and the email must match. Someone signing up from an invite doesn't get an auto-created workspace; onboarding sends them to their invite.
+    - An unused auto-created workspace is replaced on accept. A workspace with data blocks joining with a plain message (one workspace per person for now); nothing is deleted.
+    - Wrong-email, cancelled, expired and already-used links each say so.
+  - The old `POST /workspace/invite`, which answered "Invite sent" without storing or sending anything, now creates a real invite.
+- **Members:** change role and client access (owner untouchable, not yourself, seat-checked), remove. `GET /workspace/team` returns members, invites, seats and clients. `/auth/me` returns `access` and `pendingInvite`.
+- **Web:**
+  - Settings › Team (the tab was "Workspace") is the new `TeamPanel`: seats bar, members grid with role pills and client access, a row menu to change access or remove, and pending invites with status, Copy link, Resend / Renew and Cancel.
+  - The D4 `InviteDialog` has email chips, role cards, client chips and a seat check, and shows per-email results with links when email didn't go out. It's also used for "Change role or access".
+  - `/invite/[token]` page.
+  - Role pill and sidebar show the real role ("Analyst · view only").
+  - Read-only roles get disabled buttons with the reason, not failures:
+    - Disabled with a reason: New campaign and Sync, Creatives upload and studio (the studio is hidden), Audiences create, campaign detail actions.
+    - Removed from view: grid toggles, Apply buttons (shown as Review), row menus, bulk selection, the drawer's edit actions.
+    - The wizard explains instead of opening.
+  - `useAccess()` mirrors the server rules.
+- **Tests:** integration test (local DB) covering capability mapping, the guard per role, client limits (lists, details, edits, 404s), the team list, seats per plan, invites (member emails, client-viewer rule, no-email-key path), accept (wrong email, workspace replacement, busy workspace, cancelled / expired / renewed), member changes and `/auth/me` (9 checks). B2, B3, B4, B5, A8 and A9 still pass.
+- **Production:**
+  - **Before deploying the API:** run `npx prisma db push`, then `npx tsx --env-file=.env scripts/migrate-roles.ts`.
+  - **API environment:** set `RESEND_API_KEY` (and `INVITE_FROM` with a verified sender domain) on the API. `FRONTEND_URL` must be the app URL.
+- **Later:** switching between several workspaces; per-client roles beyond read / edit; audit export of team changes (C1).
+
+### A11 — Budgets ✅ (2026-10-22)
+
+- **Route:** `/budgets` replaces `/budget-optimizer`, which now redirects there. The nav points at `/budgets`. No schema change.
+- **Cross-platform allocator** (`GET /budgets/allocator`, `services/allocator.service.ts`, `lib/curves.ts`):
+  - **Curves:** for each platform, Advertix fits `value(b) = A · (1 − e^(−b/k))` to the client's last 60 days of daily spend and revenue (or conversions when no revenue is recorded).
+  - **When it refuses to fit:** fewer than 10 days with spend, spend that barely changed, or no results. The platform is then fixed at today's budget and shows the reason.
+  - **Limits it trusts:** half to double today's budget, and never more than 1.5× the highest daily spend it has seen.
+  - **What counts:** only active campaigns with a daily budget. Under "All clients" the allocator picks a client, with tabs to switch between them.
+  - **Web** (`components/app/budgets/`): one slider per platform with Advertix's mark on it, "Next $ returns", and a live projection (value per day with the change vs today, daily budget, ROAS or cost per result, the mix bar). "Why this mix" explains the move in words. "Use Advertix mix" spreads today's total by marginal return. "Fit to the monthly budget" spreads what's left of the month over the days left.
+- **Applying (open question 6 — decided: proportional split, applied to Meta now):**
+  - **Split:** a platform's new total is split across its campaigns in proportion to their current budgets, so every campaign moves by the same %.
+  - **Review first:** "Review & apply" shows each campaign's old → new budget and whether it will change on Meta.
+  - **What goes to Meta:** live Meta campaigns change on Meta through `POST /budgets/allocator/apply` (ad-set or campaign budget). Each change gets a change-log entry with the 7-day Undo.
+  - **What doesn't:** drafts, accounts below their minimum daily budget, and Google / TikTok / LinkedIn (read-only today) are listed with the reason ("Change it in Google Ads…"). Failures are reported per campaign and don't stop the rest.
+  - Needs edit rights. Analysts can still move the sliders as a what-if.
+- **Monthly pacing:** a grid of each client's month-to-date spend against its monthly budget, with a bar showing today's mark, a straight-line projection, a status (On track / Ahead / Behind / No budget / No spend) and a plain note ("Runs out 26 Oct at today's rate", "$7,040 would go unspent").
+  - **Owners** set or remove the budget inline.
+  - **Row actions:** "Lower budgets" / "Raise budgets" open the allocator for that client, fitted to the month. "Plan" opens it as is.
+- **Per-campaign budget review** (kept from the Budget optimizer): the Budget shift suggestions, with Apply / Undo through the B2 executors, so changes really reach Meta. "Review budgets" runs the 14-day-vs-14-day analysis again; the not-enough-data message is shown as is. History lives in the Change log.
+- **Removed:** the old page, whose "Apply" only changed the database, and the now-unused `components/ui/EmptyState.tsx`.
+- **Tests:** integration test (local DB, Meta mocked) covering:
+  - the curve fit recovering a known curve, and the three refusals;
+  - allocator data (totals, bounds, fixed platforms, blockers, month budget);
+  - the proportional apply to Meta, with change-log entries and skips for drafts and Google;
+  - below-minimum failures per campaign and the zero-target refusal;
+  - falling back to conversions, and the edit capability.
+
+  5 checks. Screenshots: allocator, mix, apply preview and results, pacing → allocator, review, analyst, empty, dark, mobile.
+- **Later:** scheduled budgets (a nightly job) once writes exist for the other platforms; an ad-set level allocator; curves per campaign.
+
+### A12 — AI Planner ✅ (2026-10-22)
+
+- **Grounded in the client's account** (`services/planner.service.ts`, `GET /ai/planner/context`). Before planning, Advertix reads the client's:
+  - last 30 days per platform and per campaign (ROAS, or cost per result when no revenue is recorded);
+  - response curves (A11) and weekly spread;
+  - fatigued ads (B4 read) and custom audiences used by several running campaigns;
+  - the month's budget, minimum daily budgets and pixel state.
+
+  The chat's four reasoning steps tick as that work finishes and say what each found ("4 campaigns with spend · $12,800 in 30 days", "Meta 4.18x ROAS · Google Ads 3.73x ROAS", "1 fatigued ad · 1 audience used by several campaigns"). Under "All clients" a "Planning for" picker chooses the client.
+- **Plan v2** (`POST /ai/plan-campaign`, Claude Opus 5.5 with structured outputs, so the reply always matches the schema; medium effort; server-side refusal fallback):
+  - **The model drafts:** title, budget, days, start, target, phases, and campaigns (platform, goal, audience line, age / gender / countries, interests, share, active days, creatives needed, rationale, the existing campaign it builds on). It also writes watch-outs, assumptions and 24 h / 48 h / 7 d checks.
+  - **The server computes:** each campaign's total and daily budget (its share over its own days), dates, minimum-budget warnings and blockers for unconnected platforms.
+  - **The server forecasts** from the client's own history: the response curve at the planned spend, else the 30-day average, with the range from the last 4 weeks. Platforms without history get no forecast and the plan says so. "Forecast meets target" / "below target" compares that number with the user's target.
+  - The model is told not to state forecast numbers itself.
+- **Clarify questions:** at most 3, with up to 4 tappable answers in the chip row.
+- **Refinement chips:** "Make it {platform}-heavy" (leans into the platform whose history returns best), "Cut budget by a third", "Stretch by a week". The current draft rides along with each follow-up so only what's asked changes.
+- **Starters from real data:** "Spend the rest of October well" (the monthly budget left), "Scale {best campaign}", or a fill-in-the-blanks launch brief for clients without data.
+- **Saved plans and versions** (B5 model):
+  - **Saving:** the first plan saves automatically; each refinement is the next version, named after what was asked. Each version stores the plan and the conversation that led to it.
+  - **"Saved plans" dialog:** open, archive, delete. Deleting a plan keeps its drafts.
+  - **The v{n} menu** switches versions.
+  - **Access:** limited members only see their clients' plans; the plans routes now check client access.
+- **Create campaigns as drafts** (`POST /plans/:id/drafts`):
+  - **What it creates:** one DRAFT campaign per planned campaign, on the client's ad account for that platform, with the plan's daily budget, dates and targeting (Meta format). Each is linked to the plan and version (new `Campaign.planId` / `planVersion`) and logged in the change log.
+  - **Skips:** campaigns on platforms the client hasn't connected, with the reason.
+  - **Limits:** once per version; the plan is then marked Used.
+  - **Afterwards:** Meta drafts get "Finish in the wizard" (`/campaigns/new?from=`, which now also loads the draft's targeting); the others say "Saved as a draft · publishing coming soon".
+- **Also on the page:**
+  - "How Advertix built this" disclosure: rationale per campaign, interests to pick, assumptions, checks.
+  - "Copy summary" (plain text) replaces the mockup's "Share with client", which has nothing behind it yet.
+- **Read-only roles:** analysts can open saved plans; the composer, starters and Create are disabled with the reason.
+- **Removed:**
+  - the old planner prompt and methods, and the unused one-shot `planCampaign`;
+  - the sessionStorage hand-off to the wizard, which ignored "all genders", was skipped when an autosaved draft existed, and dropped interests;
+  - the old 1,080-line page.
+- **Schema:** `Campaign.planId` (→ Plan, set null on delete) and `Campaign.planVersion`. Run `prisma db push` before deploying the API.
+- **Tests:** integration test (local DB, AI and Meta mocked) covering:
+  - context (client pick, per-platform results, curve, weekly spread, fatigue, shared audiences, step texts, prompt, starters);
+  - plan building (shares, daily budgets, dates, forecast from curve / average with range, no forecast without history, blockers, minimum-budget warning);
+  - the route (clarify, plan, current plan attached, transcript checks, client limits, refusal);
+  - the exact Anthropic request (model, structured output, effort, fallbacks header, no sampling params; refusal and truncation);
+  - saved plans and drafts (versions with chat, drafts on the right accounts with budget / dates / targeting / change log, skips, once per version, client limits, delete keeps drafts).
+
+  5 checks. B5, B6 and A11 still pass. One live call against a synthetic account confirmed the API accepts the schema and settings (about 36 s, about 6.4k tokens). Screenshots: empty, thinking, plan, versions, drafts, saved plans, reopened plan, clarify, error, analyst, dark, mobile.
+- **Later:** streaming the reply; a per-plan "share with client" page; the sidebar badge (open question 8).

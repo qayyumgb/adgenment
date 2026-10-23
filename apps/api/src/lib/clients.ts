@@ -1,6 +1,7 @@
 import type { Client, Prisma } from "@prisma/client";
 import type { Request } from "express";
 import { prisma } from "./prisma";
+import { getAccess } from "./access";
 
 /**
  * Agency clients (docs/DASHBOARD_REDESIGN_PLAN.md, B1).
@@ -80,14 +81,19 @@ export class ClientScopeError extends Error {
  */
 export async function parseClientScope(req: Request, workspaceId: string): Promise<string | null> {
   const raw = req.query.clientId;
-  if (typeof raw !== "string" || raw === "" || raw === "all") return null;
+  // Members limited to some clients (B6) always work inside one of them.
+  const allowed = req.dbUserId ? (await getAccess(req))?.clientIds ?? null : null;
+  if (typeof raw !== "string" || raw === "" || raw === "all") return allowed ? allowed[0] ?? NO_CLIENT : null;
   const found = await prisma.client.findFirst({
     where: { id: raw, workspaceId },
     select: { id: true },
   });
-  if (!found) throw new ClientScopeError();
+  if (!found || (allowed && !allowed.includes(found.id))) throw new ClientScopeError();
   return found.id;
 }
+
+/** Scope for a limited member whose clients were all deleted: matches nothing. */
+const NO_CLIENT = "__no_client__";
 
 /** Campaign filter for a client scope (campaigns inherit via the ad account). */
 export function campaignClientWhere(clientId: string | null): Prisma.CampaignWhereInput {

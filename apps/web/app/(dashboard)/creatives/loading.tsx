@@ -1,37 +1,23 @@
+import { Skeleton } from "@/components/app/ui";
+
+/** Route-level skeleton for /creatives: page header, studio, filter row, card grid. */
 export default function CreativesLoading() {
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-2">
-          <div className="h-7 w-32 animate-pulse rounded bg-slate-200/70" />
-          <div className="h-4 w-64 animate-pulse rounded bg-slate-200/70" />
+    <>
+      <div className="flex flex-col gap-2 border-b border-line bg-surface px-[clamp(16px,4vw,32px)] pb-3.5 pt-3">
+        <Skeleton className="h-3 w-48" />
+        <Skeleton className="h-7 w-36" />
+        <Skeleton className="h-3.5 w-64 max-w-full" />
+      </div>
+      <div className="flex flex-col gap-5 px-[clamp(16px,4vw,32px)] pb-10 pt-6">
+        <Skeleton className="h-[170px] rounded-card" />
+        <Skeleton className="h-9 w-full max-w-[640px] rounded-ctl" />
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Skeleton key={i} className="aspect-[4/6] rounded-card" />
+          ))}
         </div>
-        <div className="flex gap-2">
-          <div className="h-10 w-36 animate-pulse rounded-xl bg-slate-200/70" />
-          <div className="h-10 w-36 animate-pulse rounded-xl bg-slate-200/70" />
-        </div>
       </div>
-
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200/70 bg-white p-3 shadow-card">
-        <div className="h-10 flex-1 min-w-[200px] animate-pulse rounded-xl bg-slate-100" />
-        <div className="h-10 w-28 animate-pulse rounded-xl bg-slate-100" />
-        <div className="h-10 w-28 animate-pulse rounded-xl bg-slate-100" />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <div
-            key={i}
-            className="rounded-2xl border border-slate-200/70 bg-white shadow-card overflow-hidden"
-          >
-            <div className="aspect-square animate-pulse bg-slate-200/70" />
-            <div className="p-4 space-y-2">
-              <div className="h-4 w-3/4 animate-pulse rounded bg-slate-200/70" />
-              <div className="h-3 w-1/2 animate-pulse rounded bg-slate-200/70" />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+    </>
   );
 }

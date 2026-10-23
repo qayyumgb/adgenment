@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
 import { clientMark, ensureClients } from "../lib/clients";
+import { getAccess } from "../lib/access";
 
 /**
  * Agency clients — /api/clients (docs/DASHBOARD_REDESIGN_PLAN.md, B1).
@@ -77,10 +78,13 @@ async function loadClients(workspaceId: string) {
 router.get("/", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const workspace = await requireWorkspace(req.dbUserId!);
-    const clients = await loadClients(workspace.id);
-    const unassigned = await prisma.adAccount.count({
-      where: { workspaceId: workspace.id, clientId: null, isActive: true },
-    });
+    const all = await loadClients(workspace.id);
+    // Limited members (B6) only see their clients.
+    const allowed = (await getAccess(req))?.clientIds ?? null;
+    const clients = allowed ? all.filter((c) => allowed.includes(c.id)) : all;
+    const unassigned = allowed
+      ? 0
+      : await prisma.adAccount.count({ where: { workspaceId: workspace.id, clientId: null, isActive: true } });
     res.json({ clients, unassignedAdAccounts: unassigned });
   } catch (err) {
     next(err);

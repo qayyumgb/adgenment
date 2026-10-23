@@ -1,10 +1,9 @@
 import { Router, Request, Response, NextFunction } from "express";
 import multer from "multer";
-import {
-  aiService,
-  type ChatTurn,
-  type PlannerContext,
-} from "../services/ai.service";
+import { aiService, type ChatTurn } from "../services/ai.service";
+import { buildPlan, plannerContext, plannerStarters, plannerSystemPrompt, PLANNER_SCHEMA, type PlannerOutput } from "../services/planner.service";
+import { assertClientAccess, getAccess } from "../lib/access";
+import { ClientScopeError } from "../lib/clients";
 import { openaiImageService } from "../services/openai-image.service";
 import { metaService, type MetaTargeting } from "../services/meta.service";
 import { requireAuth } from "../middleware/auth";
@@ -66,184 +65,131 @@ router.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", model: MODEL });
 });
 
-/** Longest conversation we replay to the model. Well past a normal planning
- *  session; a guard against an unbounded transcript blowing up the request. */
+/* ── AI Planner (plan A12) ─────────────────────────────────────────────────── */
+
+/** Longest conversation we replay to the model; a guard against an unbounded transcript. */
 const PLANNER_MAX_TURNS = 40;
 const PLANNER_MAX_CHARS = 4000;
+const PLANS_PER_HOUR = 30;
+const planTimestamps = new Map<string, number[]>();
 
-/**
- * Build the account facts the planner needs to give currency-correct, honest
- * advice. All best-effort — a workspace with nothing connected still gets a
- * plan, it just says so.
- */
-async function loadPlannerContext(workspaceId: string): Promise<PlannerContext> {
-  const accounts = await prisma.adAccount.findMany({
-    where: { workspaceId, isActive: true },
-    select: {
-      platform: true,
-      currency: true,
-      minDailyBudget: true,
-      accountId: true,
-      accessToken: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  const meta = accounts.find((a) => a.platform === "META");
-  const primary = meta ?? accounts[0];
-
-  // Whether a pixel exists decides if we may recommend Sales / Leads at all.
-  // Never let this fail the request — an unknown pixel state is fine, the
-  // prompt handles `undefined` by staying quiet about it.
-  let hasPixel: boolean | undefined;
-  if (meta) {
-    try {
-      const pixels = await metaService.getPixels(
-        metaService.decryptToken(meta.accessToken),
-        meta.accountId
-      );
-      hasPixel = pixels.length > 0;
-    } catch {
-      hasPixel = undefined;
-    }
-  }
-
-  return {
-    currency: primary?.currency ?? null,
-    minDailyBudget: primary?.minDailyBudget ?? null,
-    connectedPlatforms: [...new Set(accounts.map((a) => a.platform))],
-    hasPixel,
-  };
+function takePlanSlot(workspaceId: string): { ok: boolean; resetSeconds?: number } {
+  const now = Date.now();
+  const recent = (planTimestamps.get(workspaceId) ?? []).filter((t) => now - t < HOUR_MS);
+  if (recent.length >= PLANS_PER_HOUR) return { ok: false, resetSeconds: Math.ceil((recent[0] + HOUR_MS - now) / 1000) };
+  recent.push(now);
+  planTimestamps.set(workspaceId, recent);
+  return { ok: true };
 }
 
-/** Coerce the request body into a validated turn list. Accepts both the new
- *  `{ messages }` shape and the legacy `{ prompt }` single-shot shape. */
+/** The transcript from the client: user / assistant turns, trimmed, opening on a user turn and ending on one. */
 function parsePlannerTurns(body: unknown): ChatTurn[] | { error: string } {
-  const b = (body ?? {}) as { messages?: unknown; prompt?: unknown };
-
-  if (Array.isArray(b.messages)) {
-    const turns: ChatTurn[] = [];
-    for (const raw of b.messages) {
-      const m = (raw ?? {}) as { role?: unknown; content?: unknown };
-      if (m.role !== "user" && m.role !== "assistant") {
-        return { error: "Each message needs a role of 'user' or 'assistant'." };
-      }
-      if (typeof m.content !== "string" || !m.content.trim()) continue;
-      turns.push({
-        role: m.role,
-        content: m.content.trim().slice(0, PLANNER_MAX_CHARS),
-      });
-    }
-    if (turns.length === 0) {
-      return { error: "Tell me about your business and what you want to achieve." };
-    }
-    // Trim to the window FIRST, then drop any leading assistant turns — the
-    // Messages API requires the conversation to open on a user turn, and
-    // slicing a long transcript can easily land mid-exchange on an assistant
-    // reply.
-    const windowed = turns.slice(-PLANNER_MAX_TURNS);
-    while (windowed.length > 0 && windowed[0].role === "assistant") {
-      windowed.shift();
-    }
-    if (windowed.length === 0 || windowed[windowed.length - 1].role !== "user") {
-      return { error: "The last message must come from you." };
-    }
-    return windowed;
+  const raw = (body as { messages?: unknown } | null)?.messages;
+  if (!Array.isArray(raw)) return { error: "Describe the goal, budget and timing." };
+  const turns: ChatTurn[] = [];
+  for (const t of raw) {
+    const m = (t ?? {}) as { role?: unknown; content?: unknown };
+    if (m.role !== "user" && m.role !== "assistant") return { error: "Each message needs a role of 'user' or 'assistant'." };
+    if (typeof m.content !== "string" || !m.content.trim()) continue;
+    turns.push({ role: m.role, content: m.content.trim().slice(0, PLANNER_MAX_CHARS) });
   }
+  const windowed = turns.slice(-PLANNER_MAX_TURNS);
+  while (windowed.length && windowed[0].role === "assistant") windowed.shift();
+  if (!windowed.length) return { error: "Describe the goal, budget and timing." };
+  if (windowed[windowed.length - 1].role !== "user") return { error: "The last message must come from you." };
+  return windowed;
+}
 
-  if (typeof b.prompt === "string") {
-    const prompt = b.prompt.trim();
-    if (prompt.length < 10) {
-      return { error: "Tell me a bit more — at least a sentence about your business and goal." };
-    }
-    return [{ role: "user", content: prompt.slice(0, PLANNER_MAX_CHARS) }];
-  }
-
-  return { error: "Tell me about your business and what you want to achieve." };
+/** The client a planner request is for: `clientId` (query or body), checked against the member's access. */
+async function plannerClient(req: Request, workspaceId: string, raw: unknown): Promise<string | null> {
+  const id = typeof raw === "string" && raw && raw !== "all" ? raw : null;
+  const access = await getAccess(req);
+  if (!id) return access?.clientIds?.[0] ?? null;
+  const found = await prisma.client.findFirst({ where: { id, workspaceId }, select: { id: true } });
+  if (!found) throw new ClientScopeError();
+  if (access) assertClientAccess(access, found.id);
+  return found.id;
 }
 
 /**
- * POST /ai/plan-campaign — the conversational AI media buyer.
- *
- * Body: `{ messages: [{ role, content }, ...] }` (whole transcript, replayed
- * each turn so the model keeps full context) or legacy `{ prompt }`.
- *
- * Returns either:
- *   `{ mode: "clarify", reply, questions }` — needs more information, or
- *   `{ mode: "plan",    reply, plan }`      — the full campaign plan.
+ * GET /ai/planner/context?clientId= — what Advertix reads before planning
+ * (last 30 days, platforms compared, fatigue and shared audiences) plus
+ * starter briefs from real data. Under "All clients" it picks a client.
  */
-router.post(
-  "/plan-campaign",
-  requireAuth,
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const workspace = await requireWorkspace(req.dbUserId!);
-
-      const parsed = parsePlannerTurns(req.body);
-      if (!Array.isArray(parsed)) {
-        return res.status(400).json({ error: parsed.error });
-      }
-
-      const context = await loadPlannerContext(workspace.id);
-
-      let payload: {
-        mode?: unknown;
-        reply?: unknown;
-        questions?: unknown;
-        plan?: unknown;
-      };
-      try {
-        const { json } = await aiService.chatPlanner(parsed, context);
-        payload = JSON.parse(json);
-      } catch (err) {
-        const code = err instanceof Error ? err.message : "AI_API_ERROR";
-        if (code === "AI_PARSE_ERROR") {
-          return res.status(502).json({
-            error:
-              "I got tangled up drafting that. Try asking again, or add a bit more detail about your business.",
-          });
-        }
-        return res.status(503).json({
-          error:
-            "The AI planner is temporarily unavailable. Please try again in a moment.",
-        });
-      }
-
-      const reply =
-        typeof payload.reply === "string" && payload.reply.trim()
-          ? payload.reply.trim()
-          : null;
-
-      // A "plan" reply without a plan object is a malformed answer — treat it
-      // as clarify rather than handing the UI an undefined plan to render.
-      if (payload.mode === "plan" && payload.plan && typeof payload.plan === "object") {
-        return res.json({
-          mode: "plan" as const,
-          reply: reply ?? "Here's the plan I'd run for you.",
-          plan: payload.plan,
-          context,
-        });
-      }
-
-      const questions = Array.isArray(payload.questions)
-        ? payload.questions.filter(
-            (q): q is string => typeof q === "string" && q.trim().length > 0
-          )
-        : [];
-
-      return res.json({
-        mode: "clarify" as const,
-        reply:
-          reply ??
-          "Before I put numbers on this, tell me a little more about your business.",
-        questions,
-        context,
-      });
-    } catch (err) {
-      next(err);
-    }
+router.get("/planner/context", requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const clientId = await plannerClient(req, workspace.id, req.query.clientId);
+    const access = await getAccess(req);
+    const [context, starters] = await Promise.all([
+      plannerContext(workspace.id, clientId, { pixel: req.query.pixel !== "0" }),
+      plannerStarters(workspace.id, clientId ? [clientId] : access?.clientIds ?? null),
+    ]);
+    res.json({ ...context, starters });
+  } catch (err) {
+    next(err);
   }
-);
+});
+
+/**
+ * POST /ai/plan-campaign — one planner turn.
+ *
+ * Body: `{ messages: [{ role, content }], clientId, currentPlan? }`. The
+ * whole transcript is replayed; `currentPlan` (the model's last draft) is
+ * attached to the latest message so follow-ups change only what's asked.
+ *
+ * Returns `{ mode: "clarify", reply, questions, suggestions, steps }` or
+ * `{ mode: "plan", reply, plan, steps }`, where the plan's budgets and
+ * forecast are computed here from the client's own history.
+ */
+router.post("/plan-campaign", requireAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const turns = parsePlannerTurns(req.body);
+    if (!Array.isArray(turns)) return res.status(400).json({ error: turns.error });
+    const clientId = await plannerClient(req, workspace.id, req.body?.clientId);
+    const context = await plannerContext(workspace.id, clientId);
+    if (!context.client) return res.status(400).json({ error: "Add a client with a connected ad account first." });
+
+    const slot = takePlanSlot(workspace.id);
+    if (!slot.ok) {
+      return res.status(429).json({ error: `That's ${PLANS_PER_HOUR} plans this hour for this workspace. Try again in ${Math.ceil((slot.resetSeconds ?? 60) / 60)} min.` });
+    }
+
+    const current = req.body?.currentPlan;
+    const messages = turns.map((t, i) =>
+      i === turns.length - 1 && current && typeof current === "object"
+        ? { role: t.role, content: `<current_plan>\n${JSON.stringify(current).slice(0, 60_000)}\n</current_plan>\n\n${t.content}` }
+        : t
+    );
+
+    let out: PlannerOutput;
+    try {
+      const { json } = await aiService.planner(plannerSystemPrompt(context), messages, PLANNER_SCHEMA);
+      out = JSON.parse(json) as PlannerOutput;
+    } catch (err) {
+      const code = err instanceof Error ? err.message : "AI_API_ERROR";
+      if (code === "AI_REFUSAL") return res.status(422).json({ error: "Advertix can't plan that request. Try describing the campaign differently." });
+      if (code === "AI_PARSE_ERROR") return res.status(502).json({ error: "The plan came back incomplete. Try again, or ask for a smaller plan." });
+      if (code === "AI_RATE_LIMIT") return res.status(429).json({ error: "The AI planner is busy right now. Try again in a minute." });
+      return res.status(503).json({ error: "The AI planner is temporarily unavailable. Try again in a moment." });
+    }
+
+    const reply = out.reply?.trim() || null;
+    if (out.mode === "plan" && out.plan && Array.isArray(out.plan.campaigns) && out.plan.campaigns.length) {
+      return res.json({ mode: "plan" as const, reply: reply ?? "Here's the plan.", plan: buildPlan(out.plan, context), steps: context.steps });
+    }
+    return res.json({
+      mode: "clarify" as const,
+      reply: reply ?? "Before I plan this, tell me the budget, timing and goal.",
+      questions: (out.questions ?? []).filter((q) => typeof q === "string" && q.trim()).slice(0, 3),
+      suggestions: (out.suggestions ?? []).filter((q) => typeof q === "string" && q.trim()).slice(0, 4),
+      steps: context.steps,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /* ── Ask about this campaign (plan B5) ────────────────────────────────────── */
 

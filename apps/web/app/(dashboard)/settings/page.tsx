@@ -29,6 +29,7 @@ import MetaHealthStatus from "@/components/settings/MetaHealthStatus";
 import GoogleConnect from "@/components/settings/GoogleConnect";
 import TikTokConnect from "@/components/settings/TikTokConnect";
 import LinkedInConnect from "@/components/settings/LinkedInConnect";
+import { TeamPanel } from "@/components/app/team/TeamPanel";
 
 type Tab =
   | "general"
@@ -46,7 +47,7 @@ const TABS: {
   danger?: boolean;
 }[] = [
   { id: "general", label: "General", icon: Building2 },
-  { id: "workspace", label: "Workspace", icon: Users },
+  { id: "workspace", label: "Team", icon: Users },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "apikeys", label: "API Keys", icon: Key },
@@ -466,235 +467,9 @@ function GeneralTab() {
 /* Workspace                                  */
 /* ───────────────────────────────────────── */
 
-type AssignableRole = "ADMIN" | "EDITOR" | "VIEWER";
-
-const ROLE_GRADIENTS = [
-  "from-indigo-500 to-purple-600",
-  "from-emerald-500 to-cyan-600",
-  "from-amber-500 to-rose-500",
-  "from-pink-500 to-fuchsia-600",
-  "from-sky-500 to-blue-600",
-] as const;
-
-function initialsOf(name: string | null | undefined, email: string): string {
-  const src = name && name.trim() ? name : email;
-  return src
-    .split(/\s+|@/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase())
-    .join("");
-}
-
+/** Team (B6): members, roles, client access, invites and seats. */
 function WorkspaceTab() {
-  const api = useApiClient();
-  const membersQ = useApi((c) => c.getMembers(), []);
-
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<AssignableRole>("EDITOR");
-  const [inviting, setInviting] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
-
-  async function sendInvite() {
-    if (inviting) return;
-    const email = inviteEmail.trim();
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      toast.error("Enter a valid email");
-      return;
-    }
-    setInviting(true);
-    try {
-      await api.inviteMember(email, inviteRole);
-      toast.success(`Invite sent to ${email}`);
-      setInviteEmail("");
-      setInviteOpen(false);
-      membersQ.refetch();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Invite failed");
-    } finally {
-      setInviting(false);
-    }
-  }
-
-  async function changeRole(memberId: string, role: AssignableRole) {
-    setBusyId(memberId);
-    try {
-      await api.updateMemberRole(memberId, role);
-      toast.success("Role updated");
-      membersQ.refetch();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Update failed");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function removeMember(memberId: string) {
-    if (!window.confirm("Remove this teammate from the workspace?")) return;
-    setBusyId(memberId);
-    try {
-      await api.removeMember(memberId);
-      toast.success("Member removed");
-      membersQ.refetch();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Remove failed");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  const members = membersQ.data ?? [];
-
-  return (
-    <div className="space-y-6">
-      <Card
-        title="Team Members"
-        description="People who have access to this workspace."
-      >
-        <div className="-mt-2 flex items-center justify-end">
-          <button
-            type="button"
-            onClick={() => setInviteOpen((v) => !v)}
-            className="btn-brand"
-          >
-            <Plus className="h-4 w-4" strokeWidth={2.5} />
-            Invite Member
-          </button>
-        </div>
-
-        {inviteOpen && (
-          <div className="rounded-xl border-2 border-dashed border-primary/30 bg-primary/[0.04] p-4 animate-in">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <div className="flex-1">
-                <Field label="Email">
-                  <Input
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="teammate@company.com"
-                  />
-                </Field>
-              </div>
-              <div className="sm:w-32">
-                <Field label="Role">
-                  <Select
-                    value={inviteRole}
-                    onChange={(e) =>
-                      setInviteRole(e.target.value as AssignableRole)
-                    }
-                  >
-                    <option value="ADMIN">Admin</option>
-                    <option value="EDITOR">Editor</option>
-                    <option value="VIEWER">Viewer</option>
-                  </Select>
-                </Field>
-              </div>
-              <button
-                type="button"
-                onClick={sendInvite}
-                disabled={inviting}
-                className={clsx("btn-brand", inviting && "opacity-60")}
-              >
-                <Send className="h-4 w-4" />
-                {inviting ? "Sending…" : "Send Invite"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {membersQ.loading ? (
-          <ul className="space-y-2">
-            {[0, 1, 2].map((i) => (
-              <li
-                key={i}
-                className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3"
-              >
-                <div className="h-10 w-10 animate-pulse rounded-xl bg-slate-200/70" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-3 w-32 animate-pulse rounded bg-slate-200/70" />
-                  <div className="h-2 w-48 animate-pulse rounded bg-slate-200/70" />
-                </div>
-                <div className="h-8 w-24 animate-pulse rounded bg-slate-200/70" />
-              </li>
-            ))}
-          </ul>
-        ) : members.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-            No team members yet. Invite teammates with the button above.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {members.map((m, i) => {
-              const gradient = ROLE_GRADIENTS[i % ROLE_GRADIENTS.length];
-              const isOwner = m.role === "OWNER";
-              return (
-                <li
-                  key={m.id}
-                  className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 transition hover:border-slate-300"
-                >
-                  <div
-                    className={clsx(
-                      "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-xs font-bold text-white shadow-sm",
-                      gradient
-                    )}
-                  >
-                    {initialsOf(m.user.name, m.user.email)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-bold text-slate-900">
-                      {m.user.name || m.user.email}
-                    </p>
-                    <p className="truncate text-xs text-slate-500">
-                      {m.user.email}
-                    </p>
-                  </div>
-                  {isOwner ? (
-                    <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
-                      Owner
-                    </span>
-                  ) : (
-                    <>
-                      <Select
-                        value={m.role}
-                        onChange={(e) =>
-                          changeRole(m.id, e.target.value as AssignableRole)
-                        }
-                        disabled={busyId === m.id}
-                        className="h-8 w-28 text-xs"
-                      >
-                        <option value="ADMIN">Admin</option>
-                        <option value="EDITOR">Editor</option>
-                        <option value="VIEWER">Viewer</option>
-                      </Select>
-                      <button
-                        type="button"
-                        onClick={() => removeMember(m.id)}
-                        disabled={busyId === m.id}
-                        className="text-xs font-semibold text-rose-600 transition hover:underline disabled:opacity-50"
-                      >
-                        Remove
-                      </button>
-                    </>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Card>
-
-      {/* TODO(phase-3): persist pending invites in DB + render real list here */}
-      <Card
-        title="Pending Invites"
-        description="Invites that haven't been accepted yet (placeholder — real invite records in Phase 3)."
-      >
-        <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 p-4 text-center text-xs text-slate-500">
-          No pending invites.
-        </p>
-      </Card>
-    </div>
-  );
+  return <TeamPanel />;
 }
 
 /* ───────────────────────────────────────── */

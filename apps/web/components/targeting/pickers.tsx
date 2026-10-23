@@ -92,6 +92,20 @@ export function CountryPicker({
         Countries
       </label>
       <div className="flex flex-wrap gap-1.5">
+        {/* Countries outside the common list (from AI or a saved audience) stay visible and removable. */}
+        {values
+          .filter((v) => !COMMON_COUNTRIES.some((c) => c.code === v))
+          .map((code) => (
+            <button
+              key={code}
+              type="button"
+              onClick={() => onChange(values.filter((v) => v !== code))}
+              title="Remove"
+              className="rounded-full border border-brand bg-brand px-2.5 py-1 text-[11px] font-semibold text-white transition"
+            >
+              {code} ✕
+            </button>
+          ))}
         {COMMON_COUNTRIES.map((c) => {
           const selected = values.includes(c.code);
           return (

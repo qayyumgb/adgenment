@@ -12,6 +12,14 @@ import { campaignClientWhere, parseClientScope } from "../lib/clients";
 import { metaService, type MetaTargeting } from "../services/meta.service";
 import { isMetaError, friendlyMetaError } from "../lib/meta-errors";
 import { changeLog } from "../services/change-log.service";
+import { syncService } from "../services/sync.service";
+
+/** Pull a just-published / launched campaign's ad sets and ads (B4). Never blocks the response. */
+function refreshStructure(campaignId: string) {
+  void syncService.syncMetaCampaignStructure(campaignId).catch((err) => {
+    console.error(`[campaigns] ad set refresh for ${campaignId} failed (non-fatal):`, err instanceof Error ? err.message : err);
+  });
+}
 
 const router = Router();
 router.use(requireAuth);
@@ -83,6 +91,17 @@ const AD_ACCOUNT_PUBLIC_SELECT = {
   minDailyBudget: true,
   clientId: true,
 } as const;
+
+/**
+ * The saved audience a campaign's targeting came from (A9). undefined = leave
+ * unchanged, null = clear; an id outside the workspace is ignored (null).
+ */
+async function parseAudienceId(value: unknown, workspaceId: string): Promise<string | null | undefined> {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !value) return null;
+  const found = await prisma.audience.findFirst({ where: { id: value, workspaceId }, select: { id: true } });
+  return found?.id ?? null;
+}
 
 /**
  * GET /campaigns
@@ -184,8 +203,23 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       );
     }
 
+    // Meta learning phase (B4): LEARNING if any active ad set is still
+    // learning, LIMITED if one is stuck ("learning limited").
+    const learningByCampaign: Record<string, "LEARNING" | "LIMITED"> = {};
+    if (campaigns.length > 0) {
+      const learningSets = await prisma.adSet.findMany({
+        where: { campaignId: { in: campaigns.map((c) => c.id) }, status: "ACTIVE", learningStage: { in: ["LEARNING", "FAIL"] } },
+        select: { campaignId: true, learningStage: true },
+      });
+      for (const s of learningSets) {
+        if (s.learningStage === "LEARNING") learningByCampaign[s.campaignId] = "LEARNING";
+        else learningByCampaign[s.campaignId] ??= "LIMITED";
+      }
+    }
+
     const enriched = campaigns.map((c) => ({
       ...c,
+      learning: learningByCampaign[c.id] ?? null,
       totals: totalsByCampaignId[c.id] ?? {
         spend: 0,
         impressions: 0,
@@ -273,6 +307,7 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
         endDate: parseDate(endDate),
         targeting: targeting ?? Prisma.JsonNull,
         status: "DRAFT",
+        audienceId: (await parseAudienceId(req.body?.audienceId, workspace.id)) ?? null,
       },
     });
 
@@ -370,6 +405,8 @@ router.put("/:id", async (req: Request, res: Response, next: NextFunction) => {
     if (targeting !== undefined) {
       data.targeting = targeting === null ? Prisma.JsonNull : targeting;
     }
+    const audienceId = await parseAudienceId(req.body?.audienceId, workspace.id);
+    if (audienceId !== undefined) data.audience = audienceId ? { connect: { id: audienceId } } : { disconnect: true };
 
     // Push the edit to Meta BEFORE committing locally, so a rejection leaves
     // our row matching what Meta actually has. Writing locally first would let
@@ -1261,6 +1298,14 @@ router.post(
         after: { externalId: metaCampaign.id, status: "PAUSED" },
         platformPushed: true,
       });
+      // Publishing a library creative links it to this campaign, so the
+      // Creatives page can show the ad's results against it (A8).
+      if (typeof creative.libraryCreativeId === "string" && creative.libraryCreativeId) {
+        await prisma.creative
+          .updateMany({ where: { id: creative.libraryCreativeId, workspaceId: workspace.id }, data: { campaignId: campaign.id, status: "APPROVED" } })
+          .catch((err) => console.error("[campaigns/publish] linking library creative failed (non-fatal):", err));
+      }
+      refreshStructure(campaign.id);
 
       return res.status(201).json({
         success: true,
@@ -1401,6 +1446,7 @@ router.post(
           platformPushed: true,
         });
       }
+      refreshStructure(campaign.id);
       res.json({ success: true, campaign: updated });
     } catch (err) {
       next(err);

@@ -211,15 +211,4 @@ export function forecast(d: Draft, minDailyBudget: number | null, history: Analy
   };
 }
 
-/** Old AI Planner prefill (sessionStorage "aiPlanPrefill") → draft fields. */
-export type PlanPrefill = {
-  platforms?: string[];
-  objective?: string;
-  budget?: number;
-  name?: string;
-  startDate?: string;
-  endDate?: string;
-  audience?: { ageRange?: string; genders?: string[]; interests?: string[]; locations?: string[] };
-};
-
 export const AUTOSAVE_KEY = "advertix.newCampaign.draft";

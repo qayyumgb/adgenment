@@ -8,6 +8,9 @@ import { DataGrid, type GridColumn } from "@/components/app/grid";
 import { AiMark, AiNote, AiSuggestion, Card, EmptyState, KpiCard, Skeleton } from "@/components/app/ui";
 import { suggestionState, useSuggestions } from "@/components/app/suggestions/useSuggestions";
 import { AskCampaign } from "./AskCampaign";
+import { useAccess } from "@/components/app/team/access";
+import type { CampaignStructureState } from "./structure";
+import { OverviewStructure } from "./StructureViews";
 import { DailyMetricChart, type ChartMarker } from "./DailyMetricChart";
 import { cpa, ctr, dayLabel, pct, roas, sum, type Day, type Totals } from "./metrics";
 
@@ -44,6 +47,7 @@ function observations(c: Campaign, t: Totals, days: Day[], currency: string | nu
 function CampaignSuggestions({ campaignId, onChanged }: { campaignId: string; onChanged: () => void }) {
   const router = useAppRouter();
   const sg = useSuggestions({ clientId: null, campaignId, onChanged });
+  const canEdit = useAccess().can("edit");
   const open = sg.list.filter((s) => s.status === "OPEN").length;
   return (
     <Card padded={false} className="flex flex-col gap-2.5 px-5 pb-2 pt-5">
@@ -69,7 +73,7 @@ function CampaignSuggestions({ campaignId, onChanged }: { campaignId: string; on
               impact={s.impact ?? undefined}
               actionLabel={s.actionLabel}
               doneLabel={s.doneLabel ?? undefined}
-              mode={s.executable ? "apply" : "review"}
+              mode={s.executable && canEdit ? "apply" : "review"}
               state={suggestionState(s)}
               busy={sg.busy === s.id}
               onApply={() => void sg.apply(s)}
@@ -93,6 +97,7 @@ export function OverviewTab({
   previous,
   loading,
   onChanged,
+  structure,
 }: {
   campaign: Campaign;
   /** Last 30 days, oldest first. */
@@ -101,6 +106,8 @@ export function OverviewTab({
   previous: Day[];
   loading: boolean;
   onChanged: () => void;
+  /** Ad sets and ads (B4); the grid and tiles show once they have synced. */
+  structure: CampaignStructureState;
 }) {
   const currency = c.adAccount?.currency ?? null;
   const t = sum(current);
@@ -191,6 +198,8 @@ export function OverviewTab({
           <AskCampaign campaignId={c.id} campaignName={c.name} />
         </aside>
       </div>
+
+      <OverviewStructure campaign={c} st={structure} />
 
       {hasData && (
         <DataGrid

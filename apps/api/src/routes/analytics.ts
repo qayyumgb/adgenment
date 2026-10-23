@@ -65,7 +65,7 @@ router.get(
         ...campaignClientWhere(clientScope),
       };
 
-      const [current, previous] = await Promise.all([
+      const [current, previous, adLevel] = await Promise.all([
         prisma.campaignMetrics.aggregate({
           where: {
             campaign: campaignFilter,
@@ -90,6 +90,23 @@ router.get(
             impressions: true,
             clicks: true,
             conversions: true,
+          },
+        }),
+        // Ad-level results (B4, Meta only): the funnel's landing-page-view and
+        // add-to-cart steps, with the same campaigns' impressions / clicks /
+        // conversions so step rates compare like with like.
+        prisma.adMetrics.aggregate({
+          where: {
+            ad: { campaign: campaignFilter },
+            date: { gte: periodStart, lte: now },
+          },
+          _count: { _all: true },
+          _sum: {
+            impressions: true,
+            clicks: true,
+            conversions: true,
+            landingPageViews: true,
+            addToCart: true,
           },
         }),
       ]);
@@ -132,6 +149,17 @@ router.get(
         // Raw previous-period totals, so clients can tell "no prior data"
         // apart from a real +100% and derive other deltas (cost/conversion).
         previous: p,
+        // Null until ad-level data has synced for these campaigns.
+        adLevel:
+          adLevel._count._all > 0
+            ? {
+                impressions: adLevel._sum.impressions ?? 0,
+                clicks: adLevel._sum.clicks ?? 0,
+                conversions: adLevel._sum.conversions ?? 0,
+                landingPageViews: adLevel._sum.landingPageViews ?? 0,
+                addToCart: adLevel._sum.addToCart ?? 0,
+              }
+            : null,
       });
     } catch (err) {
       next(err);

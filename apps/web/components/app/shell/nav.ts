@@ -14,10 +14,10 @@ import {
 /**
  * App navigation (guide §3.1 + §2.4 icon mapping).
  *
- * Some destinations point at today's routes until their rebuilt pages exist
- * (docs/DASHBOARD_REDESIGN_PLAN.md § 5.3): Budgets → /budget-optimizer (A11),
- * Connections → Settings › Integrations (A13). /insights now redirects to
- * Analytics, which absorbed it (A10).
+ * One destination points at today's route until its rebuilt page exists
+ * (docs/DASHBOARD_REDESIGN_PLAN.md § 5.3): Connections → Settings ›
+ * Integrations (A13). /insights now redirects to Analytics, which absorbed it (A10), and
+ * /budget-optimizer to Budgets (A11).
  */
 export type NavItem = {
   label: string;
@@ -37,8 +37,7 @@ export const WORKSPACE_NAV: NavItem[] = [
   { label: "Creatives", href: "/creatives", icon: ImageIcon },
   { label: "Audiences", href: "/audiences", icon: Users },
   { label: "Analytics", href: "/analytics", icon: BarChart3, match: ["/insights"] },
-  // TODO(A11): → /budgets
-  { label: "Budgets", href: "/budget-optimizer", icon: Wallet, match: ["/budgets"] },
+  { label: "Budgets", href: "/budgets", icon: Wallet, match: ["/budget-optimizer"] },
   { label: "AI Planner", href: "/ai-planner", icon: Sparkles, brandIcon: true },
 ];
 

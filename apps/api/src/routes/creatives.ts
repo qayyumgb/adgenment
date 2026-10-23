@@ -10,6 +10,7 @@ import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
 import { ownedOrSharedWhere, parseBodyClientId, parseClientScope } from "../lib/clients";
 import { refreshExpiredMetaMedia } from "../services/meta-media-refresh.service";
+import { creativeBoard } from "../services/creative-board.service";
 
 const router = Router();
 router.use(requireAuth);
@@ -102,6 +103,21 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
       page,
       totalPages: Math.max(1, Math.ceil(total / limit)),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /creatives/board?days=30&clientId= — library creatives and synced Meta
+ * ads as one list, with results, delivery status and fatigue (plan A8).
+ */
+router.get("/board", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const clientScope = await parseClientScope(req, workspace.id);
+    const days = Math.min(90, Math.max(1, parseInt(String(req.query.days ?? "30"), 10) || 30));
+    res.json(await creativeBoard(workspace.id, clientScope, days));
   } catch (err) {
     next(err);
   }

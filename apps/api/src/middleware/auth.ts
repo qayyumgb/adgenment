@@ -45,7 +45,11 @@ async function loadUserFromToken(token: string) {
     where: { userId: user.id },
     select: { id: true },
   });
-  if (!existingMembership) {
+  // Someone signing up from an invite joins that workspace instead (B6).
+  const invited = existingMembership
+    ? null
+    : await prisma.invite.findFirst({ where: { email: user.email.toLowerCase(), status: "PENDING", expiresAt: { gt: new Date() } }, select: { id: true } });
+  if (!existingMembership && !invited) {
     const workspaceName = displayName
       ? `${displayName.split(" ")[0]}'s Workspace`
       : "My Workspace";
@@ -65,6 +69,8 @@ export async function requireAuth(
   res: Response,
   next: NextFunction
 ) {
+  // Already verified earlier in this request (two routers share a mount path).
+  if (req.dbUserId) return next();
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {

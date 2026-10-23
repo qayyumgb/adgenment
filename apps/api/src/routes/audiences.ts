@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
 import { ownedOrSharedWhere, parseBodyClientId, parseClientScope } from "../lib/clients";
+import { audienceBoard } from "../services/audience-board.service";
 
 const router = Router();
 router.use(requireAuth);
@@ -58,6 +59,22 @@ function normalizeApproxSize(v: unknown): number | null {
   }
   return null;
 }
+
+/**
+ * GET /audiences/board?days=30&clientId= — saved audiences plus the custom,
+ * lookalike and saved audiences on the client's Meta account, with size,
+ * usage, results, status, verified warnings and lookalike ideas (plan A9).
+ */
+router.get("/board", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const clientScope = await parseClientScope(req, workspace.id);
+    const days = Math.min(90, Math.max(1, parseInt(String(req.query.days ?? "30"), 10) || 30));
+    res.json(await audienceBoard(workspace.id, clientScope, days));
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * GET /audiences — list this workspace's saved targeting templates.
