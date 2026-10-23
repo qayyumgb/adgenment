@@ -226,7 +226,7 @@ export default function AudiencesPage() {
             {board.data && board.data.metaAccounts.length === 0 && (
               <p className="text-[13px] text-ink-2">
                 Custom and lookalike audiences from Meta show here once {client ? `${client.name} has` : "you have"} a Meta ad account.{" "}
-                <Link href="/settings?tab=integrations" className="font-semibold text-brand no-underline hover:text-brand-hover">
+                <Link href="/connections" className="font-semibold text-brand no-underline hover:text-brand-hover">
                   Connect one
                 </Link>
               </p>

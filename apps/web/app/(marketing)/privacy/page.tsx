@@ -205,7 +205,7 @@ export default function PrivacyPage() {
           </p>
           <p className="mt-2">
             You can revoke any ad platform integration at any time from
-            Settings &rarr; Integrations. Doing so deletes the stored access
+            the Connections page. Doing so deletes the stored access
             token; previously synced campaign metadata may be retained for
             reporting unless you also delete the workspace.
           </p>

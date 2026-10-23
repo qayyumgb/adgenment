@@ -72,6 +72,7 @@ const APP_ONLY_PREFIXES = [
   "/insights",
   "/budget-optimizer",
   "/budgets",
+  "/connections",
   "/ai-planner",
   "/billing",
   "/settings",

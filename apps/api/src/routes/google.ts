@@ -5,6 +5,7 @@ import { encryptToken, decryptToken } from "../lib/crypto";
 import { getUserWorkspace, requireWorkspace } from "../lib/workspace";
 import { googleService } from "../services/google.service";
 import { syncService } from "../services/sync.service";
+import { stageConnection } from "../services/connections.service";
 
 const router = Router();
 
@@ -40,7 +41,6 @@ router.get(
 /* ────────────────────────────────────────── */
 
 router.get("/callback", async (req: Request, res: Response) => {
-  const successUrl = `${FRONTEND_URL}/connect/done?connected=google`;
   const failureUrl = `${FRONTEND_URL}/connect/done?error=google_failed`;
   try {
     const { code, state, error: oauthError } = req.query;
@@ -90,41 +90,22 @@ router.get("/callback", async (req: Request, res: Response) => {
       );
     }
 
-    // Upsert each customer as an AdAccount.
-    for (const c of customers) {
-      await prisma.adAccount.upsert({
-        where: {
-          workspaceId_platform_accountId: {
-            workspaceId: workspace.id,
-            platform: "GOOGLE",
-            accountId: c.id,
-          },
-        },
-        create: {
-          workspaceId: workspace.id,
-          platform: "GOOGLE",
-          accountId: c.id,
-          accountName: c.name,
-          currency: c.currencyCode || null,
-          timezone: c.timeZone || null,
-          accessToken: encryptedAccess,
-          refreshToken: encryptedRefresh,
-          isActive: c.status === "ENABLED" || c.status === "UNKNOWN",
-        },
-        update: {
-          accountName: c.name,
-          currency: c.currencyCode || null,
-          timezone: c.timeZone || null,
-          accessToken: encryptedAccess,
-          // Only overwrite refresh token if we got a new one — preserves
-          // the previously-stored refresh token if Google didn't re-issue.
-          ...(encryptedRefresh ? { refreshToken: encryptedRefresh } : {}),
-          isActive: c.status === "ENABLED" || c.status === "UNKNOWN",
-        },
-      });
-    }
-
-    return res.redirect(successUrl);
+    // Accounts already in Advertix get the new tokens; new ones wait for the
+    // Connect dialog to pick them (A13).
+    const query = await stageConnection(
+      workspace.id,
+      user.id,
+      "GOOGLE",
+      { accessToken: encryptedAccess, refreshToken: encryptedRefresh, tokenExpiresAt: null },
+      customers.map((c) => ({
+        accountId: c.id,
+        accountName: c.name,
+        currency: c.currencyCode || null,
+        timezone: c.timeZone || null,
+        isActive: c.status === "ENABLED" || c.status === "UNKNOWN",
+      }))
+    );
+    return res.redirect(`${FRONTEND_URL}/connect/done?${query}`);
   } catch (err) {
     console.error("[google/callback] error:", err);
     return res.redirect(failureUrl);

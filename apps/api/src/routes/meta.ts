@@ -5,12 +5,10 @@ import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { getUserWorkspace, requireWorkspace } from "../lib/workspace";
 import { metaService } from "../services/meta.service";
-import {
-  metaHealthService,
-  type MetaHealthReport,
-} from "../services/meta-health.service";
+import { healthForAdAccount, type MetaHealthReport } from "../services/meta-health.service";
 import { syncService } from "../services/sync.service";
 import { isMetaError, friendlyMetaError } from "../lib/meta-errors";
+import { stageConnection } from "../services/connections.service";
 
 const router = Router();
 
@@ -63,7 +61,6 @@ router.get(
 /* ────────────────────────────────────────── */
 
 router.get("/callback", async (req: Request, res: Response) => {
-  const successUrl = `${FRONTEND_URL}/connect/done?connected=meta`;
   const failureUrl = `${FRONTEND_URL}/connect/done?error=meta_failed`;
   try {
     const { code, state, error: oauthError } = req.query;
@@ -101,60 +98,23 @@ router.get("/callback", async (req: Request, res: Response) => {
     // Long-lived user tokens last ~60 days; the user must reconnect after that.
     const tokenExpiresAt = long.expiresIn > 0 ? new Date(Date.now() + long.expiresIn * 1000) : null;
 
-    // Pull ad accounts and upsert each.
+    // Accounts already in Advertix get the new token; new ones wait for the
+    // Connect dialog to pick them (A13). Health runs for renewed accounts there.
     const accounts = await metaService.getAdAccounts(long.accessToken);
-    for (const acct of accounts) {
-      const rawId = acct.id.startsWith("act_")
-        ? acct.id.slice("act_".length)
-        : acct.id;
-      await prisma.adAccount.upsert({
-        where: {
-          workspaceId_platform_accountId: {
-            workspaceId: workspace.id,
-            platform: "META",
-            accountId: rawId,
-          },
-        },
-        create: {
-          workspaceId: workspace.id,
-          platform: "META",
-          accountId: rawId,
-          accountName: acct.name,
-          currency: acct.currency || null,
-          timezone: acct.timezone || null,
-          accessToken: encryptedToken,
-          tokenExpiresAt,
-          isActive: acct.accountStatus === 1,
-        },
-        update: {
-          accountName: acct.name,
-          currency: acct.currency || null,
-          timezone: acct.timezone || null,
-          accessToken: encryptedToken,
-          tokenExpiresAt,
-          isActive: acct.accountStatus === 1,
-        },
-      });
-    }
-
-    // Run the health check now so Settings shows status immediately, and tell
-    // the frontend how it went via ?health= (drives the post-connect toast).
-    let health: MetaHealthReport["overall"] = "blocked";
-    const stored = await prisma.adAccount.findFirst({
-      where: { workspaceId: workspace.id, platform: "META" },
-      orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
-      select: { id: true },
-    });
-    if (stored) {
-      try {
-        const report = await healthForAdAccount(stored.id, true);
-        health = report.overall;
-      } catch {
-        health = "degraded";
-      }
-    }
-
-    return res.redirect(`${successUrl}&health=${health}`);
+    const query = await stageConnection(
+      workspace.id,
+      user.id,
+      "META",
+      { accessToken: encryptedToken, refreshToken: null, tokenExpiresAt },
+      accounts.map((acct) => ({
+        accountId: acct.id.startsWith("act_") ? acct.id.slice("act_".length) : acct.id,
+        accountName: acct.name,
+        currency: acct.currency || null,
+        timezone: acct.timezone || null,
+        isActive: acct.accountStatus === 1,
+      }))
+    );
+    return res.redirect(`${FRONTEND_URL}/connect/done?${query}`);
   } catch (err) {
     console.error("[meta/callback] error:", err);
     return res.redirect(failureUrl);
@@ -212,7 +172,7 @@ router.post(
       if (active.length === 0) {
         return res
           .status(400)
-          .json({ error: "Connect a Meta ad account first (Settings → Integrations)." });
+          .json({ error: "Connect a Meta ad account first (Connections)." });
       }
 
       let campaignsSynced = 0;
@@ -362,51 +322,6 @@ async function resolveMetaContext(
 /* Meta health check (GET/POST /meta/health)  */
 /* ────────────────────────────────────────── */
 
-// 5-minute in-memory cache, keyed by our AdAccount id. Health checks make
-// several Meta calls, so we don't re-run them on every page load. Cleared on
-// restart (acceptable — it's a freshness cache, not a source of truth).
-const HEALTH_CACHE_MS = 5 * 60 * 1000;
-const healthCache = new Map<string, { report: MetaHealthReport; expires: number }>();
-
-/**
- * Run (or reuse a cached) health report for one of the workspace's AdAccounts,
- * persisting the latest report on the row. `force` bypasses the cache.
- */
-async function healthForAdAccount(
-  accountDbId: string,
-  force: boolean
-): Promise<MetaHealthReport> {
-  const account = await prisma.adAccount.findUnique({ where: { id: accountDbId } });
-  if (!account) throw Object.assign(new Error("AD_ACCOUNT_NOT_FOUND"), { status: 404 });
-
-  if (!force) {
-    const cached = healthCache.get(accountDbId);
-    if (cached && cached.expires > Date.now()) return cached.report;
-  }
-
-  const token = metaService.decryptToken(account.accessToken);
-  const report = await metaHealthService.runAllChecks(token, account.accountId);
-
-  healthCache.set(accountDbId, {
-    report,
-    expires: Date.now() + HEALTH_CACHE_MS,
-  });
-  await prisma.adAccount
-    .update({
-      where: { id: accountDbId },
-      data: {
-        metadata: report as unknown as Prisma.InputJsonValue,
-        lastHealthCheck: new Date(),
-        accountStatus:
-          report.checks.find((c) => c.code === "ACCOUNT_DISABLED")
-            ? 2
-            : account.accountStatus,
-      },
-    })
-    .catch(() => undefined);
-
-  return report;
-}
 
 /**
  * GET /meta/health/:adAccountId — full Meta health report (cached 5 min).

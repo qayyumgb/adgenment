@@ -873,6 +873,67 @@ export interface PlanDraftsResult {
   skipped: { name: string; platform: string; reason: string }[];
 }
 
+/** Connections (A13): one account's state, most urgent first. */
+export type ConnectionStatus = "HEALTHY" | "TOKEN_EXPIRING" | "TOKEN_EXPIRED" | "PIXEL_ISSUE" | "BLOCKED" | "UNASSIGNED" | "INACTIVE" | "ARCHIVED";
+
+export interface ConnectionAccount {
+  id: string;
+  platform: Platform;
+  accountId: string;
+  accountName: string;
+  currency: string | null;
+  timezone: string | null;
+  minDailyBudget: number | null;
+  isActive: boolean;
+  archivedAt: string | null;
+  createdAt: string;
+  lastSyncedAt: string | null;
+  clientId: string | null;
+  clientName: string | null;
+  tokenExpiresAt: string | null;
+  lastHealthCheck: string | null;
+  campaigns: number;
+  spend30d: number;
+  status: ConnectionStatus;
+  statusDetail: string | null;
+  health: "healthy" | "degraded" | "blocked" | null;
+}
+
+export interface ConnectionPlatform {
+  platform: Platform;
+  name: string;
+  api: string;
+  available: boolean;
+  accounts: number;
+  /** Null when the accounts use different currencies. */
+  spend30d: number | null;
+  currency: string | null;
+  status: "CONNECTED" | "ATTENTION" | "NOT_CONNECTED" | "COMING_SOON";
+  lastSyncedAt: string | null;
+  autoSync: boolean;
+}
+
+export interface ConnectionsData {
+  platforms: ConnectionPlatform[];
+  accounts: ConnectionAccount[];
+  hasClients: boolean;
+  syncIntervalHours: number;
+}
+
+/** Accounts an OAuth connect found that aren't in Advertix yet. */
+export interface PendingConnectionData {
+  id: string;
+  platform: Platform;
+  accounts: { accountId: string; accountName: string; currency: string | null; timezone: string | null; isActive: boolean }[];
+  expiresAt: string;
+}
+
+export interface ConnectionSyncResult {
+  synced: number;
+  failed: number;
+  results: { id: string; accountName: string; platform: Platform; ok: boolean; campaigns: number; error: string | null }[];
+}
+
 export interface ConnectAdAccountInput {
   platform: Platform;
   accountId: string;
@@ -1284,6 +1345,18 @@ export function useApiClient() {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    /* Connections (A13) */
+    getConnections: (clientId?: string | null) => apiFetch<ConnectionsData>(`/connections${buildQuery({ clientId: clientId ?? undefined })}`),
+    getPendingConnection: (id: string) => apiFetch<PendingConnectionData>(`/connections/pending/${id}`),
+    acceptPendingConnection: (id: string, accounts: { accountId: string; clientId: string | null }[]) =>
+      apiFetch<{ added: { id: string; accountName: string; platform: Platform; clientId: string | null; isActive: boolean }[] }>(`/connections/pending/${id}/accept`, { method: "POST", body: JSON.stringify({ accounts }) }),
+    discardPendingConnection: (id: string) => apiFetch<{ success: boolean }>(`/connections/pending/${id}`, { method: "DELETE" }),
+    syncConnections: (data: { platform?: Platform; clientId?: string | null } = {}) =>
+      apiFetch<ConnectionSyncResult>(`/connections/sync${buildQuery({ clientId: data.clientId ?? undefined })}`, { method: "POST", body: JSON.stringify({ platform: data.platform }) }),
+    syncAdAccount: (id: string) => apiFetch<{ ok: boolean; campaigns: number; metrics: number }>(`/connections/accounts/${id}/sync`, { method: "POST" }),
+    archiveAdAccount: (id: string) => apiFetch<{ id: string; archivedAt: string | null }>(`/connections/accounts/${id}/archive`, { method: "POST" }),
+    restoreAdAccount: (id: string) => apiFetch<{ id: string; archivedAt: string | null }>(`/connections/accounts/${id}/restore`, { method: "POST" }),
+    setAutoSync: (platform: Platform, enabled: boolean) => apiFetch<{ platform: Platform; autoSync: boolean }>("/connections/auto-sync", { method: "PATCH", body: JSON.stringify({ platform, enabled }) }),
     disconnectAdAccount: (id: string) =>
       apiFetch<SuccessResponse>(`/ad-accounts/${id}`, { method: "DELETE" }),
     toggleAdAccount: (id: string) =>

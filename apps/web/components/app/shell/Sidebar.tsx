@@ -8,7 +8,7 @@ import { useUser } from "@clerk/nextjs";
 import { Plus } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
-import ConnectModal from "@/components/connect/ConnectModal";
+import { ConnectDialog } from "@/components/app/connections/ConnectDialog";
 import { PlatformBadge, type PlatformKey } from "@/components/app/ui";
 import { useClientScope } from "./ClientContext";
 import { ClientSwitcherMenu } from "./ClientSwitcher";
@@ -50,12 +50,19 @@ function NavLink({ item, count, onNavigate }: { item: NavItem; count?: number; o
   );
 }
 
+const PLATFORM_LABEL: Record<string, string> = { META: "Meta", GOOGLE: "Google Ads", TIKTOK: "TikTok", LINKEDIN: "LinkedIn" };
+
 function AdAccountsBox({ onNavigate }: { onNavigate?: () => void }) {
   const { scoped, hasMultiple, unassignedAdAccounts } = useClientScope();
   const accounts = useApi((api) => api.getAdAccounts(), [], { key: "ad-accounts" });
   const [connectOpen, setConnectOpen] = useState(false);
   const active = (accounts.data ?? []).filter((a) => a.isActive);
   const connected = new Set(active.map((a) => a.platform as PlatformKey));
+  // The soonest platform access to expire within a week (A13), for the warn line.
+  const expiring = active
+    .filter((a) => a.tokenExpiresAt && new Date(a.tokenExpiresAt).getTime() - Date.now() < 7 * 86_400_000)
+    .sort((a, b) => new Date(a.tokenExpiresAt!).getTime() - new Date(b.tokenExpiresAt!).getTime())[0];
+  const expiringDays = expiring ? Math.ceil((new Date(expiring.tokenExpiresAt!).getTime() - Date.now()) / 86_400_000) : null;
 
   if (accounts.error) {
     return (
@@ -83,14 +90,14 @@ function AdAccountsBox({ onNavigate }: { onNavigate?: () => void }) {
         >
           <Plus size={14} strokeWidth={2.5} /> Connect an account
         </button>
-        <ConnectModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+        <ConnectDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
       </div>
     );
   }
 
   return (
     <Link
-      href={scoped("/settings?tab=integrations")}
+      href={scoped(hasMultiple && unassignedAdAccounts > 0 && !expiring ? "/connections?filter=unassigned" : expiring ? "/connections?filter=attention" : "/connections")}
       onClick={onNavigate}
       className="flex flex-none flex-col gap-2.5 rounded-menu bg-surface-2 p-3.5 text-inherit no-underline transition-colors hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft"
     >
@@ -109,7 +116,12 @@ function AdAccountsBox({ onNavigate }: { onNavigate?: () => void }) {
           );
         })}
       </div>
-      {hasMultiple && unassignedAdAccounts > 0 && (
+      {expiring && expiringDays !== null && (
+        <div className="text-xs font-medium text-warn">
+          {PLATFORM_LABEL[expiring.platform] ?? expiring.platform} access {expiringDays <= 0 ? "has expired · Reconnect" : `expires in ${expiringDays} day${expiringDays === 1 ? "" : "s"} · Renew`}
+        </div>
+      )}
+      {!expiring && hasMultiple && unassignedAdAccounts > 0 && (
         <div className="text-xs font-medium text-warn">
           {unassignedAdAccounts} account{unassignedAdAccounts === 1 ? "" : "s"} not assigned to a client · Assign
         </div>

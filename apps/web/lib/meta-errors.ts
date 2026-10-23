@@ -23,7 +23,7 @@ const META_ERROR_MAP: Record<number, TranslatedMetaError> = {
     title: "Permission not granted",
     message: "You haven't granted Advertix permission to perform this action.",
     action: "Reconnect Meta with full permissions",
-    actionUrl: "/settings?tab=integrations",
+    actionUrl: "/connections",
   },
   17: {
     title: "Too many requests",
@@ -39,13 +39,13 @@ const META_ERROR_MAP: Record<number, TranslatedMetaError> = {
     title: "Session expired",
     message: "Your Meta session has expired. Please reconnect.",
     action: "Reconnect Meta",
-    actionUrl: "/settings?tab=integrations",
+    actionUrl: "/connections",
   },
   200: {
     title: "Permission denied",
     message: "Missing required Meta permissions. Please reconnect.",
     action: "Reconnect Meta",
-    actionUrl: "/settings?tab=integrations",
+    actionUrl: "/connections",
   },
   368: {
     title: "Ad account disabled",

@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
 import { ensureClients, parseClientScope } from "../lib/clients";
+import { encryptToken } from "../lib/crypto";
 
 const router = Router();
 router.use(requireAuth);
@@ -39,6 +40,7 @@ const PUBLIC_AD_ACCOUNT_SELECT = {
   lastSyncedAt: true,
   clientId: true,
   tokenExpiresAt: true,
+  archivedAt: true,
 } as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -63,7 +65,7 @@ function healthSummary(metadata: unknown, checkedAt: Date | null) {
 }
 
 /**
- * GET /ad-accounts?clientId=
+ * GET /ad-accounts?clientId=&include=archived
  */
 router.get("/", async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -71,7 +73,8 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
     await ensureClients(workspace.id);
     const clientId = await parseClientScope(req, workspace.id);
     const accounts = await prisma.adAccount.findMany({
-      where: { workspaceId: workspace.id, ...(clientId ? { clientId } : {}) },
+      // Archived accounts (A13) stay out of lists unless asked for.
+      where: { workspaceId: workspace.id, ...(clientId ? { clientId } : {}), ...(req.query.include === "archived" ? {} : { archivedAt: null }) },
       select: { ...PUBLIC_AD_ACCOUNT_SELECT, metadata: true, lastHealthCheck: true },
       orderBy: { createdAt: "desc" },
     });
@@ -146,19 +149,21 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
         platform,
         accountId: accountId.trim(),
         accountName: accountName.trim(),
-        accessToken,
+        // Stored encrypted, like the OAuth callbacks.
+        accessToken: encryptToken(accessToken),
         refreshToken:
           typeof refreshToken === "string" && refreshToken.trim()
-            ? refreshToken
+            ? encryptToken(refreshToken)
             : null,
         isActive: true,
       },
       update: {
         accountName: accountName.trim(),
-        accessToken,
+        // Stored encrypted, like the OAuth callbacks.
+        accessToken: encryptToken(accessToken),
         refreshToken:
           typeof refreshToken === "string" && refreshToken.trim()
-            ? refreshToken
+            ? encryptToken(refreshToken)
             : null,
         isActive: true,
       },

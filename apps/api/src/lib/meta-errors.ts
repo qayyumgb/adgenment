@@ -71,7 +71,7 @@ export function friendlyMetaError(err: MetaError): {
     case 190:
       return withDetail(
         401,
-        "Your Meta connection has expired. Reconnect your account in Settings → Integrations."
+        "Your Meta connection has expired. Reconnect your account in Connections."
       );
     case 4:
     case 17:
@@ -93,7 +93,7 @@ export function friendlyMetaError(err: MetaError): {
       if (err.metaSubcode === 1885183) {
         return withDetail(
           403,
-          "The connected Meta app is in Development mode, and Meta won't let a development-mode app create ads. Connect using a Live app (Settings → Integrations) — Meta test apps can never publish, because they can't leave Development mode."
+          "The connected Meta app is in Development mode, and Meta won't let a development-mode app create ads. Connect using a Live app (Connections) — Meta test apps can never publish, because they can't leave Development mode."
         );
       }
       // Funding/payment problems often arrive as code 100. Otherwise the raw

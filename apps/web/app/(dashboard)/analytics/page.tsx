@@ -201,7 +201,7 @@ export default function AnalyticsPage() {
           <EmptyState
             title="No analytics data yet"
             body="Connect an ad account and sync your campaigns. Spend, results and trends show up here after the first sync."
-            action={<ButtonLink href="/settings?tab=integrations" variant="secondary">Connect an ad account</ButtonLink>}
+            action={<ButtonLink href="/connections" variant="secondary">Connect an ad account</ButtonLink>}
           />
         ) : (
           <>

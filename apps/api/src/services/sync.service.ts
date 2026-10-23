@@ -227,6 +227,22 @@ function mapLinkedInStatus(status: string): CampaignStatus {
 const LINKEDIN_REVENUE_PER_CONVERSION = 50;
 
 class SyncService {
+  /** Sync one ad account on its own platform (Connections, the scheduler, first sync after connect). */
+  async syncAccount(adAccount: AdAccount): Promise<SyncResult> {
+    switch (adAccount.platform) {
+      case "META":
+        return this.syncMetaAccount(adAccount);
+      case "GOOGLE":
+        return this.syncGoogleAccount(adAccount);
+      case "TIKTOK":
+        return this.syncTikTokAccount(adAccount);
+      case "LINKEDIN":
+        return this.syncLinkedInAccount(adAccount);
+      default:
+        throw new Error(`Advertix can't sync ${adAccount.platform} yet.`);
+    }
+  }
+
   async syncMetaAccount(adAccount: AdAccount): Promise<SyncResult> {
     const token = decryptToken(adAccount.accessToken);
     const accountId = adAccount.accountId;
@@ -711,6 +727,7 @@ class SyncService {
       metricsSynced++;
     }
 
+    await prisma.adAccount.update({ where: { id: adAccount.id }, data: { lastSyncedAt: new Date() } });
     return { platform: "GOOGLE", campaignsSynced, metricsSynced };
   }
 
@@ -824,6 +841,7 @@ class SyncService {
       metricsSynced++;
     }
 
+    await prisma.adAccount.update({ where: { id: adAccount.id }, data: { lastSyncedAt: new Date() } });
     return { platform: "TIKTOK", campaignsSynced, metricsSynced };
   }
 
@@ -958,6 +976,7 @@ class SyncService {
       metricsSynced++;
     }
 
+    await prisma.adAccount.update({ where: { id: adAccount.id }, data: { lastSyncedAt: new Date() } });
     return { platform: "LINKEDIN", campaignsSynced, metricsSynced };
   }
 }

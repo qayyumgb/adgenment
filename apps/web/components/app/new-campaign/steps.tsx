@@ -198,7 +198,7 @@ export function PlatformsStep({
                 ) : !list.length ? (
                   <span className="text-xs text-ink-2">
                     Not connected ·{" "}
-                    <Link href="/settings?tab=integrations" className="font-semibold text-brand hover:text-brand-hover">
+                    <Link href="/connections" className="font-semibold text-brand hover:text-brand-hover">
                       Connect
                     </Link>
                   </span>

@@ -6,7 +6,7 @@ import { useAppRouter } from "@/hooks/useAppRouter";
 import { useAccess } from "@/components/app/team/access";
 import toast from "react-hot-toast";
 import { Download, Plus, RefreshCw } from "lucide-react";
-import ConnectModal from "@/components/connect/ConnectModal";
+import { ConnectDialog } from "@/components/app/connections/ConnectDialog";
 import MetaErrorCard from "@/components/ui/MetaErrorCard";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient, type Campaign, type CampaignStatus, type Platform } from "@/lib/api";
@@ -339,7 +339,7 @@ export default function CampaignsPage() {
       </PageBody>
 
       <BulkBudgetDialog open={budgetsFor !== null} campaigns={budgetsFor ?? []} onClose={() => setBudgetsFor(null)} onSave={mutations.setBudgets} />
-      <ConnectModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+      <ConnectDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
     </>
   );
 }

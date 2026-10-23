@@ -449,7 +449,7 @@ router.post(
       if (!adAccount) {
         return res.status(400).json({
           error:
-            "Connect a Meta ad account first (Settings → Integrations) — we resolve interests and locations against Meta to build a real audience.",
+            "Connect a Meta ad account first (Connections) — we resolve interests and locations against Meta to build a real audience.",
         });
       }
       const token = metaService.decryptToken(adAccount.accessToken);
@@ -649,7 +649,7 @@ router.post(
       if (!adAccount) {
         return res.status(400).json({
           error:
-            "Connect a Meta ad account first (Settings → Integrations) — AI image generation uploads to Meta to skip a re-upload at publish time",
+            "Connect a Meta ad account first (Connections) — AI image generation uploads to Meta to skip a re-upload at publish time",
         });
       }
 

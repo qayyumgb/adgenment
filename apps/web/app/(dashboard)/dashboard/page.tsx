@@ -7,7 +7,7 @@ import { useApi } from "@/hooks/useApi";
 import type { AnalyticsOverview, TimeseriesPoint } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
 import { timeAgo } from "@/lib/time";
-import ConnectModal from "@/components/connect/ConnectModal";
+import { ConnectDialog } from "@/components/app/connections/ConnectDialog";
 import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
 import { useClientScope } from "@/components/app/shell/ClientContext";
 import { Button, ButtonLink, Card, KpiCard } from "@/components/app/ui";
@@ -183,7 +183,7 @@ export default function OverviewPage() {
                 Plan a campaign with AI
               </ButtonLink>
             </div>
-            <ConnectModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+            <ConnectDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
           </Card>
         ) : (
           <>

@@ -5,6 +5,7 @@ import { encryptToken } from "../lib/crypto";
 import { getUserWorkspace, requireWorkspace } from "../lib/workspace";
 import { linkedinService } from "../services/linkedin.service";
 import { syncService } from "../services/sync.service";
+import { stageConnection } from "../services/connections.service";
 
 const router = Router();
 
@@ -27,7 +28,6 @@ router.get(
 );
 
 router.get("/callback", async (req: Request, res: Response) => {
-  const successUrl = `${FRONTEND_URL}/connect/done?connected=linkedin`;
   const failureUrl = `${FRONTEND_URL}/connect/done?error=linkedin_failed`;
   try {
     const { code, state, error: oauthError } = req.query;
@@ -56,9 +56,9 @@ router.get("/callback", async (req: Request, res: Response) => {
 
     const tokens = await linkedinService.exchangeCodeForToken(code);
     const encryptedAccess = encryptToken(tokens.access_token);
-    // Access tokens are refreshed from the refresh token, so the real deadline
-    // is the refresh token's (~1 year); fall back to the access token's.
-    const ttl = tokens.refresh_token_expires_in ?? tokens.expires_in;
+    // Advertix doesn't refresh LinkedIn access tokens yet, so the access
+    // token's own lifetime (~60 days) is the real deadline for "Renew".
+    const ttl = tokens.expires_in;
     const tokenExpiresAt = ttl > 0 ? new Date(Date.now() + ttl * 1000) : null;
     const encryptedRefresh = tokens.refresh_token
       ? encryptToken(tokens.refresh_token)
@@ -71,38 +71,16 @@ router.get("/callback", async (req: Request, res: Response) => {
       );
     }
 
-    for (const acc of accounts) {
-      await prisma.adAccount.upsert({
-        where: {
-          workspaceId_platform_accountId: {
-            workspaceId: workspace.id,
-            platform: "LINKEDIN",
-            accountId: acc.id,
-          },
-        },
-        create: {
-          workspaceId: workspace.id,
-          platform: "LINKEDIN",
-          accountId: acc.id,
-          accountName: acc.name,
-          currency: acc.currency || null,
-          accessToken: encryptedAccess,
-          refreshToken: encryptedRefresh,
-          tokenExpiresAt,
-          isActive: acc.status === "ACTIVE",
-        },
-        update: {
-          accountName: acc.name,
-          currency: acc.currency || null,
-          accessToken: encryptedAccess,
-          ...(encryptedRefresh ? { refreshToken: encryptedRefresh } : {}),
-          tokenExpiresAt,
-          isActive: acc.status === "ACTIVE",
-        },
-      });
-    }
-
-    return res.redirect(successUrl);
+    // Accounts already in Advertix get the new tokens; new ones wait for the
+    // Connect dialog to pick them (A13).
+    const query = await stageConnection(
+      workspace.id,
+      user.id,
+      "LINKEDIN",
+      { accessToken: encryptedAccess, refreshToken: encryptedRefresh, tokenExpiresAt },
+      accounts.map((acc) => ({ accountId: acc.id, accountName: acc.name, currency: acc.currency || null, timezone: null, isActive: acc.status === "ACTIVE" }))
+    );
+    return res.redirect(`${FRONTEND_URL}/connect/done?${query}`);
   } catch (err) {
     console.error("[linkedin/callback] error:", err);
     return res.redirect(failureUrl);

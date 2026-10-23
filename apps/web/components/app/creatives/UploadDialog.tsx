@@ -427,7 +427,7 @@ export function UploadDialog({
       // a useful nudge instead of the raw API error.
       if (msg.toLowerCase().includes("no meta") || msg.toLowerCase().includes("ad account")) {
         toast.error(
-          "Connect a Meta ad account first (Settings → Integrations), then try again — or use Paste URL instead"
+          "Connect a Meta ad account first (Connections), then try again — or use Paste URL instead"
         );
       } else {
         toast.error(msg);

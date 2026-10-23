@@ -104,10 +104,13 @@ export function capabilityFor(method: string, path: string): Capability | null {
     if (read) return "view";
     return /^\/workspace\/(invites|members)/.test(path) || path === "/workspace/invite" ? "team" : "workspace";
   }
+  // Starting OAuth attaches accounts to the workspace, so it needs connect even though it is a GET.
+  if (/^\/(meta|google|tiktok|linkedin)\/oauth-url$/.test(path)) return "connect";
   if (read) return "view";
   // Read-only questions that happen to be POSTs.
   if (/^\/ai\/campaigns\/[^/]+\/ask$/.test(path) || path === "/insights/generate" || path === "/suggestions/refresh") return "view";
   if (path.startsWith("/clients")) return "clients";
+  if (path.startsWith("/connections")) return "connect";
   if (path.startsWith("/ad-accounts")) return method === "PATCH" && /^\/ad-accounts\/[^/]+$/.test(path) ? "clients" : "connect";
   if (/^\/meta\/(upload-image|upload-video|lookalike)/.test(path)) return "edit";
   if (/^\/(meta|google|tiktok|linkedin)\//.test(path)) return "connect";

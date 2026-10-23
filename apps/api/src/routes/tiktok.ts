@@ -5,6 +5,7 @@ import { encryptToken } from "../lib/crypto";
 import { getUserWorkspace, requireWorkspace } from "../lib/workspace";
 import { tiktokService } from "../services/tiktok.service";
 import { syncService } from "../services/sync.service";
+import { stageConnection } from "../services/connections.service";
 
 const router = Router();
 
@@ -27,7 +28,6 @@ router.get(
 );
 
 router.get("/callback", async (req: Request, res: Response) => {
-  const successUrl = `${FRONTEND_URL}/connect/done?connected=tiktok`;
   const failureUrl = `${FRONTEND_URL}/connect/done?error=tiktok_failed`;
   try {
     const { code, state, error: oauthError } = req.query;
@@ -67,38 +67,22 @@ router.get("/callback", async (req: Request, res: Response) => {
       tokens.advertiser_ids
     );
 
-    for (const adv of advertisers) {
-      await prisma.adAccount.upsert({
-        where: {
-          workspaceId_platform_accountId: {
-            workspaceId: workspace.id,
-            platform: "TIKTOK",
-            accountId: adv.id,
-          },
-        },
-        create: {
-          workspaceId: workspace.id,
-          platform: "TIKTOK",
-          accountId: adv.id,
-          accountName: adv.name || `Advertiser ${adv.id}`,
-          currency: adv.currency || null,
-          timezone: adv.timezone || null,
-          accessToken: encryptedAccess,
-          tokenExpiresAt,
-          isActive: adv.status === "STATUS_ENABLE" || adv.status === "ACTIVE",
-        },
-        update: {
-          accountName: adv.name || `Advertiser ${adv.id}`,
-          currency: adv.currency || null,
-          timezone: adv.timezone || null,
-          accessToken: encryptedAccess,
-          tokenExpiresAt,
-          isActive: adv.status === "STATUS_ENABLE" || adv.status === "ACTIVE",
-        },
-      });
-    }
-
-    return res.redirect(successUrl);
+    // Accounts already in Advertix get the new token; new ones wait for the
+    // Connect dialog to pick them (A13).
+    const query = await stageConnection(
+      workspace.id,
+      user.id,
+      "TIKTOK",
+      { accessToken: encryptedAccess, refreshToken: null, tokenExpiresAt },
+      advertisers.map((adv) => ({
+        accountId: adv.id,
+        accountName: adv.name || `Advertiser ${adv.id}`,
+        currency: adv.currency || null,
+        timezone: adv.timezone || null,
+        isActive: adv.status === "STATUS_ENABLE" || adv.status === "ACTIVE",
+      }))
+    );
+    return res.redirect(`${FRONTEND_URL}/connect/done?${query}`);
   } catch (err) {
     console.error("[tiktok/callback] error:", err);
     return res.redirect(failureUrl);

@@ -13,6 +13,10 @@ export type OAuthPopupResult = {
   success: boolean;
   platform?: string | null;
   error?: string | null;
+  /** New accounts waiting to be picked in the Connect dialog (A13). */
+  pending?: string | null;
+  /** Accounts already in Advertix that got the new token. */
+  renewed?: number;
 };
 
 type Options = {
@@ -101,6 +105,8 @@ export function openOAuthPopup({
       platform: string | null;
       success: boolean;
       error: string | null;
+      pending?: string | null;
+      renewed?: number;
     } {
       if (!data || typeof data !== "object") return false;
       const obj = data as { type?: unknown; platform?: unknown };
@@ -121,6 +127,8 @@ export function openOAuthPopup({
         success: !!data.success,
         platform: data.platform ?? null,
         error: data.error ?? null,
+        pending: data.pending ?? null,
+        renewed: Number(data.renewed) || 0,
       });
     }
 
@@ -171,74 +179,21 @@ export function openOAuthPopup({
   });
 }
 
-/**
- * Convenience wrapper that fetches our `/api/meta/connect` proxy and opens
- * the returned Facebook dialog in a popup.
- */
-export function openMetaOAuthPopup(): Promise<OAuthPopupResult> {
-  return openOAuthPopup({
-    windowName: "advertix_meta_connect",
-    expectedPlatform: "meta",
-    async getUrl() {
-      const res = await fetch("/api/meta/connect");
-      const data = await res.json();
-      if (!res.ok || !data?.url) {
-        throw new Error(data?.error ?? "Could not start Meta connect");
-      }
-      return data.url as string;
-    },
-  });
-}
+export type OAuthPlatform = "meta" | "google" | "tiktok" | "linkedin";
+const LABEL: Record<OAuthPlatform, string> = { meta: "Meta", google: "Google", tiktok: "TikTok", linkedin: "LinkedIn" };
 
 /**
- * Same as `openMetaOAuthPopup` but for Google Ads.
+ * Open a platform's OAuth dialog in a popup (via our same-origin
+ * `/api/<platform>/connect` proxy, which returns the dialog URL).
  */
-export function openGoogleOAuthPopup(): Promise<OAuthPopupResult> {
+export function openPlatformOAuthPopup(platform: OAuthPlatform): Promise<OAuthPopupResult> {
   return openOAuthPopup({
-    windowName: "advertix_google_connect",
-    expectedPlatform: "google",
+    windowName: `advertix_${platform}_connect`,
+    expectedPlatform: platform,
     async getUrl() {
-      const res = await fetch("/api/google/connect");
-      const data = await res.json();
-      if (!res.ok || !data?.url) {
-        throw new Error(data?.error ?? "Could not start Google connect");
-      }
-      return data.url as string;
-    },
-  });
-}
-
-/**
- * Same as `openMetaOAuthPopup` but for TikTok Ads.
- */
-export function openTikTokOAuthPopup(): Promise<OAuthPopupResult> {
-  return openOAuthPopup({
-    windowName: "advertix_tiktok_connect",
-    expectedPlatform: "tiktok",
-    async getUrl() {
-      const res = await fetch("/api/tiktok/connect");
-      const data = await res.json();
-      if (!res.ok || !data?.url) {
-        throw new Error(data?.error ?? "Could not start TikTok connect");
-      }
-      return data.url as string;
-    },
-  });
-}
-
-/**
- * Same as `openMetaOAuthPopup` but for LinkedIn Ads.
- */
-export function openLinkedInOAuthPopup(): Promise<OAuthPopupResult> {
-  return openOAuthPopup({
-    windowName: "advertix_linkedin_connect",
-    expectedPlatform: "linkedin",
-    async getUrl() {
-      const res = await fetch("/api/linkedin/connect");
-      const data = await res.json();
-      if (!res.ok || !data?.url) {
-        throw new Error(data?.error ?? "Could not start LinkedIn connect");
-      }
+      const res = await fetch(`/api/${platform}/connect`);
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.url) throw new Error(data?.error ?? `Could not start ${LABEL[platform]} connect`);
       return data.url as string;
     },
   });

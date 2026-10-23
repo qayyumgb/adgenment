@@ -5,7 +5,8 @@ import { Check, AlertTriangle, X } from "lucide-react";
 
 /**
  * Popup-close page. Reached by the backend OAuth callback redirecting here
- * with ?connected=<platform> or ?error=<reason>.
+ * with ?connected=<platform>&renewed=<n>[&pending=<id>] or ?error=<reason>.
+ * `pending` means new accounts are waiting to be picked in the Connect dialog.
  *
  * Notifies the opener via:
  *   1. `window.opener.postMessage(...)` — works when opener relationship is
@@ -26,18 +27,24 @@ export default function ConnectDonePage() {
     error: string | null;
   } | null>(null);
   const [needsManualClose, setNeedsManualClose] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search);
     const platform = sp.get("connected") ?? sp.get("platform") ?? null;
     const error = sp.get("error") ?? null;
+    const pending = sp.get("pending") ?? null;
+    const renewed = Number(sp.get("renewed")) || 0;
     setParams({ platform, error });
+    setQuery(window.location.search);
 
     const payload = {
       type: MESSAGE_TYPE,
       platform,
       success: !error,
       error,
+      pending,
+      renewed,
     };
 
     // 1. postMessage to opener (when COOP allows it)
@@ -115,6 +122,11 @@ export default function ConnectDonePage() {
           </>
         )}
 
+        {needsManualClose && (
+          <a href={`/connections${query}`} className="mt-4 mr-2 inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-bold text-white no-underline shadow-sm transition hover:bg-slate-800">
+            Continue to Connections
+          </a>
+        )}
         {needsManualClose && (
           <button
             type="button"

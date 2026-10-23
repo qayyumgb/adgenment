@@ -14,10 +14,9 @@ import {
 /**
  * App navigation (guide §3.1 + §2.4 icon mapping).
  *
- * One destination points at today's route until its rebuilt page exists
- * (docs/DASHBOARD_REDESIGN_PLAN.md § 5.3): Connections → Settings ›
- * Integrations (A13). /insights now redirects to Analytics, which absorbed it (A10), and
- * /budget-optimizer to Budgets (A11).
+ * Old routes redirect to their rebuilt pages (docs/DASHBOARD_REDESIGN_PLAN.md
+ * § 5.3): /insights → Analytics (A10), /budget-optimizer → Budgets (A11),
+ * /settings?tab=integrations → Connections (A13).
  */
 export type NavItem = {
   label: string;
@@ -43,7 +42,7 @@ export const WORKSPACE_NAV: NavItem[] = [
 
 export const ACCOUNT_NAV: NavItem[] = [
   // TODO(A13): → /connections
-  { label: "Connections", href: "/settings?tab=integrations", icon: Plug, match: ["/connections"] },
+  { label: "Connections", href: "/connections", icon: Plug },
   { label: "Settings", href: "/settings", icon: SlidersHorizontal, match: ["/billing"] },
 ];
 
@@ -56,8 +55,7 @@ export const MOBILE_TABS: NavItem[] = [
 ];
 
 export function isActive(pathname: string, item: NavItem): boolean {
-  // Links with a query (Connections → /settings?tab=…) only match their
-  // explicit routes, so Settings and Connections don't both light up.
+  // Links with a query only match their explicit `match` routes.
   const base = item.href.includes("?") ? [] : [item.href];
   const prefixes = [...base, ...(item.match ?? [])];
   return prefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`));

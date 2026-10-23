@@ -119,7 +119,7 @@ export default function TermsPage() {
             When you connect an ad platform account to Advertix, you authorize
             us to access and act on that account on your behalf using the
             scopes you grant. You can revoke this access at any time from
-            Settings &rarr; Integrations or directly on the ad platform.
+            the Connections page or directly on the ad platform.
           </p>
           <p className="mt-2">
             You are solely responsible for any ad spend, charges, fees, or

@@ -7,6 +7,8 @@
  * tier.
  */
 
+import { Prisma } from "@prisma/client";
+import { prisma } from "../lib/prisma";
 import { metaService } from "./meta.service";
 
 export interface HealthCheck {
@@ -35,7 +37,7 @@ const REQUIRED_PERMISSIONS = [
 
 const ADS_MANAGER_URL = "https://business.facebook.com/adsmanager";
 const BUSINESS_URL = "https://business.facebook.com";
-const RECONNECT_URL = "/settings?tab=integrations";
+const RECONNECT_URL = "/connections";
 
 /**
  * Whether our Meta app is still waiting on Marketing API Standard Access.
@@ -370,3 +372,50 @@ class MetaHealthService {
 }
 
 export const metaHealthService = new MetaHealthService();
+
+// 5-minute in-memory cache, keyed by our AdAccount id. Health checks make
+// several Meta calls, so we don't re-run them on every page load. Cleared on
+// restart (acceptable — it's a freshness cache, not a source of truth).
+const HEALTH_CACHE_MS = 5 * 60 * 1000;
+const healthCache = new Map<string, { report: MetaHealthReport; expires: number }>();
+
+/**
+ * Run (or reuse a cached) health report for one of the workspace's AdAccounts,
+ * persisting the latest report on the row. `force` bypasses the cache.
+ */
+export async function healthForAdAccount(
+  accountDbId: string,
+  force: boolean
+): Promise<MetaHealthReport> {
+  // Meta only: never send another platform's token to Meta.
+  const account = await prisma.adAccount.findFirst({ where: { id: accountDbId, platform: "META" } });
+  if (!account) throw Object.assign(new Error("AD_ACCOUNT_NOT_FOUND"), { status: 404 });
+
+  if (!force) {
+    const cached = healthCache.get(accountDbId);
+    if (cached && cached.expires > Date.now()) return cached.report;
+  }
+
+  const token = metaService.decryptToken(account.accessToken);
+  const report = await metaHealthService.runAllChecks(token, account.accountId);
+
+  healthCache.set(accountDbId, {
+    report,
+    expires: Date.now() + HEALTH_CACHE_MS,
+  });
+  await prisma.adAccount
+    .update({
+      where: { id: accountDbId },
+      data: {
+        metadata: report as unknown as Prisma.InputJsonValue,
+        lastHealthCheck: new Date(),
+        accountStatus:
+          report.checks.find((c) => c.code === "ACCOUNT_DISABLED")
+            ? 2
+            : account.accountStatus,
+      },
+    })
+    .catch(() => undefined);
+
+  return report;
+}

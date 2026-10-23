@@ -6,7 +6,6 @@ import toast from "react-hot-toast";
 import {
   Building2,
   Users,
-  Plug,
   Bell,
   Key,
   Shield,
@@ -19,22 +18,17 @@ import {
   Laptop,
   Smartphone,
   X,
-  Send,
   type LucideIcon,
 } from "lucide-react";
-import { useApiClient, type AdAccount } from "@/lib/api";
+import { useApiClient } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
-import MetaConnect from "@/components/settings/MetaConnect";
-import MetaHealthStatus from "@/components/settings/MetaHealthStatus";
-import GoogleConnect from "@/components/settings/GoogleConnect";
-import TikTokConnect from "@/components/settings/TikTokConnect";
-import LinkedInConnect from "@/components/settings/LinkedInConnect";
+import { useAppRouter } from "@/hooks/useAppRouter";
+import { useSearchParams } from "next/navigation";
 import { TeamPanel } from "@/components/app/team/TeamPanel";
 
 type Tab =
   | "general"
   | "workspace"
-  | "integrations"
   | "notifications"
   | "apikeys"
   | "security"
@@ -48,7 +42,6 @@ const TABS: {
 }[] = [
   { id: "general", label: "General", icon: Building2 },
   { id: "workspace", label: "Team", icon: Users },
-  { id: "integrations", label: "Integrations", icon: Plug },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "apikeys", label: "API Keys", icon: Key },
   { id: "security", label: "Security", icon: Shield },
@@ -56,7 +49,14 @@ const TABS: {
 ];
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>("general");
+  const params = useSearchParams();
+  const router = useAppRouter();
+  const requested = params.get("tab");
+  const [tab, setTab] = useState<Tab>(TABS.some((t) => t.id === requested) ? (requested as Tab) : "general");
+  // Integrations moved to its own page (A13); old links land there.
+  useEffect(() => {
+    if (requested === "integrations") router.replace("/connections");
+  }, [requested, router]);
 
   return (
     <div className="space-y-6">
@@ -115,7 +115,6 @@ export default function SettingsPage() {
         <div>
           {tab === "general" && <GeneralTab />}
           {tab === "workspace" && <WorkspaceTab />}
-          {tab === "integrations" && <IntegrationsTab />}
           {tab === "notifications" && <NotificationsTab />}
           {tab === "apikeys" && <APIKeysTab />}
           {tab === "security" && <SecurityTab />}
@@ -470,244 +469,6 @@ function GeneralTab() {
 /** Team (B6): members, roles, client access, invites and seats. */
 function WorkspaceTab() {
   return <TeamPanel />;
-}
-
-/* ───────────────────────────────────────── */
-/* Integrations                               */
-/* ───────────────────────────────────────── */
-
-const STATIC_PLATFORMS = [
-  {
-    id: "youtube",
-    name: "YouTube Ads",
-    color: "#FF0000",
-    initial: "Y",
-    textOnColor: "white" as const,
-  },
-  {
-    id: "snapchat",
-    name: "Snapchat Ads",
-    color: "#FFFC00",
-    initial: "S",
-    textOnColor: "black" as const,
-  },
-] as const;
-
-const OTHER_INTEGRATIONS = ["Zapier", "HubSpot", "Salesforce", "Slack"];
-
-function timeAgo(iso: string | undefined | null): string | undefined {
-  if (!iso) return undefined;
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return undefined;
-  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  const mins = Math.round(seconds / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
-}
-
-function IntegrationsTab() {
-  const api = useApiClient();
-  const [accounts, setAccounts] = useState<AdAccount[] | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  async function refresh() {
-    try {
-      const list = await api.getAdAccounts();
-      setAccounts(list);
-    } catch (err) {
-      console.error("[settings/integrations] load failed", err);
-      setAccounts([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Surface OAuth callback flags from the URL once.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const connected = params.get("connected");
-    const error = params.get("error");
-    if (connected === "meta") {
-      toast.success("Meta account connected");
-    } else if (connected === "google") {
-      toast.success("Google Ads account connected");
-    } else if (error === "meta_failed") {
-      toast.error("Meta connect failed. Please try again.");
-    } else if (error === "meta_cancelled") {
-      toast("Meta connect cancelled");
-    } else if (error === "meta_no_workspace") {
-      toast.error("Finish onboarding before connecting Meta");
-    } else if (error === "google_failed") {
-      toast.error("Google connect failed. Please try again.");
-    } else if (error === "google_cancelled") {
-      toast("Google connect cancelled");
-    } else if (error === "google_no_workspace") {
-      toast.error("Finish onboarding before connecting Google");
-    } else if (error === "google_no_customers") {
-      toast.error("That Google account has no Google Ads customers");
-    } else if (connected === "tiktok") {
-      toast.success("TikTok Ads account connected");
-    } else if (error === "tiktok_failed") {
-      toast.error("TikTok connect failed. Please try again.");
-    } else if (error === "tiktok_cancelled") {
-      toast("TikTok connect cancelled");
-    } else if (error === "tiktok_no_workspace") {
-      toast.error("Finish onboarding before connecting TikTok");
-    } else if (error === "tiktok_no_advertisers") {
-      toast.error("That TikTok account has no advertiser access");
-    } else if (connected === "linkedin") {
-      toast.success("LinkedIn Ads account connected");
-    } else if (error === "linkedin_failed") {
-      toast.error("LinkedIn connect failed. Please try again.");
-    } else if (error === "linkedin_cancelled") {
-      toast("LinkedIn connect cancelled");
-    } else if (error === "linkedin_no_workspace") {
-      toast.error("Finish onboarding before connecting LinkedIn");
-    } else if (error === "linkedin_no_accounts") {
-      toast.error("That LinkedIn account has no ad accounts");
-    }
-    if (connected || error) {
-      const cleaned = new URLSearchParams(window.location.search);
-      cleaned.delete("connected");
-      cleaned.delete("error");
-      const search = cleaned.toString();
-      const newUrl =
-        window.location.pathname + (search ? `?${search}` : "");
-      window.history.replaceState({}, "", newUrl);
-    }
-  }, []);
-
-  const meta = (accounts ?? []).find((a) => a.platform === "META");
-  const google = (accounts ?? []).find((a) => a.platform === "GOOGLE");
-  const tiktok = (accounts ?? []).find((a) => a.platform === "TIKTOK");
-  const linkedin = (accounts ?? []).find((a) => a.platform === "LINKEDIN");
-
-  return (
-    <div className="space-y-6">
-      <Card
-        title="Connected Platforms"
-        description="Connect your ad accounts to sync campaigns automatically."
-      >
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {loading ? (
-            <div className="col-span-full flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-xs font-medium text-slate-500">
-              Loading connections…
-            </div>
-          ) : (
-            <>
-              <MetaConnect
-                connected={!!meta}
-                adAccountId={meta?.id}
-                accountName={meta?.accountName}
-                lastSynced={timeAgo(meta?.createdAt)}
-                onChange={refresh}
-              />
-              <GoogleConnect
-                connected={!!google}
-                adAccountId={google?.id}
-                accountName={google?.accountName}
-                lastSynced={timeAgo(google?.createdAt)}
-                onChange={refresh}
-              />
-              <TikTokConnect
-                connected={!!tiktok}
-                adAccountId={tiktok?.id}
-                accountName={tiktok?.accountName}
-                lastSynced={timeAgo(tiktok?.createdAt)}
-                onChange={refresh}
-              />
-              <LinkedInConnect
-                connected={!!linkedin}
-                adAccountId={linkedin?.id}
-                accountName={linkedin?.accountName}
-                lastSynced={timeAgo(linkedin?.createdAt)}
-                onChange={refresh}
-              />
-              {STATIC_PLATFORMS.map((p) => (
-                <div
-                  key={p.id}
-                  className="rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300"
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold shadow-sm"
-                      style={{
-                        backgroundColor: p.color,
-                        color:
-                          p.textOnColor === "black" ? "#0f172a" : "#ffffff",
-                      }}
-                    >
-                      {p.initial}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold text-slate-900">
-                        {p.name}
-                      </p>
-                      <p className="flex items-center gap-1 text-[11px]">
-                        <span className="status-dot draft" />
-                        <span className="font-semibold text-slate-500">
-                          Not Connected
-                        </span>
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-medium text-slate-400">
-                      Last synced: Never
-                    </span>
-                    <button
-                      type="button"
-                      disabled
-                      className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400"
-                    >
-                      Coming Soon
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
-        </div>
-        {meta?.id && (
-          <div className="mt-4">
-            <MetaHealthStatus adAccountId={meta.id} />
-          </div>
-        )}
-      </Card>
-
-      <Card
-        title="Other Integrations"
-        description="Workflow tools — coming soon."
-      >
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {OTHER_INTEGRATIONS.map((name) => (
-            <div
-              key={name}
-              className="flex flex-col items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/40 p-4 text-center"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-xs font-bold text-slate-500 shadow-sm">
-                {name[0]}
-              </div>
-              <p className="text-sm font-semibold text-slate-700">{name}</p>
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700">
-                Coming Soon
-              </span>
-            </div>
-          ))}
-        </div>
-      </Card>
-    </div>
-  );
 }
 
 /* ───────────────────────────────────────── */

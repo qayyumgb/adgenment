@@ -237,7 +237,7 @@ function MetaSpecific() {
           </Link>
         </li>
         <li>
-          Go to <strong>Settings → Integrations</strong>
+          Go to the <strong>Connections</strong> page
         </li>
         <li>
           Find the <strong>Meta</strong> connection → click{" "}

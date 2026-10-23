@@ -115,14 +115,17 @@ model Workspace {
 
   /// Reserved for the deferred auto-optimize mode (auto-applying budget
   /// recommendations). Dormant for now — no cron consumes these yet.
-  autoOptimize           Boolean   @default(false)
-  autoOptimizeThreshold  Decimal   @default(2.0) @db.Decimal(6, 2)
+  autoOptimize           Boolean    @default(false)
+  autoOptimizeThreshold  Decimal    @default(2.0) @db.Decimal(6, 2)
   /// Last time AI insights were generated for this workspace (1-hour refresh
   /// gate lives off this).
   lastInsightGeneratedAt DateTime?
+  /// Platforms the background sync skips for this workspace (Connections › Auto-sync off, A13).
+  autoSyncOff            Platform[] @default([])
 
   owner                 User                   @relation("WorkspaceOwner", fields: [ownerId], references: [id])
   members               WorkspaceMember[]
+  pendingConnections    PendingConnection[]
   adAccounts            AdAccount[]
   campaigns             Campaign[]
   creatives             Creative[]
@@ -273,6 +276,8 @@ model AdAccount {
   /// When the first sync pulled 90 days of history (campaign + ad level).
   /// Null = not yet; later syncs only refresh the last 30 days.
   backfilledAt    DateTime?
+  /// Archived (A13): hidden from lists, not synced, data kept; restorable.
+  archivedAt      DateTime?
 
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
@@ -777,4 +782,25 @@ model ChangeLog {
   @@index([workspaceId, createdAt])
   @@index([campaignId, createdAt])
   @@index([suggestionId])
+}
+
+/// Ad accounts an OAuth connect discovered that aren't in Advertix yet (A13).
+/// The Connect dialog lists them; only the ones picked become AdAccounts.
+/// Holds the encrypted tokens for 30 minutes.
+model PendingConnection {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  userId         String
+  platform       Platform
+  accessToken    String
+  refreshToken   String?
+  tokenExpiresAt DateTime?
+  /// [{ accountId, accountName, currency, timezone, isActive }]
+  accounts       Json
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }

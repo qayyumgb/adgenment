@@ -20,6 +20,7 @@ import suggestionsRouter from "./suggestions";
 import plansRouter from "./plans";
 import changeLogRouter from "./change-log";
 import invitesRouter from "./invites";
+import connectionsRouter from "./connections";
 import { roleGuard } from "../lib/access";
 
 const router = Router();
@@ -33,6 +34,7 @@ router.use("/campaigns", campaignStructureRouter);
 router.use("/analytics", analyticsRouter);
 router.use("/ai", aiRouter);
 router.use("/ad-accounts", adAccountRouter);
+router.use("/connections", connectionsRouter);
 router.use("/creatives", creativeRouter);
 router.use("/audiences", audienceRouter);
 router.use("/budget-optimizer", budgetOptimizerRouter);

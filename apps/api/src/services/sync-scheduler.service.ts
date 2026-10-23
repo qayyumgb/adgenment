@@ -1,21 +1,24 @@
 /**
  * Background sync scheduler.
  *
- * The app only imported Meta data on demand, so campaigns created on Meta
- * after the initial connect (e.g. a boosted post) never appeared until a
- * manual sync. This cron periodically re-syncs every active Meta ad account so
- * the dashboard stays current without user action. A manual "Sync now" button
- * still exists for immediate refresh.
+ * Periodically re-syncs every active ad account on Meta, Google, TikTok and
+ * LinkedIn (A13; Meta only before) so the dashboard stays current without user
+ * action. Archived accounts are skipped, and a workspace can turn auto-sync off
+ * per platform on the Connections page. "Sync now" still syncs immediately.
  *
  * Interval is `SYNC_INTERVAL_HOURS` (default 6). Disable with
  * `SYNC_SCHEDULER_ENABLED=false`. Each tick skips accounts synced within the
  * last interval so overlapping triggers (manual + scheduled) don't double-work.
  */
 
+import type { Platform } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { syncService } from "./sync.service";
 
 const LOG_PREFIX = "[sync-scheduler]";
+/** The platforms with a sync connector. */
+export const AUTO_SYNC_PLATFORMS: Platform[] = ["META", "GOOGLE", "TIKTOK", "LINKEDIN"];
+export const SYNC_INTERVAL_HOURS_SETTING = () => INTERVAL_HOURS;
 
 const INTERVAL_HOURS = (() => {
   const raw = Number(process.env.SYNC_INTERVAL_HOURS);
@@ -35,23 +38,27 @@ async function syncTick(): Promise<void> {
   running = true;
   try {
     const cutoff = new Date(Date.now() - INTERVAL_MS);
-    // Sync active Meta accounts that haven't synced within the last interval
-    // (null lastSyncedAt = never synced → always include).
+    // Active, not archived accounts on the platforms we sync, not synced within
+    // the last interval (null = never synced), minus platforms a workspace
+    // turned auto-sync off for (Connections, A13).
     const accounts = await prisma.adAccount.findMany({
       where: {
-        platform: "META",
+        platform: { in: AUTO_SYNC_PLATFORMS },
         isActive: true,
+        archivedAt: null,
         OR: [{ lastSyncedAt: null }, { lastSyncedAt: { lt: cutoff } }],
       },
+      include: { workspace: { select: { autoSyncOff: true } } },
     });
-    if (accounts.length === 0) return;
+    const due = accounts.filter((a) => !a.workspace.autoSyncOff.includes(a.platform));
+    if (due.length === 0) return;
 
-    console.log(`${LOG_PREFIX} syncing ${accounts.length} Meta account(s)…`);
-    for (const acct of accounts) {
+    console.log(`${LOG_PREFIX} syncing ${due.length} account(s)…`);
+    for (const { workspace: _w, ...acct } of due) {
       try {
-        const r = await syncService.syncMetaAccount(acct);
+        const r = await syncService.syncAccount(acct);
         console.log(
-          `${LOG_PREFIX} ${acct.accountName}: ${r.campaignsSynced} campaigns, ${r.metricsSynced} metric rows`
+          `${LOG_PREFIX} ${acct.platform} ${acct.accountName}: ${r.campaignsSynced} campaigns, ${r.metricsSynced} metric rows`
         );
       } catch (err) {
         // One bad account (expired token, etc.) shouldn't stop the rest.

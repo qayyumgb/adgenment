@@ -28,7 +28,7 @@ export default function MetaErrorCard({
   onReconnect?: () => void;
 }) {
   const t = translateMetaError(code, message);
-  const isReconnect = t.actionUrl?.includes("/settings");
+  const isReconnect = t.actionUrl?.includes("/connections");
 
   return (
     <div className="rounded-2xl border-l-4 border-l-rose-500 border border-rose-200 bg-rose-50/60 p-4">
@@ -51,7 +51,7 @@ export default function MetaErrorCard({
                 </button>
               ) : (
                 <Link
-                  href={t.actionUrl ?? "/settings"}
+                  href={t.actionUrl ?? "/connections"}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white transition hover:bg-primary/90"
                 >
                   <Plug className="h-3.5 w-3.5" /> {t.action}

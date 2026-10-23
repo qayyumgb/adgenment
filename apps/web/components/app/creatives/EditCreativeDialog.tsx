@@ -300,7 +300,7 @@ export function EditCreativeDialog({
         msg.toLowerCase().includes("ad account")
       ) {
         toast.error(
-          "Connect a Meta ad account first (Settings → Integrations) to attach an image"
+          "Connect a Meta ad account first (Connections) to attach an image"
         );
       } else {
         toast.error(msg);
