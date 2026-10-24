@@ -1356,6 +1356,8 @@ export function useApiClient() {
     syncAdAccount: (id: string) => apiFetch<{ ok: boolean; campaigns: number; metrics: number }>(`/connections/accounts/${id}/sync`, { method: "POST" }),
     archiveAdAccount: (id: string) => apiFetch<{ id: string; archivedAt: string | null }>(`/connections/accounts/${id}/archive`, { method: "POST" }),
     restoreAdAccount: (id: string) => apiFetch<{ id: string; archivedAt: string | null }>(`/connections/accounts/${id}/restore`, { method: "POST" }),
+    disconnectPlatform: (platform: Platform, clientId?: string | null) =>
+      apiFetch<{ platform: Platform; removed: number; campaigns: number }>(`/connections/disconnect${buildQuery({ clientId: clientId ?? undefined })}`, { method: "POST", body: JSON.stringify({ platform }) }),
     setAutoSync: (platform: Platform, enabled: boolean) => apiFetch<{ platform: Platform; autoSync: boolean }>("/connections/auto-sync", { method: "PATCH", body: JSON.stringify({ platform, enabled }) }),
     disconnectAdAccount: (id: string) =>
       apiFetch<SuccessResponse>(`/ad-accounts/${id}`, { method: "DELETE" }),

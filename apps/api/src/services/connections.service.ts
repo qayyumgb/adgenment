@@ -242,6 +242,20 @@ export async function setArchived(workspaceId: string, id: string, archived: boo
   return prisma.adAccount.update({ where: { id }, data: archived ? { archivedAt: new Date(), isActive: false } : { archivedAt: null, isActive: true }, select: { id: true, archivedAt: true, isActive: true, clientId: true } });
 }
 
+/**
+ * Disconnect a platform: remove its ad accounts (in the client scope, archived
+ * ones included) with their campaigns, results, ad sets and ads. Change-log
+ * history stays (SetNull). Nothing changes on the platform itself.
+ */
+export async function disconnectPlatform(workspaceId: string, clientId: string | null, platform: Platform) {
+  const where = { workspaceId, platform, ...(clientId ? { clientId } : {}) };
+  const accounts = await prisma.adAccount.findMany({ where, select: { id: true, _count: { select: { campaigns: true } } } });
+  if (!accounts.length) throw new ConnectionError(404, `No ${PLATFORM_INFO[platform]?.name ?? platform} accounts to disconnect.`);
+  await prisma.adAccount.deleteMany({ where: { id: { in: accounts.map((a) => a.id) } } });
+  await prisma.pendingConnection.deleteMany({ where: { workspaceId, platform } });
+  return { platform, removed: accounts.length, campaigns: accounts.reduce((s, a) => s + a._count.campaigns, 0) };
+}
+
 export async function setAutoSync(workspaceId: string, platform: Platform, enabled: boolean) {
   if (!AUTO_SYNC_PLATFORMS.includes(platform)) throw new ConnectionError(400, "Advertix can't sync that platform yet.");
   const w = await prisma.workspace.findUniqueOrThrow({ where: { id: workspaceId }, select: { autoSyncOff: true } });

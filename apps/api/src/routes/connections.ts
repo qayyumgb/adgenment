@@ -5,7 +5,7 @@ import { requireWorkspace } from "../lib/workspace";
 import { parseClientScope } from "../lib/clients";
 import { getAccess } from "../lib/access";
 import { prisma } from "../lib/prisma";
-import { acceptPending, connectionsOverview, ConnectionError, CONNECTABLE, discardPending, pendingView, setArchived, setAutoSync, syncAll } from "../services/connections.service";
+import { acceptPending, connectionsOverview, ConnectionError, CONNECTABLE, disconnectPlatform, discardPending, pendingView, setArchived, setAutoSync, syncAll } from "../services/connections.service";
 
 /**
  * Connections (plan A13): platforms, ad accounts with a status each, the
@@ -104,6 +104,18 @@ for (const action of ["archive", "restore"] as const) {
     }
   });
 }
+
+/** POST /connections/disconnect  { platform } — remove the platform's accounts in the client scope. */
+router.post("/disconnect", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const platform = req.body?.platform;
+    if (!isPlatform(platform)) return res.status(400).json({ error: "Unknown platform" });
+    res.json(await disconnectPlatform(workspace.id, await parseClientScope(req, workspace.id), platform));
+  } catch (err) {
+    fail(res, err, next);
+  }
+});
 
 /** PATCH /connections/auto-sync  { platform, enabled } */
 router.patch("/auto-sync", async (req: Request, res: Response, next: NextFunction) => {

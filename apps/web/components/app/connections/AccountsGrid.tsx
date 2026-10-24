@@ -47,14 +47,16 @@ export function AccountsGrid({
   onRestore: (a: ConnectionAccount) => void;
 }) {
   const live = accounts.filter((a) => a.status !== "ARCHIVED");
+  // Any account without a client, even when another issue (pixel, token) is its main status.
+  const unassigned = hasClients ? live.filter((a) => !a.clientId) : [];
   const counts = {
     all: live.length,
     attention: live.filter((a) => NEEDS_ATTENTION.includes(a.status)).length,
-    unassigned: live.filter((a) => a.status === "UNASSIGNED").length,
+    unassigned: unassigned.length,
     archived: accounts.length - live.length,
   };
   const rows =
-    filter === "attention" ? live.filter((a) => NEEDS_ATTENTION.includes(a.status)) : filter === "unassigned" ? live.filter((a) => a.status === "UNASSIGNED") : filter === "archived" ? accounts.filter((a) => a.status === "ARCHIVED") : live;
+    filter === "attention" ? live.filter((a) => NEEDS_ATTENTION.includes(a.status)) : filter === "unassigned" ? unassigned : filter === "archived" ? accounts.filter((a) => a.status === "ARCHIVED") : live;
 
   const columns: GridColumn<ConnectionAccount>[] = [
     {

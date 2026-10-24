@@ -12,6 +12,12 @@ const ANTHROPIC_VERSION = "2023-06-01";
 const MODEL = "claude-opus-4-8";
 // The AI Planner (A12) uses structured outputs on the current Opus.
 const PLANNER_MODEL = "claude-opus-5-5";
+// Where Claude processes requests. Campaign data from Meta is sent to Claude, and
+// Meta's App Review data-handling answer lists Anthropic as processing in the US,
+// so requests are pinned to US infrastructure ("us": 1.1x token pricing). Set
+// ANTHROPIC_INFERENCE_GEO=global for standard pricing with worldwide routing.
+// Both models above support it (Claude 4.6+; older models reject the field).
+const GEO = process.env.ANTHROPIC_INFERENCE_GEO === "global" ? {} : { inference_geo: "us" };
 
 type AnthropicResponse = {
   id?: string;
@@ -219,6 +225,7 @@ class AIService {
           max_tokens: maxTokens,
           system,
           messages,
+          ...GEO,
         }),
       });
     } catch {
@@ -303,6 +310,7 @@ class AIService {
           messages,
           fallbacks: "default",
           output_config: { effort: "medium", format: { type: "json_schema", schema } },
+          ...GEO,
         }),
       });
     } catch {

@@ -485,6 +485,16 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-23 — Dashboard redesign A13 (Connections)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- `/connections` replaces Settings › Integrations: token warnings, platform cards with auto-sync, an accounts grid with a status and an action per account, and an account drawer with the full Meta health report, sync, renew, archive and disconnect.
+- Connecting no longer adds every ad account found. New accounts wait 30 minutes for the Connect dialog, which adds only the picked ones, each with a client. Accounts already connected just get the new token.
+- Archive hides an account and stops syncing it, keeping its data; restore brings it back. The scheduler now syncs all four platforms (Meta only before), with auto-sync per platform.
+- Fixes: analysts could start OAuth; Meta health didn't check the platform; a manual token route stored raw tokens; LinkedIn token expiry was overstated; Google, TikTok and LinkedIn never recorded last sync.
+- **Schema:** `AdAccount.archivedAt`, `Workspace.autoSyncOff`, `PendingConnection`. Run `prisma db push` on production before deploying the API.
+
 ### 2026-10-22 — Dashboard redesign A12 (AI Planner)
 
 Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).

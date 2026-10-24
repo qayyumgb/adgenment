@@ -6,17 +6,17 @@ import toast from "react-hot-toast";
 import { Clock, Plus, RefreshCw } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useAppRouter } from "@/hooks/useAppRouter";
-import { useApiClient, type ConnectionAccount, type Platform } from "@/lib/api";
+import { useApiClient, type ConnectionAccount, type ConnectionPlatform, type Platform } from "@/lib/api";
 import { timeAgo } from "@/lib/time";
 import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
 import { useClientScope } from "@/components/app/shell/ClientContext";
-import { Button, Card } from "@/components/app/ui";
+import { Button, Card, Dialog } from "@/components/app/ui";
 import { useAccess } from "@/components/app/team/access";
 import { ConnectDialog } from "@/components/app/connections/ConnectDialog";
 import { AccountDrawer } from "@/components/app/connections/AccountDrawer";
 import { PlatformCards } from "@/components/app/connections/PlatformCards";
 import { AccountsGrid, type GridFilter } from "@/components/app/connections/AccountsGrid";
-import { PLATFORM_NAME, useRefreshAccounts } from "@/components/app/connections/useConnectPlatform";
+import { PLATFORM_NAME, useConnectPlatform, useRefreshAccounts } from "@/components/app/connections/useConnectPlatform";
 
 /**
  * Connections (guide §5, plan A13): token warnings, a card per platform
@@ -41,6 +41,9 @@ export default function ConnectionsPage() {
   const [filter, setFilter] = useState<GridFilter>("all");
   const [syncing, setSyncing] = useState<Platform | "ALL" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState<ConnectionPlatform | null>(null);
+  const [disconnectBusy, setDisconnectBusy] = useState(false);
+  const { connect: connectPlatform, busy: connectingPlatform } = useConnectPlatform();
   const canConnect = access.can("connect");
   const canAssign = access.can("clients");
 
@@ -77,7 +80,36 @@ export default function ConnectionsPage() {
   }, [accounts]);
 
   const refresh = () => void refreshAll();
-  const renew = (p: Platform) => setConnect({ open: true, start: { platform: p } });
+
+  // Connect / Renew from a card, row or banner: straight to the platform's sign-in.
+  // The dialog only opens afterwards, when there are new accounts to pick.
+  const renew = async (p: Platform) => {
+    const r = await connectPlatform(p);
+    if (!r.ok) {
+      if (r.message) (r.tone === "error" ? toast.error : toast)(r.message);
+      return;
+    }
+    refresh();
+    const name = PLATFORM_NAME[p] ?? p;
+    if (r.pending) setConnect({ open: true, start: { pending: r.pending, renewed: r.renewed } });
+    else if (r.renewed) toast.success(`${name} access renewed for ${r.renewed} account${r.renewed === 1 ? "" : "s"}`);
+    else toast(`${name} didn't share any ad accounts with Advertix.`);
+  };
+
+  const disconnect = async () => {
+    if (!disconnecting) return;
+    setDisconnectBusy(true);
+    try {
+      const r = await api.disconnectPlatform(disconnecting.platform, clientId);
+      toast.success(`${disconnecting.name} disconnected · ${r.removed} account${r.removed === 1 ? "" : "s"} removed`);
+      setDisconnecting(null);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Didn't disconnect. Try again.");
+    } finally {
+      setDisconnectBusy(false);
+    }
+  };
 
   const syncNow = async (platform?: Platform) => {
     setSyncing(platform ?? "ALL");
@@ -154,7 +186,7 @@ export default function ConnectionsPage() {
                 <span className="text-ink-2">{expired ? "Spend and results stopped syncing. Reconnect to pick up where it left off." : "Renew it to keep spend and results syncing. It takes about 20 seconds."}</span>
               </span>
               <span title={canConnect ? undefined : access.why("connect")}>
-                <Button variant="primary" size="sm" className="bg-ink text-surface hover:bg-ink/90" disabled={!canConnect} onClick={() => renew(platform)}>
+                <Button variant="primary" size="sm" className="bg-ink text-surface hover:bg-ink/90" loading={connectingPlatform === platform} disabled={!canConnect || connectingPlatform !== null} onClick={() => void renew(platform)}>
                   Renew {PLATFORM_NAME[platform]} access
                 </Button>
               </span>
@@ -169,8 +201,10 @@ export default function ConnectionsPage() {
             canConnect={canConnect}
             connectReason={access.why("connect")}
             syncing={syncing}
+            connecting={connectingPlatform}
             onSync={(p) => void syncNow(p)}
-            onConnect={renew}
+            onConnect={(p) => void renew(p)}
+            onDisconnect={setDisconnecting}
             onAutoSync={(p, v) =>
               void api
                 .setAutoSync(p, v)
@@ -205,7 +239,7 @@ export default function ConnectionsPage() {
             setFocusPixel(Boolean(pixel));
             setOpenId(a.id);
           }}
-          onRenew={(a) => renew(a.platform)}
+          onRenew={(a) => void renew(a.platform)}
           onAssign={(a, cid) => void rowAct(a, () => api.assignAdAccountClient(a.id, cid), `${a.accountName} assigned to ${clients.find((c) => c.id === cid)?.name ?? "the client"}`)}
           onArchive={(a) => void rowAct(a, () => api.archiveAdAccount(a.id), `${a.accountName} archived`)}
           onRestore={(a) => void rowAct(a, () => api.restoreAdAccount(a.id), `${a.accountName} restored`)}
@@ -215,7 +249,7 @@ export default function ConnectionsPage() {
       <AccountDrawer
         account={open}
         onClose={() => setOpenId(null)}
-        onRenew={renew}
+        onRenew={(p) => void renew(p)}
         onChanged={refresh}
         canConnect={canConnect}
         connectReason={access.why("connect")}
@@ -225,6 +259,38 @@ export default function ConnectionsPage() {
         focusPixel={focusPixel}
       />
       <ConnectDialog open={connect.open} start={connect.start} onClose={() => setConnect({ open: false, start: null })} />
+      {disconnecting && (() => {
+        const mine = accounts.filter((a) => a.platform === disconnecting.platform);
+        const campaigns = mine.reduce((s, a) => s + a.campaigns, 0);
+        const n = mine.length;
+        return (
+          <Dialog
+            open
+            onClose={() => !disconnectBusy && setDisconnecting(null)}
+            title={`Disconnect ${disconnecting.name}?`}
+            sub={`${n} ad account${n === 1 ? "" : "s"}${clientId ? " for this client" : ""}`}
+            width={480}
+            footer={
+              <>
+                <Button variant="secondary" onClick={() => setDisconnecting(null)} disabled={disconnectBusy}>
+                  Keep it
+                </Button>
+                <Button variant="danger" loading={disconnectBusy} onClick={() => void disconnect()}>
+                  Disconnect {disconnecting.name}
+                </Button>
+              </>
+            }
+          >
+            <div className="flex flex-col gap-3 text-sm text-ink-2">
+              <p>
+                This removes {n === 1 ? `${mine[0]?.accountName ?? "the account"}` : `these ${n} accounts`} from Advertix, with {campaigns === 1 ? "1 campaign" : `${campaigns} campaigns`} and their synced results, ad sets and ads. Change-log history stays.
+              </p>
+              <p>Nothing changes on {disconnecting.name}: your campaigns keep running there. You can connect again any time.</p>
+              <p className="text-xs text-ink-3">To stop syncing but keep the data, archive the accounts instead (open an account → Archive).</p>
+            </div>
+          </Dialog>
+        );
+      })()}
     </>
   );
 }

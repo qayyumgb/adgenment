@@ -1,6 +1,6 @@
 # Dashboard redesign — implementation plan
 
-**Status (2026-10-22):** **Phase 0, A1, B1, A2, A3, A4, B2, A5, B5, A6, B3, A10, A7, B4, A8, A9, B6, A11 and A12 done** in the working copy (see [§ 11](#11-progress)). Next: A13 (Connections). A10 was done ahead of A7 (it doesn't depend on it). Pre-launch items (OAuth nonce, Clerk production) stay on their own track.
+**Status (2026-10-23):** **Phase 0, A1, B1, A2, A3, A4, B2, A5, B5, A6, B3, A10, A7, B4, A8, A9, B6, A11, A12 and A13 done** (see [§ 11](#11-progress)). Next: A14 (Settings). A10 was done ahead of A7 (it doesn't depend on it). Pre-launch items (OAuth nonce, Clerk production) stay on their own track.
 
 **Goal:** rebuild the logged-in product (`app.advertix.io`) to the new design, keep every feature that works today, and add the new agency features from the mockups. Do it in an order where no button pretends to do something it doesn't.
 
@@ -628,3 +628,46 @@ Not blocking the start, but needed before the named phase:
 
   5 checks. B5, B6 and A11 still pass. One live call against a synthetic account confirmed the API accepts the schema and settings (about 36 s, about 6.4k tokens). Screenshots: empty, thinking, plan, versions, drafts, saved plans, reopened plan, clarify, error, analyst, dark, mobile.
 - **Later:** streaming the reply; a per-plan "share with client" page; the sidebar badge (open question 8).
+
+### A13 — Connections ✅ (2026-10-23)
+
+- **Route:** `/connections` replaces Settings › Integrations (Settings no longer has the tab; `/settings?tab=integrations` redirects, and Settings now honours `?tab=`). All links moved, including Meta health "Reconnect" (`RECONNECT_URL`), error cards, empty states, the wizard and the legal pages.
+- **Staged connects (decision: stage, then pick):**
+  - **OAuth no longer adds every ad account it finds.** Accounts already in Advertix just get the new token; this is "Renew", and Meta health re-checks.
+  - **New accounts wait** in a `PendingConnection` (encrypted tokens, 30 minutes). The callbacks redirect to `/connect/done?connected=&renewed=&pending=`.
+  - **The D1 dialog** (`components/app/connections/ConnectDialog.tsx`) lists the pending accounts with checkboxes and a client each. A client named like the account is suggested; disabled accounts start unticked. It then adds only the picked ones (`POST /connections/pending/:id/accept`) and starts their first sync in the background.
+  - **Limited members** must assign accounts to their own clients. Outside a popup, `/connect/done` continues on `/connections?pending=`.
+- **One connect hook** (`useConnectPlatform`) replaces the four copy-paste Connect components and `ConnectModal`, all deleted. It gives plain words for every callback error.
+- **Page:**
+  - **Token warning** per platform: expiring within 7 days or expired, with Renew.
+  - **Platform cards:** status (Connected / Needs attention / Not connected / Coming soon), accounts, 30-day spend (or "Mixed" across currencies), Auto-sync toggle, Sync / Connect, last sync. Snapchat is coming soon (decision 8).
+  - **Accounts grid:** client, currency, 30-day spend, status, last sync. Filters: All / Needs attention / Unassigned / Archived.
+  - **Row action by status:** Renew, Fix pixel, Review, Assign client (owners), Archive (inactive), Restore, Open.
+- **Account statuses** (most urgent first): Archived, Inactive, Access expired, Token expiring, Needs attention (blocking health check), Pixel issue, Unassigned (multi-client workspaces), Healthy.
+- **Account drawer:**
+  - **Details:** client (owners can change it), currency, time zone, minimum daily budget, access expiry, last sync, spend, campaigns.
+  - **Full Meta health report:** every problem with what to do, and Check again.
+  - **Actions:** Sync now, Renew access, Archive / Restore, and Disconnect. Disconnect's confirm says exactly what's removed (the account, its campaigns, results, ad sets and ads; change-log history stays; nothing changes on the platform).
+- **Archive (decision: hide and stop syncing):** `AdAccount.archivedAt`. Archived accounts are hidden from lists, counts and the wizard; excluded from syncs, planners and allocators (also marked inactive); data kept; restorable.
+- **Auto-sync for all four platforms (decision):**
+  - The scheduler now syncs Meta, Google, TikTok and LinkedIn every `SYNC_INTERVAL_HOURS`, skipping archived accounts and platforms a workspace turned off (`Workspace.autoSyncOff`, `PATCH /connections/auto-sync`).
+  - Google, TikTok and LinkedIn syncs now record `lastSyncedAt`; it was never set before.
+  - `syncService.syncAccount` dispatches per platform. `POST /connections/sync` (Sync now) and `/connections/accounts/:id/sync` report per account.
+- **Fixes:**
+  - **Role bypass:** starting OAuth (`GET /<platform>/oauth-url`) needed only "view", so analysts could attach accounts. It now needs "connect", as do all Connections writes.
+  - **Meta health was run without a platform check:** it could send another platform's token to Meta. It's now Meta-only, and moved into `meta-health.service.ts`.
+  - **Encryption:** `POST /ad-accounts` stored raw tokens; it now encrypts them.
+  - **LinkedIn token expiry:** it reported the refresh token's lifetime (~1 year), but access tokens aren't refreshed. It now reports the access token's (~60 days).
+  - **Broken `?tab=integrations` links** and "Last synced" showing `createdAt` are gone with the old tab.
+  - **Sidebar ad-accounts box:** shows the soonest token expiry ("LinkedIn access expires in 3 days · Renew"). Its Assign link opens the Unassigned filter.
+- **Schema:** `AdAccount.archivedAt`, `Workspace.autoSyncOff`, new `PendingConnection`. All additive.
+- **Tests:** integration test (local DB, platforms mocked):
+  - staging (renew in place, pending for new ones);
+  - accept (only picked and offered accounts, clients, first sync, limited members, expired pendings);
+  - statuses and their precedence;
+  - the overview (spend, cards, client scope);
+  - sync now, archive / restore and auto-sync;
+  - guards (OAuth needs connect, health is Meta-only, scheduler covers four platforms).
+
+  6 checks. B1, B5 and B6 still pass. Screenshots: page, D1 pick / choose / done, drawer with health report and disconnect confirm, assign, needs attention, sync, analyst, dark, mobile.
+- **Later:** a per-account auto-sync override; revoking access on the platform on disconnect; LinkedIn token refresh.
