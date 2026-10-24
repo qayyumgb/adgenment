@@ -82,10 +82,10 @@ export function AccountsGrid({
       id: "status",
       label: "Status",
       width: 150,
-      sortValue: (a) => STATUS_LABEL[a.status],
+      sortValue: (a) => STATUS_LABEL[a.status] ?? a.status,
       render: (a) => (
         <span title={a.statusDetail ?? undefined}>
-          <Pill tone={STATUS_TONE[a.status]}>{STATUS_LABEL[a.status]}</Pill>
+          <Pill tone={STATUS_TONE[a.status] ?? "neutral"}>{STATUS_LABEL[a.status] ?? "Updating…"}</Pill>
         </span>
       ),
     },

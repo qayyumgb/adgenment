@@ -148,7 +148,7 @@ export function AccountDrawer({
       {a && (
         <div className="flex flex-col gap-5">
           <div className="flex flex-wrap items-center gap-2">
-            <Pill tone={STATUS_TONE[a.status]}>{STATUS_LABEL[a.status]}</Pill>
+            <Pill tone={STATUS_TONE[a.status] ?? "neutral"}>{STATUS_LABEL[a.status] ?? "Updating…"}</Pill>
             {a.statusDetail && <span className="text-[13px] text-ink-2">{a.statusDetail}</span>}
           </div>
 
