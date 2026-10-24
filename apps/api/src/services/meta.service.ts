@@ -64,11 +64,15 @@ function sniffImageMime(buf: Buffer): string | null {
 //   user has permission on, gated by ads_management — NOT by a separate
 //   Page-scoped permission).
 // `business_management` covers Pages owned by a Business Manager.
+// `pages_read_engagement` reads the Page's name, category and picture for the
+//   Page picker and ad preview; App Review requires it alongside
+//   ads_management.
 const SCOPES = [
   "ads_read",
   "ads_management",
   "business_management",
   "pages_show_list",
+  "pages_read_engagement",
 ];
 
 export interface MetaAdAccount {

@@ -20,6 +20,7 @@ People without a role on the Meta app (testers, clients) get Facebook's **"Featu
 | `ads_read` | Standard access, needs advanced access |
 | `business_management` | Standard access, needs advanced access |
 | `pages_show_list` | Standard access, needs advanced access |
+| `pages_read_engagement` | Required by Meta alongside `ads_management`; requested at login since 2026-10-25 |
 | `public_profile` | Granted with Facebook Login |
 
 The July submission approved **only** the Marketing API Access Tier; the permissions weren't part of it. Once they're approved, their status changes to **Advanced access** and any Facebook user can connect.
@@ -54,7 +55,7 @@ The July submission approved **only** the Marketing API Access Tier; the permiss
 ## 3. Submission steps (Meta for Developers)
 
 1. **Permissions and features** (use case "Create & manage ads"): `ads_management`, `ads_read`, `business_management` and `pages_show_list` are already added to App Review. `public_profile` comes with them.
-   - **Don't include `pages_read_engagement`.** Advertix never requests it at login, so it can't be shown in the screencast and would be rejected.
+   - **`pages_read_engagement` is required too.** The `ads_management` form says "Your submission must include pages_read_engagement to use ads_management". Advertix requests it at login since 2026-10-25 (it reads the Page name and picture for the Page picker and ad preview). Before submitting: deploy the API, reconnect Meta so the token has it, make one test call (Graph API Explorer: `GET /{page-id}?fields=name,category,picture`), add it to the request, and re-record the screencast so the Facebook dialog lists it.
 2. **App Review → Requests → Next** opens "Submit for App Review", which has five sections:
    - **Verification:** done (green).
    - **App settings:** done (green).
@@ -93,7 +94,7 @@ The July submission approved **only** the Marketing API Access Tier; the permiss
 
 Written for Meta reviewers; matches the live app with the Connections page.
 
-> Advertix is a web app for advertisers and agencies to manage paid campaigns. It uses Facebook Login (with the ads_management, ads_read, business_management and pages_show_list permissions) so a user can connect their Meta ad accounts, see their campaigns and results, and create and manage campaigns.
+> Advertix is a web app for advertisers and agencies to manage paid campaigns. It uses Facebook Login (with the ads_management, ads_read, business_management, pages_show_list and pages_read_engagement permissions) so a user can connect their Meta ad accounts, see their campaigns and results, and create and manage campaigns.
 >
 > ACCESS
 > 1. Go to https://app.advertix.io and sign in with the test credentials below. This account already has a Meta ad account connected, with campaign data.
@@ -108,9 +109,9 @@ Written for Meta reviewers; matches the live app with the Connections page.
 > 6. Open **Campaigns** in the left menu. Meta campaigns appear with status, budget, spend and results. Use **Sync** to refresh.
 > 7. Open any campaign to see its performance, ad sets, ads and change history.
 >
-> CREATE A CAMPAIGN (pages_show_list, ads_management)
+> CREATE A CAMPAIGN (pages_show_list, pages_read_engagement, ads_management)
 > 8. On **Campaigns**, click **New campaign**. Choose a goal (for example **Traffic**), then Meta and a daily budget, then an audience.
-> 9. On the **Ads** step, choose the **Facebook Page** the ad runs from. The list shows the Pages you manage (pages_show_list). Add an image and the ad text.
+> 9. On the **Ads** step, choose the **Facebook Page** the ad runs from. The list shows the Pages you manage (pages_show_list) with each Page's name and picture (pages_read_engagement); the ad preview uses them too. Add an image and the ad text.
 > 10. On **Review & launch**, choose **Publish paused** and publish. The campaign, ad set and ad are created on Meta, paused, so nothing spends. Use the Ads Manager link to see it on Meta. (ads_management)
 >
 > MANAGE A CAMPAIGN (ads_management)
@@ -145,10 +146,10 @@ Written for Meta reviewers; matches the live app with the Connections page.
 
 **Order (one video for all permissions):**
 1. Advertix sign-in.
-2. **Connections → Connect ad account → Meta** → Facebook permission screen. Hold it a few seconds, then approve. Caption: *Facebook Login: ads_management, ads_read, business_management, pages_show_list*.
+2. **Connections → Connect ad account → Meta** → Facebook permission screen. Hold it a few seconds, then approve. Caption: *Facebook Login: ads_management, ads_read, business_management, pages_show_list, pages_read_engagement*.
 3. Pick the account(s) → **Connect**. Caption: *business_management*.
 4. **Campaigns** with spend and results; open a campaign. Caption: *ads_read*.
-5. **New campaign** → goal → budget → audience → **Ads step: pick the Facebook Page** (caption: *pages_show_list*) → **Publish paused**.
+5. **New campaign** → goal → budget → audience → **Ads step: pick the Facebook Page** (caption: *pages_show_list, pages_read_engagement*), let the ad preview show the Page name and picture → **Publish paused**.
 6. **Ads Manager:** show the new paused campaign. Caption: *ads_management: created on Meta*.
 7. Change the daily budget (or pause / resume) in Advertix, then show it in Ads Manager and in the Advertix change log. Caption: *ads_management*.
 
@@ -173,6 +174,9 @@ Written for Meta reviewers; matches the live app with the Connections page.
 
 **pages_show_list**
 > When creating ads, the user must choose the Facebook Page the ads run from. Advertix uses pages_show_list to list the Pages the user manages so they can pick one in the New campaign wizard. Advertix doesn't post to or change the Page.
+
+**pages_read_engagement**
+> When the user creates an ad in Advertix, they choose the Facebook Page the ad runs from. Advertix uses pages_read_engagement to read basic information about the Pages the user manages (Page name, category and profile picture) so it can show them in the Page picker and in the ad preview, where the user sees how the ad will look before publishing. Meta also requires this permission for ads_management. Advertix doesn't read Page posts, comments or followers, and doesn't post to or change the Page.
 
 **public_profile** (if asked)
 > Granted with Facebook Login. Advertix only uses the Facebook user ID returned at login to link the ad-account connection to the person who connected it. It doesn't display or store other profile data.
