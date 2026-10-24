@@ -81,6 +81,17 @@ export default function ConnectionsPage() {
 
   const refresh = () => void refreshAll();
 
+  // Right after a connect, the health check and first sync run in the background:
+  // refresh every 5 s while an account is checking or waiting for its first sync
+  // (accounts added in the last 10 minutes), so the real status appears on its own.
+  const settling = accounts.some((a) => a.status === "CHECKING" || (a.isActive && !a.lastSyncedAt && Date.now() - new Date(a.createdAt).getTime() < 10 * 60_000));
+  useEffect(() => {
+    if (!settling) return;
+    const t = setInterval(() => void q.refetch(), 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settling]);
+
   // Connect / Renew from a card, row or banner: straight to the platform's sign-in.
   // The dialog only opens afterwards, when there are new accounts to pick.
   const renew = async (p: Platform) => {

@@ -133,14 +133,14 @@ export async function discardPending(workspaceId: string, id: string) {
 
 /* ── Status of each account ───────────────────────────────────────────────── */
 
-export type AccountStatus = "HEALTHY" | "TOKEN_EXPIRING" | "TOKEN_EXPIRED" | "PIXEL_ISSUE" | "BLOCKED" | "UNASSIGNED" | "INACTIVE" | "ARCHIVED";
+export type AccountStatus = "CHECKING" | "HEALTHY" | "TOKEN_EXPIRING" | "TOKEN_EXPIRED" | "PIXEL_ISSUE" | "BLOCKED" | "UNASSIGNED" | "INACTIVE" | "ARCHIVED";
 type StoredCheck = { status?: string; code?: string; title?: string; message?: string };
 type StoredReport = { overall?: string; checks?: StoredCheck[] };
 const TOKEN_CODES = /^(TOKEN_EXPIRED|TOKEN_INVALID|PERMISSION_DENIED|MISSING_PERMISSION_)/;
 const PIXEL_CODES = /^(NO_PIXEL|PIXEL_NEVER_FIRED)$/;
 
 /** The one thing to show (and act on) for an account, most urgent first. */
-export function accountStatus(a: Pick<AdAccount, "archivedAt" | "isActive" | "tokenExpiresAt" | "clientId" | "metadata">, hasClients: boolean, now = Date.now()): { status: AccountStatus; detail: string | null } {
+export function accountStatus(a: Pick<AdAccount, "archivedAt" | "isActive" | "tokenExpiresAt" | "clientId" | "metadata"> & Partial<Pick<AdAccount, "platform" | "lastHealthCheck" | "createdAt">>, hasClients: boolean, now = Date.now()): { status: AccountStatus; detail: string | null } {
   if (a.archivedAt) return { status: "ARCHIVED", detail: null };
   if (!a.isActive) return { status: "INACTIVE", detail: "Paused or disabled on the platform" };
   const problems = ((a.metadata as StoredReport | null)?.checks ?? []).filter((c) => c.status === "error" || c.status === "warning");
@@ -156,6 +156,9 @@ export function accountStatus(a: Pick<AdAccount, "archivedAt" | "isActive" | "to
   const pixel = problems.find((c) => PIXEL_CODES.test(c.code ?? ""));
   if (pixel) return { status: "PIXEL_ISSUE", detail: pixel.title ?? "Pixel issue" };
   if (hasClients && !a.clientId) return { status: "UNASSIGNED", detail: "Not assigned to a client" };
+  // A new Meta account whose first health check hasn't finished: don't call it healthy yet.
+  // Capped at 10 minutes so a check that never completes doesn't leave it "checking" forever.
+  if (a.platform === "META" && !a.lastHealthCheck && a.createdAt && now - a.createdAt.getTime() < 10 * 60_000) return { status: "CHECKING", detail: "Checking access, payment method and pixel" };
   return { status: "HEALTHY", detail: null };
 }
 const ATTENTION: AccountStatus[] = ["TOKEN_EXPIRING", "TOKEN_EXPIRED", "PIXEL_ISSUE", "BLOCKED"];

@@ -56,6 +56,7 @@ export function useRefreshAccounts() {
 }
 
 export const STATUS_LABEL: Record<ConnectionStatus, string> = {
+  CHECKING: "Checking…",
   HEALTHY: "Healthy",
   TOKEN_EXPIRING: "Token expiring",
   TOKEN_EXPIRED: "Access expired",
@@ -66,6 +67,7 @@ export const STATUS_LABEL: Record<ConnectionStatus, string> = {
   ARCHIVED: "Archived",
 };
 export const STATUS_TONE: Record<ConnectionStatus, "pos" | "warn" | "neg" | "brand" | "neutral"> = {
+  CHECKING: "neutral",
   HEALTHY: "pos",
   TOKEN_EXPIRING: "warn",
   TOKEN_EXPIRED: "neg",

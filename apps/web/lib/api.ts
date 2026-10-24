@@ -879,7 +879,7 @@ export interface PlanDraftsResult {
 }
 
 /** Connections (A13): one account's state, most urgent first. */
-export type ConnectionStatus = "HEALTHY" | "TOKEN_EXPIRING" | "TOKEN_EXPIRED" | "PIXEL_ISSUE" | "BLOCKED" | "UNASSIGNED" | "INACTIVE" | "ARCHIVED";
+export type ConnectionStatus = "CHECKING" | "HEALTHY" | "TOKEN_EXPIRING" | "TOKEN_EXPIRED" | "PIXEL_ISSUE" | "BLOCKED" | "UNASSIGNED" | "INACTIVE" | "ARCHIVED";
 
 export interface ConnectionAccount {
   id: string;
