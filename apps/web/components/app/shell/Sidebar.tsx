@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useUser } from "@clerk/nextjs";
 import { Plus } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
@@ -158,9 +158,16 @@ function UserRow() {
 
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { clientId } = useClientScope();
-  const campaigns = useApi((api) => api.getCampaigns({ limit: 1, clientId: clientId ?? undefined }), [clientId], {
+  const campaigns = useApi((api) => api.getCampaigns({ limit: 1, clientId: clientId ?? undefined, includeLatestMetrics: "false" }), [clientId], {
     key: "campaign-count",
   });
+  // The sidebar stays mounted across pages, so recount on every page change
+  // (campaigns are added by syncs, connects and the wizard elsewhere).
+  const pathname = usePathname();
+  const { refetch: recount } = campaigns;
+  useEffect(() => {
+    void recount();
+  }, [pathname, recount]);
 
   return (
     <div className="flex h-full flex-col gap-[22px] px-4 py-[22px]">

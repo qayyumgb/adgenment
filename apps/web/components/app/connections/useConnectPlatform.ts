@@ -52,7 +52,7 @@ export function useConnectPlatform() {
 /** Refresh every list that shows ad accounts (Connections, sidebar box, client counts, wizard). */
 export function useRefreshAccounts() {
   const { mutate } = useSWRConfig();
-  return useCallback(() => mutate((key) => Array.isArray(key) && ["connections", "ad-accounts", "clients"].includes(String(key[0]))), [mutate]);
+  return useCallback(() => mutate((key) => Array.isArray(key) && ["connections", "ad-accounts", "clients", "campaign-count"].includes(String(key[0]))), [mutate]);
 }
 
 export const STATUS_LABEL: Record<ConnectionStatus, string> = {

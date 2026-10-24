@@ -100,25 +100,25 @@ Written for Meta reviewers; matches the live app with the Connections page.
 > 2. To test the login flow yourself, sign up with any email at https://app.advertix.io/sign-up and continue from step 3.
 >
 > CONNECT META (Facebook Login; ads_management, ads_read, business_management)
-> 3. Click **Connections** in the left menu, then **Connect ad account** (top right) → **Meta → Connect**. Allow pop-ups. In the Facebook dialog, approve the requested permissions.
-> 4. Back in Advertix, the dialog lists the ad accounts available to your Facebook user, including ones shared with you through Business Manager (business_management). Tick the ones to add and click **Connect**.
-> 5. The accounts appear on the Connections page and their first sync starts. Campaigns and results appear within a few minutes.
+> 3. Click **Connections** in the left menu. On the **Meta** card, click **Connect Meta**. Allow pop-ups. In the Facebook dialog, approve the requested permissions.
+> 4. Back in Advertix, the "Choose Meta accounts" dialog lists the ad accounts available to your Facebook user, including ones shared with you through Business Manager (business_management). Tick the ones to add and click **Connect**.
+> 5. The account appears in the Ad accounts list on the Connections page. Advertix checks its health and runs a first sync; campaigns and results appear within a few minutes.
 >
 > SEE CAMPAIGNS AND RESULTS (ads_read)
 > 6. Open **Campaigns** in the left menu. Meta campaigns appear with status, budget, spend and results. Use **Sync** to refresh.
 > 7. Open any campaign to see its performance, ad sets, ads and change history.
 >
 > CREATE A CAMPAIGN (pages_show_list, ads_management)
-> 8. On **Campaigns**, click **New campaign**. Choose a goal, then Meta and a daily budget, then an audience.
+> 8. On **Campaigns**, click **New campaign**. Choose a goal (for example **Traffic**), then Meta and a daily budget, then an audience.
 > 9. On the **Ads** step, choose the **Facebook Page** the ad runs from. The list shows the Pages you manage (pages_show_list). Add an image and the ad text.
 > 10. On **Review & launch**, choose **Publish paused** and publish. The campaign, ad set and ad are created on Meta, paused, so nothing spends. Use the Ads Manager link to see it on Meta. (ads_management)
 >
 > MANAGE A CAMPAIGN (ads_management)
 > 11. On a campaign, change the daily budget or pause or resume it. The change is applied on Meta and recorded in the campaign's change log, with Undo.
 >
-> REVOKE AND DELETE
-> 12. To disconnect: **Connections** → click the account's row button (e.g. **Open**) → **Disconnect** at the bottom of the panel → confirm.
-> 13. To delete data: see https://advertix.io/data-deletion, or email support@advertix.io.
+> DISCONNECT AND DELETE
+> 12. To disconnect Meta: **Connections** → **Disconnect** on the Meta card → confirm. This removes the ad accounts and their synced data from Advertix.
+> 13. To delete all data: **Settings** → **General** → **Delete workspace** (type the workspace name to confirm). See also https://advertix.io/data-deletion, or email support@advertix.io.
 >
 > Privacy Policy: https://advertix.io/privacy · Terms: https://advertix.io/terms · Data deletion: https://advertix.io/data-deletion · Contact: support@advertix.io
 
