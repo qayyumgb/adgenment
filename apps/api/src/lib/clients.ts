@@ -62,6 +62,13 @@ export async function ensureClients(workspaceId: string): Promise<Client[]> {
     });
   }
 
+  // Repair duplicates the old race left behind: several default clients with the same name.
+  const defaults = clients.filter((c) => c.isDefault);
+  if (defaults.length > 1 && new Set(defaults.map((c) => c.name.trim().toLowerCase())).size < defaults.length) {
+    await mergeDuplicateDefaults(workspaceId);
+    clients = await prisma.client.findMany({ where: { workspaceId }, orderBy: [{ isDefault: "desc" }, { name: "asc" }] });
+  }
+
   if (clients.length === 1) {
     await prisma.adAccount.updateMany({
       where: { workspaceId, clientId: null },
@@ -70,6 +77,45 @@ export async function ensureClients(workspaceId: string): Promise<Client[]> {
   }
 
   return clients;
+}
+
+/**
+ * Merge same-named default clients into the oldest one: ad accounts, creatives,
+ * audiences, suggestions, plans, change log, member access and invites move
+ * over, then the duplicates are deleted. Same lock as creation.
+ */
+async function mergeDuplicateDefaults(workspaceId: string) {
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`clients:${workspaceId}`}))`;
+    const defaults = await tx.client.findMany({ where: { workspaceId, isDefault: true }, orderBy: { createdAt: "asc" } });
+    const groups = new Map<string, typeof defaults>();
+    for (const c of defaults) groups.set(c.name.trim().toLowerCase(), [...(groups.get(c.name.trim().toLowerCase()) ?? []), c]);
+    for (const [keep, ...dups] of groups.values()) {
+      for (const d of dups) {
+        const move = { where: { clientId: d.id }, data: { clientId: keep.id } };
+        await tx.adAccount.updateMany(move);
+        await tx.creative.updateMany(move);
+        await tx.audience.updateMany(move);
+        await tx.suggestion.updateMany(move);
+        await tx.plan.updateMany(move);
+        await tx.changeLog.updateMany(move);
+        for (const a of await tx.memberClientAccess.findMany({ where: { clientId: d.id } })) {
+          await tx.memberClientAccess.upsert({ where: { memberId_clientId: { memberId: a.memberId, clientId: keep.id } }, create: { memberId: a.memberId, clientId: keep.id }, update: {} });
+        }
+        for (const inv of await tx.invite.findMany({ where: { clientIds: { has: d.id } } })) {
+          await tx.invite.update({ where: { id: inv.id }, data: { clientIds: [...new Set(inv.clientIds.map((x) => (x === d.id ? keep.id : x)))] } });
+        }
+        await tx.client.update({
+          where: { id: keep.id },
+          data: {
+            ...(keep.monthlyBudget == null && d.monthlyBudget != null ? { monthlyBudget: d.monthlyBudget } : {}),
+            ...(keep.currency == null && d.currency != null ? { currency: d.currency } : {}),
+          },
+        });
+        await tx.client.delete({ where: { id: d.id } });
+      }
+    }
+  });
 }
 
 export class ClientScopeError extends Error {

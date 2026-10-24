@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
@@ -26,6 +26,22 @@ export function ClientSwitcherMenu({ variant }: { variant: "card" | "chip" }) {
   const me = useApi((api) => api.getMe(), [], { key: "me" });
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // The sidebar clips overflow, so the card menu is placed against the viewport, under the trigger.
+  const [place, setPlace] = useState<{ top: number; left: number; width: number } | null>(null);
+  useEffect(() => {
+    if (!open || variant !== "card") return setPlace(null);
+    const update = () => {
+      const r = wrapRef.current?.getBoundingClientRect();
+      if (r) setPlace({ top: r.bottom + 8, left: r.left, width: Math.min(r.width + 110, window.innerWidth - r.left - 8) });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open, variant]);
   useEscape(open, () => setOpen(false));
   useOutsideClick(open, [wrapRef], () => setOpen(false));
 
@@ -91,14 +107,15 @@ export function ClientSwitcherMenu({ variant }: { variant: "card" | "chip" }) {
   return (
     <div ref={wrapRef} className={cn("relative", variant === "card" ? "flex-none" : "flex min-w-0 flex-1")}>
       {trigger}
-      {open && hasMultiple && (
+      {open && hasMultiple && (variant !== "card" || place) && (
         <div
           role="menu"
           aria-label="Switch client"
           className={cn(
             "z-40 rounded-menu border border-line bg-surface p-1.5 shadow-pop",
-            variant === "card" ? "absolute left-0 top-[calc(100%+8px)] w-[calc(100%+110px)]" : "fixed left-2 right-2 top-[60px]"
+            variant === "card" ? "fixed max-h-[60vh] overflow-y-auto" : "fixed left-2 right-2 top-[60px]"
           )}
+          style={variant === "card" && place ? { top: place.top, left: place.left, width: place.width } : undefined}
         >
           <div className="px-2.5 pb-1.5 pt-2 text-xs text-ink-3">Switch client</div>
           {items.map((s) => {
