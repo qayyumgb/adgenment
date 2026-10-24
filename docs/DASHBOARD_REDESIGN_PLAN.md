@@ -1,6 +1,6 @@
 # Dashboard redesign — implementation plan
 
-**Status (2026-10-23):** **Phase 0, A1, B1, A2, A3, A4, B2, A5, B5, A6, B3, A10, A7, B4, A8, A9, B6, A11, A12 and A13 done** (see [§ 11](#11-progress)). Next: A14 (Settings). A10 was done ahead of A7 (it doesn't depend on it). Pre-launch items (OAuth nonce, Clerk production) stay on their own track.
+**Status (2026-10-25):** **Phase 0, A1, B1, A2, A3, A4, B2, A5, B5, A6, B3, A10, A7, B4, A8, A9, B6, A11, A12, A13 and A14 done** (see [§ 11](#11-progress)). Next: A15 (dialogs + QA). A10 was done ahead of A7 (it doesn't depend on it). Pre-launch items (OAuth nonce, Clerk production) stay on their own track.
 
 **Goal:** rebuild the logged-in product (`app.advertix.io`) to the new design, keep every feature that works today, and add the new agency features from the mockups. Do it in an order where no button pretends to do something it doesn't.
 
@@ -265,7 +265,7 @@ Not blocking the start, but needed before the named phase:
 4. **(A8)** AI video drafts: the studio implies AI video generation, which doesn't exist. Keep studio drafts to images and copy?
 5. **(A8) — decided:** creative statuses are derived from ad delivery (Live / Learning / Fatigued / Paused / In review / Rejected / Ended); library items not in an ad are Draft or Archived (see A8 in § 11).
 6. **(A11) — decided:** a platform's new daily total is split across its campaigns in proportion to their current budgets, and applied to live Meta campaigns right away (with Undo); other platforms are listed to change by hand. See A11 in § 11.
-7. **(A14)** The mockup never defines "Pacing rules", "Audit log", "Manage" and the account "Open" buttons. Specs needed, or they open the obvious drawer?
+7. **(A14) — decided:** "Audit log" opens the workspace change log in a drawer; "Manage" / account "Open" open the Connections account drawer (A13); "Pacing rules" (Budgets header) waits for automation (Track C).
 8. **(A2)** What the AI Planner sidebar badge ("4") counts.
 9. **(C2)** Slack: an OAuth app or incoming webhooks to start?
 10. Currency: the mockups hard-code `$`. We keep each account's currency (`lib/money.ts`), with mixed-currency totals shown in the workspace's default currency.
@@ -671,3 +671,61 @@ Not blocking the start, but needed before the named phase:
 
   6 checks. B1, B5 and B6 still pass. Screenshots: page, D1 pick / choose / done, drawer with health report and disconnect confirm, assign, needs attention, sync, analyst, dark, mobile.
 - **Later:** a per-account auto-sync override; revoking access on the platform on disconnect; LinkedIn token refresh.
+
+### A13 follow-up — Connections cards (2026-10-25)
+
+- Card **Connect** goes straight to the platform's sign-in (no dialog first). Renew from rows and the banner works the same way. The dialog only opens afterwards, when there are new accounts to pick.
+- Connected cards have **Sync** and **Disconnect**. `POST /connections/disconnect { platform }` removes that platform's accounts in the client scope, with a confirm that says exactly what goes (accounts, campaigns, results, ad sets, ads; change log stays; nothing changes on the platform).
+- The Unassigned tab counts every account without a client, even when another issue is its main status.
+- The Connect dialog only loads connections while open (it's mounted closed in the sidebar's empty state).
+
+### A14 — Settings ✅ (2026-10-25)
+
+- **Tabs:** General, Team (B6 `TeamPanel`), AI & automation, Notifications, Billing.
+  - `?tab=` opens a tab; the old `?tab=workspace` maps to Team; `?tab=integrations` redirects to Connections.
+  - `/billing` redirects to `/settings?tab=billing`.
+  - Client viewers see General, AI and Notifications only (the API refuses them the team and billing).
+  - **Header:** Audit log, plus Save changes on General (owners) and Notifications. It reads "Saved" only right after saving, and leaving a tab with unsaved edits asks first.
+- **Removed: the fake parts of the old page.**
+  - API Keys (invented keys, a `Math.random()` "new key").
+  - Security (invented sessions and a fake failed login; dead buttons).
+  - Danger Zone (toasts that did nothing).
+  - The old Billing page (invented usage, plans that didn't match pricing).
+  - Notification toggles that saved nothing.
+- **General:**
+  - **Agency profile:** name, website, industry, team size. The lists now match onboarding and can be cleared.
+  - **Reporting defaults (decision: week start and time zone only):** `Workspace.timezone` and `weekStartsOn`, used by the weekly summary. Attribution window and Shopify/GA4 are left out rather than faked.
+  - **Your login:** Clerk's profile (name, email, password, two-step, devices).
+  - **Delete workspace (decision: real deletion):** owner only, type the name to confirm. `DELETE /workspace` deletes the workspace and all its data, then the owner's Advertix and Clerk login unless they belong elsewhere. A Clerk failure is reported, not hidden. Members keep their own logins. Non-owners can't edit General, so they get no save button.
+- **AI & automation (decision 11):** "Suggest only" shown as active; Auto-apply and Autopilot as coming soon, plus what Advertix does today. Guardrails, ask-first clients and rules wait for auto-apply instead of being switches that do nothing.
+- **Notifications (decision: real email, few events):**
+  - **Settings:** each person picks email alerts per event (`WorkspaceMember.notifications`, `GET/PUT /auth/notifications`, a personal setting for any role). Slack and in-app show as coming soon. There's a test email (`POST /auth/notifications/test`), a list of recent alerts, and an honest banner when `RESEND_API_KEY` isn't set.
+  - **Events and defaults:**
+    - Ad platform access expiring (7 days) or expired, and sync failures (`AdAccount.lastSyncError`, set and cleared by `syncService.syncAccount`): owners and media buyers.
+    - Budget pacing ahead / behind, from day 5 of the month (shared `computePacing`, moved out of the route): owners and media buyers, analysts can opt in.
+    - Weekly summary (last 7 days vs the 7 before per client, at 09:00 on the week's first day in the workspace time zone): everyone. Client viewers only see their clients.
+  - **Sending:** hourly scheduler (`startNotificationScheduler`; off with `NOTIFICATIONS_ENABLED=false`, nothing sent without the key). One email per person per event per run. Every item is logged once per person (`NotificationLog`), so there are no duplicates. Sender: `ALERTS_FROM`, falling back to `INVITE_FROM` / `CONTACT_FROM`.
+- **Billing (decision 10):** the real plan mapped to the pricing page (FREE → Founder, free during the beta; STARTER → Team; PRO → Agency; ENTERPRISE). Usage against limits: clients, USD spend managed this month (other currencies listed separately), seats (`GET /workspace/billing`). No invoices or cards, since Advertix doesn't bill in the app; Compare plans / Email support instead.
+- **Audit log (open question 7):** a drawer with the workspace change log (who, what, applied suggestion / outside Advertix, on the platform, undone), in the client scope, with "Show older".
+- **Fixes:**
+  - `GET /auth/workspace` skipped the role guard and gave client viewers every member's email; it no longer does.
+  - `complete-onboarding` let the client set its own plan; it's always FREE now.
+  - The data-deletion page described a Settings button that didn't work; it now describes the real "Delete workspace" flow and accurate timing.
+- **Schema:**
+  - `Workspace.website`, `timezone`, `weekStartsOn`;
+  - `WorkspaceMember.notifications`;
+  - `AdAccount.lastSyncError`, `lastSyncErrorAt`;
+  - new `NotificationLog`.
+
+  All additive.
+- **Tests:** integration test (local DB, Resend mocked) covering:
+  - workspace settings and validation;
+  - preferences and role defaults;
+  - sync errors recorded and cleared;
+  - alerts (who gets what, opt-outs, client limits, no duplicates, weekly only on the week's first day, test email, no-key error);
+  - billing usage;
+  - both auth fixes;
+  - workspace deletion (exact name, owner only, cascade, login removal, members untouched, Clerk failure reported).
+
+  7 checks. B1, B6, A11 and A13 (7 checks, with platform disconnect) still pass. Screenshots: each tab, dirty save, delete confirm, audit log, analyst, client viewer, dark, mobile.
+- **Later:** Slack and in-app alerts; auto-apply with guardrails, ask-first clients and rules; attribution window; logo upload; in-app billing.

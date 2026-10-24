@@ -229,6 +229,19 @@ const LINKEDIN_REVENUE_PER_CONVERSION = 50;
 class SyncService {
   /** Sync one ad account on its own platform (Connections, the scheduler, first sync after connect). */
   async syncAccount(adAccount: AdAccount): Promise<SyncResult> {
+    // The last failure is kept on the account (sync-failure alerts, A14) and cleared on success.
+    try {
+      const result = await this.syncByPlatform(adAccount);
+      if (adAccount.lastSyncError) await prisma.adAccount.update({ where: { id: adAccount.id }, data: { lastSyncError: null, lastSyncErrorAt: null } }).catch(() => undefined);
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Sync failed";
+      await prisma.adAccount.update({ where: { id: adAccount.id }, data: { lastSyncError: message.slice(0, 500), lastSyncErrorAt: new Date() } }).catch(() => undefined);
+      throw err;
+    }
+  }
+
+  private syncByPlatform(adAccount: AdAccount): Promise<SyncResult> {
     switch (adAccount.platform) {
       case "META":
         return this.syncMetaAccount(adAccount);

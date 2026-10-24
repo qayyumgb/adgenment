@@ -69,6 +69,11 @@ export interface Workspace {
   slug: string | null;
   industry: string | null;
   companySize: string | null;
+  website?: string | null;
+  /** IANA time zone; null = UTC. */
+  timezone?: string | null;
+  /** 1 = Monday, 0 = Sunday. */
+  weekStartsOn?: number;
   ownerId: string;
   plan: PlanType;
   createdAt: string;
@@ -944,9 +949,30 @@ export interface ConnectAdAccountInput {
 
 export interface UpdateWorkspaceInput {
   name?: string;
-  slug?: string;
-  industry?: string;
-  companySize?: string;
+  slug?: string | null;
+  industry?: string | null;
+  companySize?: string | null;
+  website?: string | null;
+  timezone?: string | null;
+  weekStartsOn?: number;
+}
+
+/** GET /workspace/billing (A14): the plan and usage. No invoices: Advertix doesn't bill in the app yet. */
+export interface BillingUsage {
+  plan: PlanType;
+  clients: number;
+  adAccounts: number;
+  seats: { used: number; limit: number | null; clientViewersFree: boolean; plan: PlanType };
+  spendThisMonth: { currency: string; amount: number }[];
+}
+
+export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "WEEKLY_SUMMARY";
+
+/** GET /auth/notifications (A14): my email alert choices. */
+export interface MyNotifications {
+  events: { id: NotificationEvent; label: string; sub: string; eligible: boolean; email: boolean }[];
+  emailConfigured: boolean;
+  recent: { event: string; status: "sent" | "failed"; error: string | null; createdAt: string }[];
 }
 
 export interface AnalyticsOverview {
@@ -1377,6 +1403,13 @@ export function useApiClient() {
         { method: "POST", body: JSON.stringify(data) }
       ),
     getWorkspace: () => apiFetch<WorkspaceResponse>("/auth/workspace"),
+    getBilling: () => apiFetch<BillingUsage>("/workspace/billing"),
+    deleteWorkspace: (confirmName: string) =>
+      apiFetch<{ deleted: boolean; accountDeleted: boolean; loginError: string | null }>("/workspace", { method: "DELETE", body: JSON.stringify({ confirmName }) }),
+    getMyNotifications: () => apiFetch<MyNotifications>("/auth/notifications"),
+    saveMyNotifications: (prefs: Partial<Record<NotificationEvent, boolean>>) =>
+      apiFetch<MyNotifications>("/auth/notifications", { method: "PUT", body: JSON.stringify({ prefs }) }),
+    sendTestNotification: () => apiFetch<{ success: boolean }>("/auth/notifications/test", { method: "POST" }),
     updateWorkspace: (data: UpdateWorkspaceInput) =>
       apiFetch<Workspace>("/workspace", {
         method: "PATCH",

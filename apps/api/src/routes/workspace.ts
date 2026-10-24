@@ -4,7 +4,10 @@ import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
 import { getAccess, type Access } from "../lib/access";
-import { createInvites, listTeam, removeMember, resendInvite, revokeInvite, updateMember } from "../services/team.service";
+import { createInvites, listTeam, removeMember, resendInvite, revokeInvite, seats, updateMember } from "../services/team.service";
+import { createClerkClient } from "@clerk/backend";
+
+const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
 /**
  * Workspace settings and the team (plan B6). Who may call what is decided
@@ -110,7 +113,7 @@ router.delete("/members/:memberId", async (req: Request, res: Response, next: Ne
 router.patch("/", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const workspace = await requireWorkspace(req.dbUserId!);
-    const { name, slug, industry, companySize } = req.body ?? {};
+    const { name, slug, industry, companySize, website, timezone, weekStartsOn } = req.body ?? {};
     const data: Prisma.WorkspaceUpdateInput = {};
     if (typeof name === "string" && name.trim()) data.name = name.trim();
     if (slug !== undefined) {
@@ -128,8 +131,99 @@ router.patch("/", async (req: Request, res: Response, next: NextFunction) => {
     }
     if (industry !== undefined) data.industry = typeof industry === "string" && industry.trim() ? industry.trim() : null;
     if (companySize !== undefined) data.companySize = typeof companySize === "string" && companySize.trim() ? companySize.trim() : null;
+    if (website !== undefined) data.website = typeof website === "string" && website.trim() ? website.trim().slice(0, 200) : null;
+    if (timezone !== undefined) {
+      if (timezone === null || timezone === "") data.timezone = null;
+      else if (typeof timezone === "string" && validTimeZone(timezone)) data.timezone = timezone;
+      else return res.status(400).json({ error: "Unknown time zone" });
+    }
+    if (weekStartsOn !== undefined) {
+      if (weekStartsOn !== 0 && weekStartsOn !== 1) return res.status(400).json({ error: "weekStartsOn must be 0 (Sunday) or 1 (Monday)" });
+      data.weekStartsOn = weekStartsOn;
+    }
     if (Object.keys(data).length === 0) return res.json(workspace);
     res.json(await prisma.workspace.update({ where: { id: workspace.id }, data }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const validTimeZone = (tz: string) => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * GET /workspace/billing — the plan and what the workspace uses against it.
+ * Advertix doesn't bill through the app yet (decision 10), so there are no
+ * invoices or payment methods here.
+ */
+router.get("/billing", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const [clients, adAccounts, seatInfo, spend] = await Promise.all([
+      prisma.client.count({ where: { workspaceId: workspace.id } }),
+      prisma.adAccount.count({ where: { workspaceId: workspace.id, archivedAt: null } }),
+      seats(workspace.id, workspace.plan),
+      prisma.campaignMetrics.findMany({ where: { date: { gte: monthStart }, campaign: { workspaceId: workspace.id } }, select: { spend: true, campaign: { select: { adAccount: { select: { currency: true } } } } } }),
+    ]);
+    const byCurrency = new Map<string, number>();
+    for (const m of spend) {
+      const cur = m.campaign.adAccount.currency ?? "USD";
+      byCurrency.set(cur, (byCurrency.get(cur) ?? 0) + Number(m.spend));
+    }
+    res.json({
+      plan: workspace.plan,
+      clients,
+      adAccounts,
+      seats: seatInfo,
+      spendThisMonth: [...byCurrency.entries()].map(([currency, amount]) => ({ currency, amount: Math.round(amount * 100) / 100 })).sort((a, b) => b.amount - a.amount),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /workspace  { confirmName } — owner only (roleGuard: "workspace").
+ * Deletes the workspace and everything in it (clients, ad accounts and their
+ * synced data, campaigns, creatives, audiences, plans, history, invites).
+ * Then deletes the owner's login too, unless they still belong to another
+ * workspace. Nothing changes on the ad platforms.
+ */
+router.delete("/", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await requireWorkspace(req.dbUserId!);
+    const a = await access(req);
+    if (a.role !== "OWNER") return res.status(403).json({ error: "Only the owner can delete the workspace." });
+    if (typeof req.body?.confirmName !== "string" || req.body.confirmName.trim() !== workspace.name.trim()) {
+      return res.status(400).json({ error: "Type the workspace name exactly to confirm." });
+    }
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: req.dbUserId! } });
+    await prisma.workspace.delete({ where: { id: workspace.id } });
+
+    // The login goes too when it no longer belongs anywhere.
+    const elsewhere = await prisma.workspaceMember.count({ where: { userId: user.id } });
+    const ownsOther = await prisma.workspace.count({ where: { ownerId: user.id } });
+    let accountDeleted = false;
+    let loginError: string | null = null;
+    if (!elsewhere && !ownsOther) {
+      await prisma.user.delete({ where: { id: user.id } });
+      try {
+        await clerk.users.deleteUser(user.clerkId);
+        accountDeleted = true;
+      } catch (err) {
+        loginError = "Your data is deleted, but the login couldn't be removed. Email support@advertix.io and we'll finish it.";
+        console.error("[workspace] Clerk delete failed:", err instanceof Error ? err.message : err);
+      }
+    }
+    res.json({ deleted: true, accountDeleted, loginError });
   } catch (err) {
     next(err);
   }

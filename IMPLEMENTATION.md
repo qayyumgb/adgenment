@@ -485,6 +485,19 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-25 — Dashboard redesign A14 (Settings) + Connections follow-up
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- Settings rebuilt: General, Team, AI & automation, Notifications, Billing, plus an Audit log drawer. The fake API keys, sessions, login history, danger zone and billing page are gone; login and security use Clerk's profile.
+- **Delete workspace** (owner, type the name): deletes the workspace, its data and the owner's login. The public data-deletion page now describes this flow.
+- **Email alerts** (Resend, hourly): access expiring or expired, sync failures, budget pacing, and a weekly summary. Each person chooses theirs, every alert is logged once, and there's a test email.
+- Billing shows the real plan and usage (clients, spend, seats). `/billing` redirects to Settings.
+- Connections: card Connect goes straight to sign-in; connected cards have Sync and Disconnect (`POST /connections/disconnect`).
+- Claude calls run in the US only (`inference_geo: "us"`, 1.1x tokens; `ANTHROPIC_INFERENCE_GEO=global` to opt out).
+- Fixes: client viewers could read member emails via `/auth/workspace`; onboarding accepted a client-chosen plan.
+- **Schema:** `Workspace.website/timezone/weekStartsOn`, `WorkspaceMember.notifications`, `AdAccount.lastSyncError/lastSyncErrorAt`, `NotificationLog`. Run `prisma db push` on production before deploying the API. New optional env: `ALERTS_FROM`, `NOTIFICATIONS_ENABLED`.
+
 ### 2026-10-23 — Dashboard redesign A13 (Connections)
 
 Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).

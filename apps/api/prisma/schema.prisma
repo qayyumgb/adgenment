@@ -104,14 +104,20 @@ model User {
 }
 
 model Workspace {
-  id          String   @id @default(cuid())
-  name        String
-  slug        String?  @unique
-  industry    String?
-  companySize String?
-  ownerId     String
-  plan        PlanType @default(FREE)
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  name         String
+  slug         String?  @unique
+  industry     String?
+  companySize  String?
+  /// Agency profile + reporting defaults (Settings › General, A14).
+  website      String?
+  /// IANA time zone for weekly summaries and alert timing; null = UTC.
+  timezone     String?
+  /// 1 = Monday, 0 = Sunday (weekly summaries).
+  weekStartsOn Int      @default(1)
+  ownerId      String
+  plan         PlanType @default(FREE)
+  createdAt    DateTime @default(now())
 
   /// Reserved for the deferred auto-optimize mode (auto-applying budget
   /// recommendations). Dormant for now — no cron consumes these yet.
@@ -126,6 +132,7 @@ model Workspace {
   owner                 User                   @relation("WorkspaceOwner", fields: [ownerId], references: [id])
   members               WorkspaceMember[]
   pendingConnections    PendingConnection[]
+  notificationLogs      NotificationLog[]
   adAccounts            AdAccount[]
   campaigns             Campaign[]
   creatives             Creative[]
@@ -218,11 +225,13 @@ model Invite {
 }
 
 model WorkspaceMember {
-  id          String        @id @default(cuid())
-  workspaceId String
-  userId      String
-  role        WorkspaceRole @default(ANALYST)
-  createdAt   DateTime      @default(now())
+  id            String        @id @default(cuid())
+  workspaceId   String
+  userId        String
+  role          WorkspaceRole @default(ANALYST)
+  createdAt     DateTime      @default(now())
+  /// Email alert choices per event (Settings › Notifications, A14): { [event]: boolean }. Null = role defaults.
+  notifications Json?
 
   workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -278,6 +287,9 @@ model AdAccount {
   backfilledAt    DateTime?
   /// Archived (A13): hidden from lists, not synced, data kept; restorable.
   archivedAt      DateTime?
+  /// Last sync failure (cleared on success), for alerts and the Connections page.
+  lastSyncError   String?
+  lastSyncErrorAt DateTime?
 
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
@@ -803,4 +815,25 @@ model PendingConnection {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId])
+}
+
+/// Email alerts Advertix sent (or tried to), one row per person per alert (A14).
+/// The unique key stops the same alert going out twice.
+model NotificationLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  /// TOKEN_EXPIRING | SYNC_FAILED | PACING | WEEKLY_SUMMARY | TEST
+  event       String
+  /// What the alert is about, e.g. "acct_123:2026-10-25" (dedupe).
+  key         String
+  /// sent | failed
+  status      String
+  error       String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, event, key])
+  @@index([workspaceId, createdAt])
 }

@@ -34,7 +34,8 @@ export function ConnectDialog({
   const api = useApiClient();
   const access = useAccess();
   const { clientId: scopeId, clients, hasMultiple } = useClientScope();
-  const conns = useApi((c) => c.getConnections(), [], { key: "connections" });
+  // Only while open: the dialog is also mounted (closed) in the sidebar and empty states.
+  const conns = useApi((c) => (open ? c.getConnections() : Promise.resolve(null)), [open], { key: "connections" });
   const { connect, busy } = useConnectPlatform();
   const refresh = useRefreshAccounts();
   const [step, setStep] = useState<Step>({ kind: "pick" });

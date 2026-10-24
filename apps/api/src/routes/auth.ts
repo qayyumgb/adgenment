@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { getUserWorkspace } from "../lib/workspace";
 import { getAccess } from "../lib/access";
 import { pendingInviteFor } from "../services/team.service";
+import { myNotifications, saveNotifications, sendTestEmail } from "../services/notifications.service";
 
 const router = Router();
 
@@ -67,10 +68,9 @@ router.post(
         return res.status(400).json({ error: "workspaceName is required" });
       }
 
-      const validPlan =
-        plan === "STARTER" || plan === "PRO" || plan === "ENTERPRISE"
-          ? plan
-          : "FREE";
+      // Plans are set by Advertix, never by the client (A14 fix: a paid plan could be self-assigned here).
+      void plan;
+      const validPlan = "FREE" as const;
 
       const workspace = await prisma.workspace.create({
         data: {
@@ -139,22 +139,58 @@ router.get(
       if (!workspace) {
         return res.status(404).json({ error: "No workspace found" });
       }
+      // Client viewers don't see the team (A14 fix: this route skipped the role guard and listed every member's email).
+      const access = await getAccess(req);
+      const showTeam = access?.role !== "CLIENT_VIEWER";
       const full = await prisma.workspace.findUnique({
         where: { id: workspace.id },
         include: {
-          members: {
-            include: {
-              user: { select: { id: true, name: true, email: true } },
-            },
-          },
+          ...(showTeam ? { members: { include: { user: { select: { id: true, name: true, email: true } } } } } : {}),
           _count: { select: { adAccounts: true } },
         },
       });
-      res.json(full);
+      res.json(showTeam ? full : { ...full, members: [] });
     } catch (err) {
       next(err);
     }
   }
 );
+
+/** GET /auth/notifications: my email alert choices (every role; personal, so outside /workspace). */
+router.get("/notifications", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await getUserWorkspace(req.dbUserId!);
+    if (!workspace) return res.status(404).json({ error: "No workspace found" });
+    res.json(await myNotifications(req.dbUserId!, workspace.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** PUT /auth/notifications  { prefs: { [event]: boolean } } */
+router.put("/notifications", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await getUserWorkspace(req.dbUserId!);
+    if (!workspace) return res.status(404).json({ error: "No workspace found" });
+    const prefs = req.body?.prefs;
+    if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) return res.status(400).json({ error: "prefs must be an object" });
+    res.json(await saveNotifications(req.dbUserId!, workspace.id, prefs));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /auth/notifications/test — a test email to me. */
+router.post("/notifications/test", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await getUserWorkspace(req.dbUserId!);
+    if (!workspace) return res.status(404).json({ error: "No workspace found" });
+    const r = await sendTestEmail(req.dbUserId!, workspace.id);
+    if (!r.ok) return res.status(502).json({ error: r.error ?? "The email didn't send." });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;

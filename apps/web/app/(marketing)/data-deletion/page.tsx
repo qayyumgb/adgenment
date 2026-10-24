@@ -59,8 +59,8 @@ function Intro() {
       <p>
         You have the right to delete your Advertix account and all data
         associated with it at any time. There are two ways to do this. Both are
-        free, both are immediate, both result in complete removal of your data
-        within 30 days.
+        free, and both result in complete removal of your data within 30 days
+        (deleting it yourself in Settings is immediate).
       </p>
     </div>
   );
@@ -84,18 +84,24 @@ function OptionA() {
           </Link>
         </li>
         <li>
-          Go to <strong>Settings</strong> (top-right user menu → Settings)
+          Open <strong>Settings</strong> in the left menu. You land on the{" "}
+          <strong>General</strong> tab
         </li>
         <li>
-          Scroll to the <strong>Danger Zone</strong> section at the bottom
+          At the bottom, click <strong>&quot;Delete workspace&quot;</strong>,
+          type your workspace name to confirm, and click{" "}
+          <strong>Delete workspace</strong>
         </li>
         <li>
-          Click <strong>&quot;Delete my account&quot;</strong> and confirm the
-          action
+          The workspace and everything in it (connected ad accounts and their
+          access tokens, synced campaigns and results, creatives, audiences,
+          plans and history) are deleted right away, and you are signed out.
+          Your Advertix login is deleted too, unless you belong to another
+          workspace
         </li>
         <li>
-          Your account is deactivated immediately. All data is permanently
-          purged within 30 days.
+          Only the workspace owner can do this. If you&apos;re a teammate, ask
+          the owner to remove you, or use Option B
         </li>
       </ol>
     </Section>
@@ -195,18 +201,14 @@ function Timeframe() {
     >
       <div className="mt-3 space-y-3 text-sm leading-relaxed text-slate-700">
         <p>
-          <strong>Immediately:</strong> Your account is deactivated. You can no
-          longer sign in or be reached through Advertix.
+          <strong>Immediately (Option A):</strong> Your workspace data,
+          including stored ad-platform access tokens, is deleted from our
+          database and your login is removed. For email requests (Option B), we
+          do the same once we&apos;ve confirmed it&apos;s you.
         </p>
         <p>
-          <strong>Within 7 days:</strong> Your OAuth tokens are revoked and
-          purged from our database. Connected ad-platform integrations are
-          severed.
-        </p>
-        <p>
-          <strong>Within 30 days:</strong> All personal data, campaigns,
-          metrics, creatives, and AI history are permanently deleted from
-          production databases and backups.
+          <strong>Within 30 days:</strong> Deleted data also ages out of our
+          database backups, and email requests are completed.
         </p>
         <p>
           <strong>Up to 90 days:</strong> We retain encrypted, anonymized log

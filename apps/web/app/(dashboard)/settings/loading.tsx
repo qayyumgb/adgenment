@@ -1,43 +1,19 @@
+import { Skeleton } from "@/components/app/ui";
+
+/** Route-level skeleton for /settings: page header with tabs, two cards. */
 export default function SettingsLoading() {
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <div className="h-7 w-24 animate-pulse rounded bg-slate-200/70" />
-        <div className="h-4 w-80 animate-pulse rounded bg-slate-200/70" />
+    <>
+      <div className="flex flex-col gap-2 border-b border-line bg-surface px-[clamp(16px,4vw,32px)] pb-3 pt-3">
+        <Skeleton className="h-3 w-40" />
+        <Skeleton className="h-7 w-32" />
+        <Skeleton className="h-3.5 w-72 max-w-full" />
+        <Skeleton className="mt-2 h-5 w-96 max-w-full" />
       </div>
-
-      <div className="flex gap-6">
-        {/* Tab nav */}
-        <div className="w-60 shrink-0 space-y-1.5">
-          {Array.from({ length: 7 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-10 w-full animate-pulse rounded-xl bg-slate-200/70"
-            />
-          ))}
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 space-y-4">
-          <div className="rounded-2xl border border-slate-200/70 bg-white p-6 shadow-card">
-            <div className="space-y-2 mb-6">
-              <div className="h-5 w-40 animate-pulse rounded bg-slate-200/70" />
-              <div className="h-3 w-80 animate-pulse rounded bg-slate-200/70" />
-            </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="space-y-2">
-                  <div className="h-4 w-24 animate-pulse rounded bg-slate-200/70" />
-                  <div className="h-10 w-full animate-pulse rounded-xl bg-slate-100" />
-                </div>
-              ))}
-            </div>
-            <div className="mt-6 flex justify-end">
-              <div className="h-10 w-32 animate-pulse rounded-xl bg-slate-200/70" />
-            </div>
-          </div>
-        </div>
+      <div className="flex max-w-[1180px] flex-col gap-5 px-[clamp(16px,4vw,32px)] pb-10 pt-6">
+        <Skeleton className="h-[360px] rounded-card" />
+        <Skeleton className="h-[220px] rounded-card" />
       </div>
-    </div>
+    </>
   );
 }

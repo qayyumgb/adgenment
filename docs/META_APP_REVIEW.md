@@ -46,6 +46,7 @@ The July submission approved **only** the Marketing API Access Tier; the permiss
 - [ ] **Reviewer test account works on production**, with a Meta ad account connected and campaigns synced (credentials go in Meta, not in this file).
 - [ ] **New screencast recorded** (section 6) on the live app, as an MP4 file.
 - [ ] **Public pages load without signing in:** https://advertix.io/privacy, /terms, /data-deletion.
+- [x] **Data-deletion page matches the product:** 2026-10-25 (A14). It describes Settings › General › Delete workspace, which really deletes the workspace and the login. Deploy before submitting.
 - [x] **US-only Claude processing:** done 2026-10-25. Every Claude call sends `inference_geo: "us"` (1.1x token pricing; `ANTHROPIC_INFERENCE_GEO=global` turns it off). Confirmed live on both models. Deploy before submitting.
 
 ---
