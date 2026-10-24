@@ -35,26 +35,31 @@ export async function ensureClients(workspaceId: string): Promise<Client[]> {
   });
 
   if (clients.length === 0) {
-    const workspace = await prisma.workspace.findUnique({
-      where: { id: workspaceId },
-      select: { name: true },
+    // A new workspace's first page load fires several requests at once, and each
+    // used to see "no clients" and create one (duplicate default clients). A
+    // per-workspace advisory lock lets one create it; the others then find it.
+    clients = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`clients:${workspaceId}`}))`;
+      const existing = await tx.client.findMany({ where: { workspaceId }, orderBy: [{ isDefault: "desc" }, { name: "asc" }] });
+      if (existing.length) return existing;
+      const workspace = await tx.workspace.findUnique({ where: { id: workspaceId }, select: { name: true } });
+      const firstAccount = await tx.adAccount.findFirst({
+        where: { workspaceId, currency: { not: null } },
+        orderBy: { createdAt: "asc" },
+        select: { currency: true },
+      });
+      const name = workspace?.name?.trim() || "My brand";
+      const created = await tx.client.create({
+        data: {
+          workspaceId,
+          name,
+          short: clientMark(name),
+          isDefault: true,
+          currency: firstAccount?.currency ?? null,
+        },
+      });
+      return [created];
     });
-    const firstAccount = await prisma.adAccount.findFirst({
-      where: { workspaceId, currency: { not: null } },
-      orderBy: { createdAt: "asc" },
-      select: { currency: true },
-    });
-    const name = workspace?.name?.trim() || "My brand";
-    const created = await prisma.client.create({
-      data: {
-        workspaceId,
-        name,
-        short: clientMark(name),
-        isDefault: true,
-        currency: firstAccount?.currency ?? null,
-      },
-    });
-    clients = [created];
   }
 
   if (clients.length === 1) {
