@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useParams } from "next/navigation";
-import { useClerk } from "@clerk/nextjs";
+import { useAuth, useClerk } from "@clerk/nextjs";
 import { AlertTriangle, CheckCircle2, Users } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient } from "@/lib/api";
@@ -19,7 +19,11 @@ export default function InvitePage() {
   const token = params?.token ?? "";
   const api = useApiClient();
   const { signOut } = useClerk();
-  const info = useApi((c) => c.getInvite(token), [token]);
+  // Right after sign-in / sign-up Clerk needs a moment before it hands out a
+  // token; asking earlier sends no auth header ("Missing authorization header").
+  const { isLoaded, isSignedIn } = useAuth();
+  const ready = isLoaded && isSignedIn === true;
+  const info = useApi((c) => (ready ? c.getInvite(token) : new Promise<never>(() => {})), [token, ready]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
