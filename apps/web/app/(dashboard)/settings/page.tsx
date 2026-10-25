@@ -8,7 +8,7 @@ import { useApi } from "@/hooks/useApi";
 import { useAppRouter } from "@/hooks/useAppRouter";
 import { cn } from "@/lib/cn";
 import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
-import { Button } from "@/components/app/ui";
+import { Button, useConfirm } from "@/components/app/ui";
 import { useAccess } from "@/components/app/team/access";
 import { TeamPanel } from "@/components/app/team/TeamPanel";
 import { GeneralTab } from "@/components/app/settings/GeneralTab";
@@ -49,6 +49,7 @@ export default function SettingsPage() {
   const [saver, setSaver] = useState<SettingsSaver | null>(null);
   const [saving, setSaving] = useState(false);
   const [audit, setAudit] = useState(false);
+  const { confirm, dialog: confirmDialog } = useConfirm();
   // "Saved" only right after a save, until the next edit or tab change.
   const [justSaved, setJustSaved] = useState(false);
   const stableSetSaver = useCallback((s: SettingsSaver | null) => {
@@ -61,8 +62,8 @@ export default function SettingsPage() {
     if (requested === "integrations") router.replace("/connections");
   }, [requested, router]);
 
-  const go = (t: Tab) => {
-    if (saver?.dirty && !window.confirm("You have unsaved changes on this tab. Leave without saving?")) return;
+  const go = async (t: Tab) => {
+    if (saver?.dirty && !(await confirm({ title: "Leave without saving?", body: "You have unsaved changes on this tab.", confirmLabel: "Leave", cancelLabel: "Stay", danger: true }))) return;
     setSaver(null);
     router.replace(`${pathname}${t === "general" ? "" : `?tab=${t}`}`);
   };
@@ -114,7 +115,7 @@ export default function SettingsPage() {
                 type="button"
                 role="tab"
                 aria-selected={t.id === tab}
-                onClick={() => go(t.id)}
+                onClick={() => void go(t.id)}
                 className={cn(
                   "-mb-px whitespace-nowrap border-b-2 pb-2.5 pt-1 text-sm transition-colors",
                   t.id === tab ? "border-brand font-semibold text-ink" : "border-transparent font-medium text-ink-2 hover:text-ink"
@@ -134,6 +135,7 @@ export default function SettingsPage() {
         {tab === "billing" && <BillingTab />}
       </PageBody>
       <AuditLogDrawer open={audit} onClose={() => setAudit(false)} />
+      {confirmDialog}
     </>
   );
 }

@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { MoreHorizontal } from "lucide-react";
 import { useApiClient, type PlanDetail, type PlanSummary } from "@/lib/api";
 import { timeAgo } from "@/lib/time";
-import { Button, Dialog, IconButton, Menu, MenuItem, Pill, Skeleton } from "@/components/app/ui";
+import { Button, Dialog, IconButton, Menu, MenuItem, Pill, Skeleton, useConfirm } from "@/components/app/ui";
 
 /**
  * Saved plans (plan A12, on the B5 Plan model): every plan the planner made
@@ -31,6 +31,7 @@ export function SavedPlansDialog({
 }) {
   const api = useApiClient();
   const [busy, setBusy] = useState<string | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   const openPlan = async (id: string) => {
     setBusy(id);
@@ -53,7 +54,7 @@ export function SavedPlansDialog({
     }
   };
   const remove = async (p: PlanSummary) => {
-    if (!window.confirm(`Delete “${p.title}”? Drafts made from it stay in Campaigns.`)) return;
+    if (!(await confirm({ title: `Delete “${p.title}”?`, body: "The plan and its versions are deleted. Drafts made from it stay in Campaigns.", confirmLabel: "Delete", danger: true }))) return;
     try {
       await api.deletePlan(p.id);
       toast.success("Plan deleted");
@@ -108,6 +109,7 @@ export function SavedPlansDialog({
           ))}
         </ul>
       )}
+      {confirmDialog}
     </Dialog>
   );
 }

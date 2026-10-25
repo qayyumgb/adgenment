@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { FileText, Sparkles } from "lucide-react";
 import { useApiClient, type AudienceBoard, type AudienceBoardItem, type AudienceType, type MetaTargetingSpec } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { AiNote, Button, Dialog, Menu, MenuItem, MenuLabel, Segmented } from "@/components/app/ui";
+import { AiNote, Button, Dialog, Menu, MenuItem, MenuLabel, Segmented, useConfirm } from "@/components/app/ui";
 import {
   COMMON_COUNTRIES,
   CityPicker,
@@ -239,6 +239,7 @@ export function AudienceDialog({
   const [seed, setSeed] = useState<string>("");
   const [country, setCountry] = useState("US");
   const [ratio, setRatio] = useState(1);
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   useEffect(() => {
     if (!open) return;
@@ -256,15 +257,15 @@ export function AudienceDialog({
     setF((x) => ({ ...x, ...p }));
     setDirty(true);
   };
-  const close = () => {
+  const close = async () => {
     if (busy) return;
-    if (dirty && !window.confirm("Discard this audience? Your changes aren't saved.")) return;
+    if (dirty && !(await confirm({ title: "Discard this audience?", body: "Your changes aren't saved.", confirmLabel: "Discard", cancelLabel: "Keep editing", danger: true }))) return;
     onClose();
   };
 
   const draft = async () => {
     if (prompt.trim().length < 10) return void toast.error("Describe the audience in at least 10 characters.");
-    if (drafted && dirty && !window.confirm("Draft again? This replaces the fields you've edited.")) return;
+    if (drafted && dirty && !(await confirm({ title: "Draft again?", body: "This replaces the fields you've edited.", confirmLabel: "Draft again" }))) return;
     setBusy(true);
     try {
       const r = await api.generateAudienceTargeting(prompt.trim());
@@ -476,6 +477,7 @@ export function AudienceDialog({
             </div>
           ))}
       </div>
+      {confirmDialog}
     </Dialog>
   );
 }

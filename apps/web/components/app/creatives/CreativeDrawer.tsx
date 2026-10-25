@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { Archive, ArchiveRestore, Download, ExternalLink, MoreHorizontal, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { useApiClient, type CreativeBoardItem } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
-import { AiNote, Button, ButtonLink, Drawer, IconButton, Menu, MenuItem, MenuSeparator, Pill, PlatformBadge, Toggle, type PlatformKey } from "@/components/app/ui";
+import { AiNote, Button, ButtonLink, Drawer, IconButton, Menu, MenuItem, MenuSeparator, Pill, PlatformBadge, Toggle, useConfirm, type PlatformKey } from "@/components/app/ui";
 import { VideoThumbnailPlayer } from "@/components/app/creatives/VideoThumbnailPlayer";
 import { CreativeArt } from "./CreativeCard";
 import { useAccess } from "@/components/app/team/access";
@@ -39,6 +39,7 @@ export function CreativeDrawer({
   const api = useApiClient();
   const [busy, setBusy] = useState(false);
   const canEdit = useAccess().can("edit");
+  const { confirm, dialog: confirmDialog } = useConfirm();
   if (!item) return null;
   const r = roasOf(item);
   const c = ctrOf(item);
@@ -60,8 +61,8 @@ export function CreativeDrawer({
   };
   const archive = (to: "ARCHIVED" | "DRAFT") =>
     run(() => api.updateCreative(item.creativeId!, { status: to }), to === "ARCHIVED" ? "Archived" : "Restored to the library", true);
-  const remove = () => {
-    if (!window.confirm(`Delete “${item.name}”? It's removed from the library. Ads already running on Meta aren't affected.`)) return;
+  const remove = async () => {
+    if (!(await confirm({ title: `Delete “${item.name}”?`, body: "It's removed from the library. Ads already running on Meta aren't affected.", confirmLabel: "Delete", danger: true }))) return;
     void run(() => api.deleteCreative(item.creativeId!), "Creative deleted", true);
   };
   const toggleAd = () =>
@@ -186,6 +187,7 @@ export function CreativeDrawer({
           </div>
         )}
       </div>
+      {confirmDialog}
     </Drawer>
   );
 }

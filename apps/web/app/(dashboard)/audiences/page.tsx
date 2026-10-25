@@ -12,7 +12,7 @@ import { fmtMoney } from "@/lib/money";
 import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
 import { useClientScope } from "@/components/app/shell/ClientContext";
 import { CellText, DataGrid, FilterMultiSelect, GridEmpty, GridSearch, type GridColumn } from "@/components/app/grid";
-import { AiMark, Button, Card, IconButton, Menu, MenuItem, MenuSeparator, Pill, Skeleton } from "@/components/app/ui";
+import { AiMark, Button, Card, IconButton, Menu, MenuItem, MenuSeparator, Pill, Skeleton, useConfirm } from "@/components/app/ui";
 import { AudienceDialog, type DialogTab } from "@/components/app/audiences/AudienceDialog";
 import { SOURCE_LABEL, STATUS_TONE, cpaOf, roasOf, sizeHint, sizeText } from "@/components/app/audiences/board";
 
@@ -69,6 +69,7 @@ export default function AudiencesPage() {
   const access = useAccess();
   const canEdit = access.can("edit");
   const [q, setQ] = useState("");
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [types, setTypes] = useState<string[]>([]);
   const [sources, setSources] = useState<string[]>([]);
   const [dialog, setDialog] = useState<{ tab: DialogTab; editing: AudienceBoardItem | null; seedKey: string | null } | null>(null);
@@ -104,8 +105,8 @@ export default function AudiencesPage() {
     }
   };
   const openInWizard = (i: AudienceBoardItem) => router.push(`/campaigns/new?audience=${i.id}`);
-  const remove = (i: AudienceBoardItem) => {
-    if (!window.confirm(`Delete “${i.name}”? Campaigns made from it keep their targeting.`)) return;
+  const remove = async (i: AudienceBoardItem) => {
+    if (!(await confirm({ title: `Delete “${i.name}”?`, body: "It's removed from your saved audiences. Campaigns made from it keep their targeting.", confirmLabel: "Delete", danger: true }))) return;
     void run(i.key, () => api.deleteAudience(i.id), "Audience deleted");
   };
 
@@ -360,6 +361,7 @@ export default function AudiencesPage() {
         onClose={() => setDialog(null)}
         onSaved={refetch}
       />
+      {confirmDialog}
     </>
   );
 }

@@ -8,7 +8,7 @@ import { useApi } from "@/hooks/useApi";
 import { useApiClient, type TeamMember, type WorkspaceRole } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { CellText, DataGrid, type GridColumn } from "@/components/app/grid";
-import { Button, Card, IconButton, Menu, MenuItem, MenuSeparator, Pill, Skeleton, type PillTone } from "@/components/app/ui";
+import { Button, Card, IconButton, Menu, MenuItem, MenuSeparator, Pill, Skeleton, useConfirm, type PillTone } from "@/components/app/ui";
 import { InviteDialog } from "./InviteDialog";
 import { ROLE_LABEL, useAccess } from "./access";
 
@@ -27,6 +27,7 @@ export function TeamPanel() {
   const team = useApi((c) => c.getTeam(), [], { key: "team" });
   const [dialog, setDialog] = useState<{ editing: TeamMember | null } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const manage = access.can("team");
   const data = team.data;
 
@@ -150,11 +151,16 @@ export function TeamPanel() {
                           <MenuSeparator />
                           <MenuItem
                             icon={<Trash2 size={15} />}
-                            onSelect={() => {
+                            onSelect={async () => {
                               close();
-                              if (window.confirm(`Remove ${m.name ?? m.email} from the workspace? They lose access straight away.`)) {
-                                void run(m.id, () => api.removeMember(m.id), `${m.name ?? m.email} removed`);
-                              }
+                              const who = m.name ?? m.email;
+                              const ok = await confirm({
+                                title: `Remove ${who}?`,
+                                body: `${who} loses access to this workspace straight away. Their changes and the change log stay, and you can invite them again later.`,
+                                confirmLabel: "Remove",
+                                danger: true,
+                              });
+                              if (ok) void run(m.id, () => api.removeMember(m.id), `${who} removed`);
                             }}
                           >
                             <span className="text-neg">Remove from workspace</span>
@@ -195,7 +201,14 @@ export function TeamPanel() {
                     <Button variant="ghost" size="sm" icon={<RefreshCw size={14} />} loading={busy === i.id} onClick={() => void run(i.id, () => api.resendInvite(i.id), i.expired ? "Invite renewed and resent" : "Invite resent")}>
                       {i.expired ? "Renew" : "Resend"}
                     </Button>
-                    <IconButton label={`Cancel invite for ${i.email}`} size={32} onClick={() => void run(i.id, () => api.revokeInvite(i.id), "Invite cancelled")}>
+                    <IconButton
+                      label={`Cancel invite for ${i.email}`}
+                      size={32}
+                      onClick={async () => {
+                        const ok = await confirm({ title: `Cancel the invite for ${i.email}?`, body: "The link stops working. You can send a new invite later.", confirmLabel: "Cancel invite", cancelLabel: "Keep it", danger: true });
+                        if (ok) void run(i.id, () => api.revokeInvite(i.id), "Invite cancelled");
+                      }}
+                    >
                       <X size={15} />
                     </IconButton>
                   </span>
@@ -206,6 +219,7 @@ export function TeamPanel() {
         </Card>
       )}
 
+      {confirmDialog}
       <InviteDialog open={dialog !== null} team={data} editing={dialog?.editing ?? null} onClose={() => setDialog(null)} onDone={() => void team.refetch()} />
     </div>
   );

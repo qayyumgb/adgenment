@@ -19,4 +19,5 @@ export {
 export { KpiCard, Sparkline } from "./KpiCard";
 export { Menu, MenuItem, MenuLabel, MenuSeparator } from "./Menu";
 export { Dialog, Drawer } from "./Overlays";
+export { useConfirm, type ConfirmOptions } from "./Confirm";
 export { AiMark, AiNote, AiSuggestion, type SuggestionKind, type SuggestionState } from "./Ai";

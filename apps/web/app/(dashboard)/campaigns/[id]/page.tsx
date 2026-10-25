@@ -13,7 +13,7 @@ import { cn } from "@/lib/cn";
 import { fmtMoney } from "@/lib/money";
 import { PageBody, PageHeader, PageTabs } from "@/components/app/shell/PageHeader";
 import { useClientScope } from "@/components/app/shell/ClientContext";
-import { Button, ButtonLink, Card, EmptyState, IconButton, Menu, PlatformBadge, Skeleton, StatusPill, PLATFORM_META, type PlatformKey } from "@/components/app/ui";
+import { Button, ButtonLink, Card, EmptyState, IconButton, Menu, PlatformBadge, Skeleton, StatusPill, useConfirm, PLATFORM_META, type PlatformKey } from "@/components/app/ui";
 import { useCampaignStructure } from "@/components/app/campaign/structure";
 import { AdSetsTab, AdsTab } from "@/components/app/campaign/StructureViews";
 import { objectiveLabel } from "@/components/app/campaigns/CampaignsGrid";
@@ -64,6 +64,7 @@ export default function CampaignDetailPage() {
   const mutations = useCampaignMutations(refetch);
   const structure = useCampaignStructure(id, () => void campaignQ.refetch());
   const [duplicateOpen, setDuplicateOpen] = useState(false);
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   const c = campaignQ.data;
   const rows = metricsQ.data;
@@ -134,10 +135,15 @@ export default function CampaignDetailPage() {
         : undefined;
 
   const remove = async () => {
-    const warning = live
-      ? `Delete "${c.name}"?\n\nThis deletes the campaign ON META too — its ad set and ad stop delivering immediately — along with its metrics here. This cannot be undone.`
-      : `Delete "${c.name}"? This removes its metrics and creative links. This cannot be undone.`;
-    if (!window.confirm(warning)) return;
+    const ok = await confirm({
+      title: `Delete “${c.name}”?`,
+      body: live
+        ? "This deletes the campaign on Meta too: its ad sets and ads stop delivering straight away. Its results here are removed as well. This can't be undone."
+        : "This removes the campaign with its results and creative links. This can't be undone.",
+      confirmLabel: live ? "Delete here and on Meta" : "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteCampaign(c.id);
       toast.success(live ? "Campaign deleted here and on Meta" : "Campaign deleted");
@@ -278,6 +284,7 @@ export default function CampaignDetailPage() {
       </PageBody>
 
       <DuplicateDialog campaign={c} open={duplicateOpen} onClose={() => setDuplicateOpen(false)} />
+      {confirmDialog}
     </>
   );
 }

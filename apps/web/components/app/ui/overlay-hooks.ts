@@ -2,20 +2,28 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 
-/** Calls `onEscape` when Escape is pressed while `active`. */
+// Open overlays, newest last: Escape closes only the top one (a confirm over a dialog).
+const escapeStack: object[] = [];
+
+/** Calls `onEscape` when Escape is pressed while `active` and this is the topmost overlay. */
 export function useEscape(active: boolean, onEscape: () => void) {
   const cb = useRef(onEscape);
   cb.current = onEscape;
   useEffect(() => {
     if (!active) return;
+    const me = {};
+    escapeStack.push(me);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && escapeStack[escapeStack.length - 1] === me) {
         e.stopPropagation();
         cb.current();
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      escapeStack.splice(escapeStack.indexOf(me), 1);
+    };
   }, [active]);
 }
 
