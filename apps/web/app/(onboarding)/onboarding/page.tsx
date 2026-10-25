@@ -119,7 +119,7 @@ export default function OnboardingPage() {
   if (checking) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        <Loader2 className="h-6 w-6 animate-spin text-brand" />
       </div>
     );
   }
@@ -128,10 +128,10 @@ export default function OnboardingPage() {
     <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-6 py-10">
       {/* Brand */}
       <div className="mb-8 flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl [background:var(--grad)] text-white shadow-md">
           <Sparkles className="h-4 w-4" strokeWidth={2.5} />
         </div>
-        <span className="text-base font-bold tracking-tight text-slate-900">
+        <span className="text-base font-bold tracking-tight text-ink">
           Advertix
         </span>
       </div>
@@ -149,10 +149,10 @@ export default function OnboardingPage() {
                   className={clsx(
                     "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition",
                     done
-                      ? "bg-primary text-white"
+                      ? "bg-brand text-white"
                       : current
-                        ? "bg-primary/15 text-primary ring-2 ring-primary"
-                        : "bg-slate-100 text-slate-400"
+                        ? "bg-brand-soft text-brand ring-2 ring-brand"
+                        : "bg-surface-2 text-ink-3"
                   )}
                 >
                   {done ? <Check className="h-3.5 w-3.5" /> : n}
@@ -161,10 +161,10 @@ export default function OnboardingPage() {
                   className={clsx(
                     "hidden truncate text-xs font-semibold sm:block",
                     current
-                      ? "text-slate-900"
+                      ? "text-ink"
                       : done
-                        ? "text-slate-600"
-                        : "text-slate-400"
+                        ? "text-ink-2"
+                        : "text-ink-3"
                   )}
                 >
                   {label}
@@ -173,7 +173,7 @@ export default function OnboardingPage() {
                   <div
                     className={clsx(
                       "h-px flex-1 transition",
-                      done ? "bg-primary" : "bg-slate-200"
+                      done ? "bg-brand" : "bg-line-2"
                     )}
                   />
                 )}
@@ -184,7 +184,7 @@ export default function OnboardingPage() {
       </div>
 
       {/* Card */}
-      <div className="flex-1 rounded-2xl border border-slate-200/70 bg-white p-8 shadow-card">
+      <div className="flex-1 rounded-2xl border border-line bg-surface p-8 shadow-card">
         {step === 1 && (
           <StepCard
             icon={Building2}
@@ -198,7 +198,7 @@ export default function OnboardingPage() {
               onChange={(e) => setWorkspaceName(e.target.value)}
               placeholder="Acme Inc."
               maxLength={64}
-              className="h-12 w-full rounded-xl border-2 border-slate-200 px-4 text-base font-medium text-slate-900 transition focus:border-primary focus:outline-none"
+              className="h-12 w-full rounded-xl border-2 border-line px-4 text-base font-medium text-ink transition focus:border-brand focus:outline-none"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && canAdvance) setStep(2);
               }}
@@ -221,8 +221,8 @@ export default function OnboardingPage() {
                   className={clsx(
                     "rounded-xl border-2 px-3 py-3 text-left text-sm font-semibold transition",
                     industry === opt
-                      ? "border-primary bg-primary/5 text-primary"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      ? "border-brand bg-brand-soft text-brand"
+                      : "border-line bg-surface text-ink-2 hover:border-line-2"
                   )}
                 >
                   {opt}
@@ -247,18 +247,18 @@ export default function OnboardingPage() {
                   className={clsx(
                     "flex w-full items-center justify-between rounded-xl border-2 px-4 py-3 text-left transition",
                     companySize === opt.id
-                      ? "border-primary bg-primary/5"
-                      : "border-slate-200 bg-white hover:border-slate-300"
+                      ? "border-brand bg-brand-soft"
+                      : "border-line bg-surface hover:border-line-2"
                   )}
                 >
                   <div>
-                    <div className="text-sm font-bold text-slate-900">
+                    <div className="text-sm font-bold text-ink">
                       {opt.label}
                     </div>
-                    <div className="text-[11px] text-slate-500">{opt.sub}</div>
+                    <div className="text-[11px] text-ink-2">{opt.sub}</div>
                   </div>
                   {companySize === opt.id && (
-                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-white">
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-brand text-white">
                       <Check className="h-3 w-3" strokeWidth={3} />
                     </div>
                   )}
@@ -274,7 +274,7 @@ export default function OnboardingPage() {
             title="You're all set! 🎉"
             sub="Your Advertix workspace is ready. Review your details — you can change any of this later in Settings."
           >
-            <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+            <div className="space-y-3 rounded-xl border border-line bg-surface-2 p-4">
               <ReviewRow label="Workspace" value={workspaceName} />
               <ReviewRow label="Industry" value={industry || "—"} />
               <ReviewRow
@@ -284,7 +284,7 @@ export default function OnboardingPage() {
                 }
               />
             </div>
-            <p className="mt-4 text-xs text-slate-500">
+            <p className="mt-4 text-xs text-ink-2">
               After this, we&apos;ll drop you in your dashboard. Connect an ad
               account from Settings to start syncing campaigns.
             </p>
@@ -298,7 +298,7 @@ export default function OnboardingPage() {
           type="button"
           disabled={step === 1 || submitting}
           onClick={() => setStep((s) => Math.max(1, s - 1))}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-semibold text-ink-2 transition hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <ChevronLeft className="h-4 w-4" />
           Back
@@ -310,7 +310,7 @@ export default function OnboardingPage() {
             disabled={!canAdvance}
             onClick={() => setStep((s) => s + 1)}
             className={clsx(
-              "btn-brand",
+              "inline-flex h-10 items-center justify-center gap-2 rounded-ctl bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-hover",
               !canAdvance && "pointer-events-none opacity-50"
             )}
           >
@@ -322,7 +322,7 @@ export default function OnboardingPage() {
             type="button"
             disabled={submitting}
             onClick={finishOnboarding}
-            className="btn-brand disabled:pointer-events-none disabled:opacity-60"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-ctl bg-brand px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:pointer-events-none disabled:opacity-60"
           >
             {submitting ? (
               <>
@@ -356,14 +356,14 @@ function StepCard({
   return (
     <div>
       <div className="mb-5 flex items-start gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-md">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl [background:var(--grad)] text-white shadow-md">
           <Icon className="h-5 w-5" strokeWidth={2.25} />
         </div>
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">
+          <h1 className="text-xl font-bold tracking-tight text-ink">
             {title}
           </h1>
-          <p className="mt-0.5 text-sm text-slate-500">{sub}</p>
+          <p className="mt-0.5 text-sm text-ink-2">{sub}</p>
         </div>
       </div>
       {children}
@@ -374,10 +374,10 @@ function StepCard({
 function ReviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-ink-2">
         {label}
       </span>
-      <span className="text-sm font-bold text-slate-900">{value}</span>
+      <span className="text-sm font-bold text-ink">{value}</span>
     </div>
   );
 }

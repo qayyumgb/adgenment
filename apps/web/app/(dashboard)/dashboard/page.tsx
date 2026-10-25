@@ -15,6 +15,8 @@ import { useAccess } from "@/components/app/team/access";
 import { SpendRevenueChart, type DayPoint } from "@/components/app/overview/SpendRevenueChart";
 import { OverviewSuggestions } from "@/components/app/overview/OverviewSuggestions";
 import { ClientsPacingTable } from "@/components/app/overview/ClientsPacingTable";
+import { overviewExport } from "@/components/app/overview/export";
+import { ExportDialog } from "@/components/app/export/ExportDialog";
 
 /**
  * Overview (guide §5.1, plan A4): greeting, 5 KPI cards (last 30 days vs the
@@ -69,6 +71,7 @@ export default function OverviewPage() {
   const { user } = useUser();
   const { clientId, client, clients, hasMultiple } = useClientScope();
   const [connectOpen, setConnectOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const access = useAccess();
 
   const me = useApi((c) => c.getMe(), [], { key: "me" });
@@ -112,6 +115,8 @@ export default function OverviewPage() {
 
   const o = overview.data;
   const deltas = o ? kpiDeltas(o) : null;
+  const period = `last ${DAYS} days`;
+  const conversionsByDay = new Map((convTs.data ?? []).map((p) => [p.date, p.value]));
   const money = (n: number) => fmtMoney(n, currency, { whole: true });
   const kpiLoading = overview.loading;
   const seriesLoading = spendTs.loading || revenueTs.loading;
@@ -152,8 +157,7 @@ export default function OverviewPage() {
         summary={summary || undefined}
         actions={
           <>
-            {/* TODO(D6): report export. Visibly unavailable until then. */}
-            <Button variant="secondary" icon={<Download size={16} />} disabled title="Report export is coming soon">
+            <Button variant="secondary" icon={<Download size={16} />} onClick={() => setExportOpen(true)} disabled={noAccounts || seriesLoading} title="Download the last 30 days as CSV or Excel">
               Export report
             </Button>
             {access.can("edit") ? (
@@ -234,6 +238,15 @@ export default function OverviewPage() {
           </>
         )}
       </PageBody>
+      {exportOpen && (
+        <ExportDialog
+          open
+          onClose={() => setExportOpen(false)}
+          sub={`${scopeTitle} · ${period}${currencies.length > 1 ? ` · totals mix ${currencies.join(", ")}` : ""}`}
+          filename={`advertix-overview-${days[days.length - 1].date}`}
+          {...overviewExport({ days: days.map((d) => ({ ...d, conversions: conversionsByDay.get(d.date) ?? 0 })), overview: o ?? null, period })}
+        />
+      )}
     </>
   );
 }

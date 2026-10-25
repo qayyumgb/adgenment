@@ -7,7 +7,7 @@ import type { AdAccount, AnalyticsOverview } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { fmtMoney } from "@/lib/money";
 import { AiMark, ButtonLink, Card, PlatformBadge, type PlatformKey } from "@/components/app/ui";
-import { CTA_OPTIONS } from "@/components/campaigns/publish/metaSteps";
+import { CTA_OPTIONS } from "@/components/app/new-campaign/metaSteps";
 import { GOALS, WIZARD_PLATFORMS, forecast, hasMeta, scheduleCheck, strength, type Draft, type LaunchMode } from "./model";
 import { StepCard, fieldInput } from "./steps";
 

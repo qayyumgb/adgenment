@@ -485,6 +485,18 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-26 — Dashboard redesign A15 (Dialogs + QA)
+
+Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
+
+- **Export dialog** on Campaigns, Analytics and the Overview: CSV, or an Excel workbook with totals (one sheet per platform on Campaigns; a KPI summary on Analytics and the Overview). New dependency: `write-excel-file` (web, loaded on demand).
+- Duplicating one campaign from the grid opens the Duplicate dialog (name and budget).
+- Dark mode follows the device, with a toggle for everyone. Small grey text is darker so it passes AA contrast.
+- Old components, legacy CSS tokens and classes, and old Tailwind colours are removed. Onboarding, sign-in, the connect popup and the legal pages use the new tokens.
+- Meta connect now also requests `pages_read_engagement` (Meta App Review requires it with `ads_management`). Users get it when they next connect or renew.
+- Sidebar campaign count refreshes on navigation and after connection changes.
+- No schema change.
+
 ### 2026-10-25 — Dashboard redesign A14 (Settings) + Connections follow-up
 
 Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).

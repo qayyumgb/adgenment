@@ -94,27 +94,27 @@ export default function ConnectDonePage() {
   const error = params?.error ?? null;
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-xl">
+    <div className="flex min-h-screen items-center justify-center bg-surface-2 p-6">
+      <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 text-center shadow-xl">
         {error ? (
           <>
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-neg-soft text-neg">
               <AlertTriangle className="h-6 w-6" />
             </div>
-            <p className="text-sm font-bold text-slate-900">
+            <p className="text-sm font-bold text-ink">
               Connection failed
             </p>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-ink-2">
               {error.replace(/_/g, " ")}
             </p>
           </>
         ) : (
           <>
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-pos-soft text-pos">
               <Check className="h-6 w-6" strokeWidth={3} />
             </div>
-            <p className="text-sm font-bold text-slate-900">Connected</p>
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="text-sm font-bold text-ink">Connected</p>
+            <p className="mt-1 text-xs text-ink-2">
               {needsManualClose
                 ? "You can close this window now."
                 : "Closing this window…"}
@@ -123,7 +123,7 @@ export default function ConnectDonePage() {
         )}
 
         {needsManualClose && (
-          <a href={`/connections${query}`} className="mt-4 mr-2 inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-bold text-white no-underline shadow-sm transition hover:bg-slate-800">
+          <a href={`/connections${query}`} className="mt-4 mr-2 inline-flex items-center gap-1.5 rounded-xl bg-brand px-3.5 py-2 text-xs font-bold text-white no-underline shadow-sm transition hover:bg-brand-hover">
             Continue to Connections
           </a>
         )}
@@ -137,7 +137,7 @@ export default function ConnectDonePage() {
                 // ignore
               }
             }}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-slate-800"
+            className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-brand px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-brand-hover"
           >
             <X className="h-3.5 w-3.5" />
             Close window

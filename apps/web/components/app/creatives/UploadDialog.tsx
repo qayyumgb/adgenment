@@ -538,7 +538,7 @@ export function UploadDialog({
                 className={clsx(
                   "flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition",
                   tab === "device"
-                    ? "border-ink-3 bg-ink text-white"
+                    ? "border-brand bg-brand-soft text-brand-ink"
                     : "border-line-2 bg-surface text-ink hover:border-line-2"
                 )}
               >
@@ -551,7 +551,7 @@ export function UploadDialog({
                 className={clsx(
                   "flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition",
                   tab === "url"
-                    ? "border-ink-3 bg-ink text-white"
+                    ? "border-brand bg-brand-soft text-brand-ink"
                     : "border-line-2 bg-surface text-ink hover:border-line-2"
                 )}
               >
@@ -616,10 +616,10 @@ export function UploadDialog({
                           className={clsx(
                             "inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
                             videoMeta.orientation === "vertical"
-                              ? "bg-purple-100 text-purple-800"
+                              ? "bg-brand-soft text-brand-ink"
                               : videoMeta.orientation === "square"
                                 ? "bg-warn-soft text-warn"
-                                : "bg-sky-100 text-sky-800"
+                                : "bg-surface-3 text-ink-2"
                           )}
                         >
                           {videoMeta.orientation === "vertical"

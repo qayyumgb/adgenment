@@ -11,7 +11,7 @@ const CONTACT_EMAIL = "support@advertix.io";
 
 export default function DataDeletionPage() {
   return (
-    <main className="bg-white text-slate-900">
+    <main className="bg-white text-mk-ink">
       <Hero />
       <article className="mx-auto max-w-3xl px-6 py-12 lg:px-8">
         <Intro />
@@ -31,7 +31,7 @@ function Hero() {
     <section className="relative overflow-hidden bg-gradient-to-br from-[#0B1319] via-indigo-950 to-[#0B1319] pb-16 pt-32 sm:pt-36">
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-32 top-0 h-72 w-72 rounded-full bg-indigo-600/25 blur-3xl"
+        className="pointer-events-none absolute -left-32 top-0 h-72 w-72 rounded-full bg-mk-brand/25 blur-3xl"
       />
       <div
         aria-hidden
@@ -45,7 +45,7 @@ function Hero() {
         <h1 className="mt-4 text-4xl font-bold tracking-tight text-white sm:text-5xl">
           Delete your data
         </h1>
-        <p className="mt-3 text-sm font-medium text-slate-400">
+        <p className="mt-3 text-sm font-medium text-mk-ink3">
           How to remove your Advertix account and all associated data
         </p>
       </div>
@@ -55,7 +55,7 @@ function Hero() {
 
 function Intro() {
   return (
-    <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5 text-sm leading-relaxed text-slate-700">
+    <div className="rounded-2xl border border-mk-line2 bg-mk-soft p-5 text-sm leading-relaxed text-mk-ink2">
       <p>
         You have the right to delete your Advertix account and all data
         associated with it at any time. There are two ways to do this. Both are
@@ -73,12 +73,12 @@ function OptionA() {
       title="Option A — Delete from your account settings (recommended)"
       description="Fastest. You control the timing and confirm the action yourself."
     >
-      <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-slate-700">
+      <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-mk-ink2">
         <li>
           Sign in at{" "}
           <Link
             href="https://app.advertix.io/sign-in"
-            className="font-semibold text-indigo-600 underline hover:text-indigo-700"
+            className="font-semibold text-mk-brand underline hover:text-mk-brand-ink"
           >
             app.advertix.io/sign-in
           </Link>
@@ -115,19 +115,19 @@ function OptionB() {
       title="Option B — Email us to request deletion"
       description="Use this if you can't sign in, lost access to your account, or prefer to put it in writing."
     >
-      <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-slate-700">
+      <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-mk-ink2">
         <li>
           Send an email to{" "}
           <a
             href={`mailto:${CONTACT_EMAIL}?subject=Data%20deletion%20request`}
-            className="font-semibold text-indigo-600 underline hover:text-indigo-700"
+            className="font-semibold text-mk-brand underline hover:text-mk-brand-ink"
           >
             {CONTACT_EMAIL}
           </a>{" "}
           from the email address registered with your Advertix account
         </li>
         <li>
-          Subject line: <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">Data deletion request</code>
+          Subject line: <code className="rounded bg-mk-s2 px-1.5 py-0.5 font-mono text-xs">Data deletion request</code>
         </li>
         <li>
           Include the following in the body:
@@ -156,7 +156,7 @@ function WhatGetsDeleted() {
       title="What gets deleted"
       description="The full list of data we remove when you delete your account."
     >
-      <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-slate-700">
+      <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-mk-ink2">
         <li>Your Advertix account (email, name, profile information)</li>
         <li>Your workspace and all workspace settings</li>
         <li>
@@ -173,13 +173,13 @@ function WhatGetsDeleted() {
         <li>Any uploaded images or media</li>
         <li>Support communications and account notifications</li>
       </ul>
-      <div className="mt-4 rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
+      <div className="mt-4 rounded-xl bg-mk-warn/10 p-3 ring-1 ring-mk-warn/30">
         <div className="flex items-start gap-2">
           <AlertCircle
-            className="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
+            className="mt-0.5 h-4 w-4 shrink-0 text-mk-warn"
             strokeWidth={2.5}
           />
-          <p className="text-xs leading-relaxed text-amber-900">
+          <p className="text-xs leading-relaxed text-mk-ink">
             <strong>Important:</strong> Deleting your Advertix account does{" "}
             <strong>not</strong> delete the campaigns, ads, or data that live on
             Meta / Google / TikTok / LinkedIn directly. Those remain in your ad
@@ -199,7 +199,7 @@ function Timeframe() {
       title="Timeframe"
       description="When deletion happens and what we keep briefly for legal compliance."
     >
-      <div className="mt-3 space-y-3 text-sm leading-relaxed text-slate-700">
+      <div className="mt-3 space-y-3 text-sm leading-relaxed text-mk-ink2">
         <p>
           <strong>Immediately (Option A):</strong> Your workspace data,
           including stored ad-platform access tokens, is deleted from our
@@ -228,12 +228,12 @@ function MetaSpecific() {
       title="Deleting only your Meta (Facebook) integration"
       description="If you want to keep your Advertix account but revoke Meta access only."
     >
-      <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-slate-700">
+      <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-mk-ink2">
         <li>
           Sign in at{" "}
           <Link
             href="https://app.advertix.io/sign-in"
-            className="font-semibold text-indigo-600 underline hover:text-indigo-700"
+            className="font-semibold text-mk-brand underline hover:text-mk-brand-ink"
           >
             app.advertix.io
           </Link>
@@ -250,13 +250,13 @@ function MetaSpecific() {
           systems
         </li>
       </ol>
-      <p className="mt-3 text-sm leading-relaxed text-slate-700">
+      <p className="mt-3 text-sm leading-relaxed text-mk-ink2">
         Alternatively, you can revoke Advertix from Meta&apos;s side: go to{" "}
         <a
           href="https://www.facebook.com/settings?tab=business_tools"
           target="_blank"
           rel="noopener noreferrer"
-          className="font-semibold text-indigo-600 underline hover:text-indigo-700"
+          className="font-semibold text-mk-brand underline hover:text-mk-brand-ink"
         >
           Facebook Settings → Business Integrations
         </a>{" "}
@@ -274,17 +274,17 @@ function Contact() {
       title="Questions or help with deletion"
       description="If anything is unclear or you need help completing the deletion."
     >
-      <p className="mt-3 text-sm leading-relaxed text-slate-700">
+      <p className="mt-3 text-sm leading-relaxed text-mk-ink2">
         Email{" "}
         <a
           href={`mailto:${CONTACT_EMAIL}`}
-          className="font-semibold text-indigo-600 underline hover:text-indigo-700"
+          className="font-semibold text-mk-brand underline hover:text-mk-brand-ink"
         >
           {CONTACT_EMAIL}
         </a>{" "}
         and we&apos;ll respond within 2 business days.
       </p>
-      <p className="mt-3 text-sm leading-relaxed text-slate-700">
+      <p className="mt-3 text-sm leading-relaxed text-mk-ink2">
         Operated by Abdul Qayyum · Karachi, Pakistan
       </p>
     </Section>
@@ -305,14 +305,14 @@ function Section({
   return (
     <section className="mt-10">
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/10 to-violet-500/10 text-indigo-600 ring-1 ring-inset ring-indigo-100">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/10 to-violet-500/10 text-mk-brand ring-1 ring-inset ring-indigo-100">
           <Icon className="h-5 w-5" strokeWidth={2.25} />
         </div>
         <div className="flex-1">
-          <h2 className="text-xl font-bold tracking-tight text-slate-900">
+          <h2 className="text-xl font-bold tracking-tight text-mk-ink">
             {title}
           </h2>
-          <p className="mt-1 text-sm text-slate-600">{description}</p>
+          <p className="mt-1 text-sm text-mk-ink2">{description}</p>
         </div>
       </div>
       <div className="mt-2">{children}</div>

@@ -16,16 +16,10 @@ import { SidebarContent } from "./Sidebar";
 import { MOBILE_TABS, isActive } from "./nav";
 import { ROLE_LABEL } from "@/components/app/team/access";
 
-// Dark mode is hidden from users until every page is rebuilt on the tokens
-// (docs/DASHBOARD_REDESIGN_PLAN.md § 11, A1). Available in development.
-// TODO(A15): show to everyone.
-const SHOW_THEME_TOGGLE = process.env.NODE_ENV !== "production";
-
 const HELP_HREF = "mailto:support@advertix.io";
 
 function ThemeButton({ size = 36 }: { size?: 36 | 38 }) {
   const { resolved, toggle } = useTheme();
-  if (!SHOW_THEME_TOGGLE) return null;
   return (
     <IconButton label={resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"} size={size} onClick={toggle}>
       {resolved === "dark" ? <Moon size={18} /> : <Sun size={18} />}

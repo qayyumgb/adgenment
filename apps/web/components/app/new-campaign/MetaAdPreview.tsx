@@ -13,7 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { VideoThumbnailPlayer } from "@/components/ui/VideoThumbnailPlayer";
+import { VideoThumbnailPlayer } from "@/components/app/creatives/VideoThumbnailPlayer";
 
 /**
  * Renders a faithful mock of how an ad will look in Facebook Feed and

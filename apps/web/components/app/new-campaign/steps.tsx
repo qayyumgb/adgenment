@@ -8,7 +8,7 @@ import type { AdAccount, Platform } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { currencySymbol } from "@/lib/money";
 import { ButtonLink, Card, PlatformBadge, Segmented, Toggle, type PlatformKey } from "@/components/app/ui";
-import { Step1Page, Step3Audience, Step5Creative } from "@/components/campaigns/publish/metaSteps";
+import { Step1Page, Step3Audience, Step5Creative } from "@/components/app/new-campaign/metaSteps";
 import { GOALS, WIZARD_PLATFORMS, hasMeta, scheduleCheck, type Draft } from "./model";
 
 export const fieldInput =

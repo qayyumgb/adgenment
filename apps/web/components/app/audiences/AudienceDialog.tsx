@@ -16,7 +16,7 @@ import {
   type SelectedAudience,
   type SelectedCity,
   type SelectedInterest,
-} from "@/components/targeting/pickers";
+} from "@/components/app/targeting/pickers";
 import { AUDIENCE_TEMPLATES } from "./templates";
 
 /**

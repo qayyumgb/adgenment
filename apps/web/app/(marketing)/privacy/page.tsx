@@ -25,7 +25,7 @@ export default function PrivacyPage() {
           <p>
             This Privacy Policy describes how we collect, use, store, and
             protect your information when you use the Advertix service at{" "}
-            <Link href="/" className="text-primary underline">
+            <Link href="/" className="text-mk-brand underline">
               advertix.io
             </Link>{" "}
             (the &ldquo;Service&rdquo;).
@@ -33,7 +33,7 @@ export default function PrivacyPage() {
         </Section>
 
         <Section title="2. Information we collect">
-          <h3 className="mt-4 text-base font-semibold text-slate-900">
+          <h3 className="mt-4 text-base font-semibold text-mk-ink">
             2.1 Account information
           </h3>
           <p>
@@ -43,7 +43,7 @@ export default function PrivacyPage() {
             handles authentication and password storage.
           </p>
 
-          <h3 className="mt-4 text-base font-semibold text-slate-900">
+          <h3 className="mt-4 text-base font-semibold text-mk-ink">
             2.2 Workspace information
           </h3>
           <p>
@@ -51,7 +51,7 @@ export default function PrivacyPage() {
             settings you provide during onboarding and in account settings.
           </p>
 
-          <h3 className="mt-4 text-base font-semibold text-slate-900">
+          <h3 className="mt-4 text-base font-semibold text-mk-ink">
             2.3 Ad platform integrations
           </h3>
           <p>
@@ -59,7 +59,7 @@ export default function PrivacyPage() {
             LinkedIn, you authorize Advertix to access your data on those
             platforms via their official OAuth flows. We receive and store:
           </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-700">
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-mk-ink2">
             <li>
               An encrypted access token (and refresh token where applicable),
               encrypted using AES-256-CBC before storage
@@ -83,7 +83,7 @@ export default function PrivacyPage() {
             data. We do not share these tokens with any third party.
           </p>
 
-          <h3 className="mt-4 text-base font-semibold text-slate-900">
+          <h3 className="mt-4 text-base font-semibold text-mk-ink">
             2.4 Usage data
           </h3>
           <p>
@@ -92,7 +92,7 @@ export default function PrivacyPage() {
             diagnose issues.
           </p>
 
-          <h3 className="mt-4 text-base font-semibold text-slate-900">
+          <h3 className="mt-4 text-base font-semibold text-mk-ink">
             2.5 Cookies
           </h3>
           <p>
@@ -103,7 +103,7 @@ export default function PrivacyPage() {
         </Section>
 
         <Section title="3. How we use your information">
-          <ul className="list-disc space-y-1 pl-5 text-slate-700">
+          <ul className="list-disc space-y-1 pl-5 text-mk-ink2">
             <li>To provide, maintain, and improve the Advertix Service</li>
             <li>
               To execute campaign management actions you explicitly request
@@ -122,7 +122,7 @@ export default function PrivacyPage() {
 
         <Section title="4. Third-party services">
           <p>The Advertix Service uses these third-party processors:</p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-700">
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-mk-ink2">
             <li>
               <strong>Clerk</strong> &mdash; authentication and user management
             </li>
@@ -153,7 +153,7 @@ export default function PrivacyPage() {
             We do not sell or rent your personal information. We share data
             only:
           </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-700">
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-mk-ink2">
             <li>
               With the third-party processors listed in Section 4, solely to
               operate the Service
@@ -172,7 +172,7 @@ export default function PrivacyPage() {
 
         <Section title="6. Data security">
           <p>We protect your data with the following measures:</p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-700">
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-mk-ink2">
             <li>
               Ad platform access tokens are encrypted at rest using AES-256-CBC
               with a SHA-256-derived 32-byte key. Tokens are never logged.
@@ -217,7 +217,7 @@ export default function PrivacyPage() {
             or another jurisdiction with similar protections, you have the
             following rights with respect to your personal data:
           </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-700">
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-mk-ink2">
             <li>
               <strong>Access</strong> &mdash; request a copy of the personal
               data we hold about you
@@ -251,7 +251,7 @@ export default function PrivacyPage() {
             To exercise any of these rights, email us at{" "}
             <a
               href={`mailto:${CONTACT_EMAIL}`}
-              className="text-primary underline"
+              className="text-mk-brand underline"
             >
               {CONTACT_EMAIL}
             </a>
@@ -293,7 +293,7 @@ export default function PrivacyPage() {
             Email:{" "}
             <a
               href={`mailto:${CONTACT_EMAIL}`}
-              className="text-primary underline"
+              className="text-mk-brand underline"
             >
               {CONTACT_EMAIL}
             </a>

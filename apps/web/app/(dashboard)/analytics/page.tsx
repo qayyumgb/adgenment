@@ -9,7 +9,8 @@ import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
 import { useClientScope } from "@/components/app/shell/ClientContext";
 import { Button, ButtonLink, EmptyState, KpiCard, Menu, MenuItem, PlatformBadge, Segmented, PLATFORM_META, type PlatformKey } from "@/components/app/ui";
 import { dayLabel } from "@/components/app/campaign/metrics";
-import { downloadCsv } from "@/components/app/campaigns/csv";
+import { ExportDialog } from "@/components/app/export/ExportDialog";
+import { analyticsExport } from "@/components/app/analytics/export";
 import { TrendChart, type TrendPoint } from "@/components/app/analytics/TrendChart";
 import { SharePanel, type ShareEntry } from "@/components/app/analytics/SharePanel";
 import { Funnel } from "@/components/app/analytics/Funnel";
@@ -60,6 +61,7 @@ export default function AnalyticsPage() {
   const [compare, setCompare] = useState(true);
   const [shareBy, setShareBy] = useState<"platform" | "client">("platform");
   const [by, setBy] = useState<BreakdownBy>("platform");
+  const [exportOpen, setExportOpen] = useState(false);
 
   const accounts = useApi((c) => c.getAdAccounts(), [], { key: "ad-accounts" });
   const overview = useApi((c) => c.getAnalyticsOverview(range, undefined, clientId), [range, clientId], { key: "analytics-overview" });
@@ -149,24 +151,8 @@ export default function AnalyticsPage() {
   const chartPrev = prev && hadPrev ? totalOf(metric, prev) : null;
   const sumWord = metric === "roas" || metric === "cpa" ? "overall" : "total";
 
-  const exportCsv = () => {
-    const header = [effectiveBy === "platform" ? "Platform" : effectiveBy === "client" ? "Client" : "Campaign", "Spend", "Revenue", "ROAS", "Conversions", "CPA", "CTR %", "CPM", "Impressions", "Clicks"];
-    const data = [...rows]
-      .sort((a, b) => b.spend - a.spend)
-      .map((r) => [
-        r.name,
-        r.spend.toFixed(2),
-        r.revenue.toFixed(2),
-        r.spend > 0 && r.revenue > 0 ? (r.revenue / r.spend).toFixed(2) : "",
-        r.conversions,
-        r.conversions > 0 ? (r.spend / r.conversions).toFixed(2) : "",
-        r.impressions > 0 ? ((r.clicks / r.impressions) * 100).toFixed(2) : "",
-        r.impressions > 0 ? ((r.spend / r.impressions) * 1000).toFixed(2) : "",
-        r.impressions,
-        r.clicks,
-      ]);
-    downloadCsv(`advertix-analytics-${effectiveBy}-${range}d-${days[days.length - 1]}.csv`, header, data);
-  };
+  const byLabel = effectiveBy === "platform" ? "Platform" : effectiveBy === "client" ? "Client" : "Campaign";
+  const exportData = exportOpen ? analyticsExport({ byLabel, rows, period, current: cur, previous: hadPrev ? prev : null }) : null;
 
   return (
     <>
@@ -186,8 +172,8 @@ export default function AnalyticsPage() {
                 { value: 90, label: "90 days" },
               ]}
             />
-            <Button variant="secondary" icon={<Download size={16} />} onClick={exportCsv} disabled={rowsLoading || rows.length === 0} title="Download the breakdown below as CSV">
-              Export CSV
+            <Button variant="secondary" icon={<Download size={16} />} onClick={() => setExportOpen(true)} disabled={rowsLoading || rows.length === 0} title="Download the breakdown below as CSV or Excel">
+              Export
             </Button>
             {/* TODO(Track C): scheduled email reports (D5). */}
             <Button variant="secondary" icon={<CalendarClock size={16} />} disabled title="Scheduled reports are coming soon">
@@ -294,6 +280,15 @@ export default function AnalyticsPage() {
           </>
         )}
       </PageBody>
+      {exportData && (
+        <ExportDialog
+          open={exportOpen}
+          onClose={() => setExportOpen(false)}
+          sub={`${rows.length} ${byLabel.toLowerCase()}${rows.length === 1 ? "" : "s"} · ${period}${currencies.length > 1 ? ` · totals mix ${currencies.join(", ")}` : ""}`}
+          filename={`advertix-analytics-${effectiveBy}-${range}d-${days[days.length - 1]}`}
+          {...exportData}
+        />
+      )}
     </>
   );
 }

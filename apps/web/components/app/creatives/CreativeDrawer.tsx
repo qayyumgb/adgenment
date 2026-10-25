@@ -6,7 +6,7 @@ import { Archive, ArchiveRestore, Download, ExternalLink, MoreHorizontal, Pencil
 import { useApiClient, type CreativeBoardItem } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
 import { AiNote, Button, ButtonLink, Drawer, IconButton, Menu, MenuItem, MenuSeparator, Pill, PlatformBadge, Toggle, type PlatformKey } from "@/components/app/ui";
-import { VideoThumbnailPlayer } from "@/components/ui/VideoThumbnailPlayer";
+import { VideoThumbnailPlayer } from "@/components/app/creatives/VideoThumbnailPlayer";
 import { CreativeArt } from "./CreativeCard";
 import { useAccess } from "@/components/app/team/access";
 import { STATUS_TONE, creativeRead, ctrOf, formatLine, roasOf } from "./board";

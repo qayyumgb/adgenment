@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import { Eye, Heart, MousePointerClick, ShoppingBag, UserPlus } from "lucide-react";
 import type { AnalyticsOverview, Platform } from "@/lib/api";
-import { initialState, isCreativeReady, validateAudience, type WizardState } from "@/components/campaigns/publish/metaSteps";
+import { initialState, isCreativeReady, validateAudience, type WizardState } from "@/components/app/new-campaign/metaSteps";
 
 /** What the campaign is for. `value` is the string stored on the Campaign row (unchanged from the old create flow). */
 export type GoalId = "traffic" | "leads" | "conversions" | "awareness" | "video";

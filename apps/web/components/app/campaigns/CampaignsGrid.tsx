@@ -71,6 +71,7 @@ export function CampaignsGrid({
   mutations,
   suggestions,
   onEditBudgets,
+  onDuplicate,
 }: {
   rows: CampaignRow[];
   loading: boolean;
@@ -80,6 +81,8 @@ export function CampaignsGrid({
   mutations: ReturnType<typeof useCampaignMutations>;
   suggestions: ReturnType<typeof useSuggestions>;
   onEditBudgets: (campaigns: Campaign[]) => void;
+  /** One campaign: the D7 dialog (name and budget for the copy). */
+  onDuplicate: (campaign: Campaign) => void;
 }) {
   const router = useAppRouter();
   // Read-only roles (B6): no toggles, Apply, menus or selection.
@@ -287,8 +290,8 @@ export function CampaignsGrid({
                   Not now (7 days)
                 </MenuItem>
               )}
-              <MenuItem icon={<Copy size={15} />} onSelect={() => (close(), void mutations.duplicateMany([r.c]))}>
-                Duplicate as draft
+              <MenuItem icon={<Copy size={15} />} onSelect={() => (close(), onDuplicate(r.c))}>
+                Duplicate…
               </MenuItem>
               <MenuSeparator />
               <button
@@ -413,7 +416,7 @@ export function CampaignsGrid({
               Resume{resumable && resumable !== cs.length ? ` ${resumable}` : ""}
             </BulkButton>
             <BulkButton onClick={() => onEditBudgets(cs)}>Edit budgets</BulkButton>
-            <BulkButton onClick={() => void mutations.duplicateMany(cs).then(clear)}>Duplicate</BulkButton>
+            <BulkButton onClick={() => (cs.length === 1 ? (onDuplicate(cs[0]), clear()) : void mutations.duplicateMany(cs).then(clear))}>Duplicate</BulkButton>
           </>
         );
       }}

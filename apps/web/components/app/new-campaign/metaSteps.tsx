@@ -44,7 +44,7 @@ import {
   type SelectedCity,
   type SelectedInterest,
   type SelectedAudience,
-} from "@/components/targeting/pickers";
+} from "@/components/app/targeting/pickers";
 
 /* ──────────────────────────────────────────────────────────────────── */
 /* Types                                                                */
@@ -425,7 +425,7 @@ export function Step1Page({
                 className={clsx(
                   "flex items-center gap-3 rounded-xl border-2 p-3 text-left transition",
                   selected
-                    ? "border-brand bg-brand-soft shadow-glow"
+                    ? "border-brand bg-brand-soft shadow-[0_0_0_3px_rgb(var(--c-brand-soft))]"
                     : "border-line-2 bg-surface hover:border-line-2"
                 )}
               >
@@ -920,7 +920,7 @@ export function Step5Creative({
                     className={clsx(
                       "group relative overflow-hidden rounded-xl border-2 text-left transition",
                       selected
-                        ? "border-brand shadow-glow"
+                        ? "border-brand shadow-[0_0_0_3px_rgb(var(--c-brand-soft))]"
                         : "border-line-2 hover:border-line-2"
                     )}
                   >
@@ -1490,7 +1490,7 @@ function PlacementPicker({
               className={clsx(
                 "rounded-xl border-2 p-3 text-left transition",
                 selected
-                  ? "border-brand bg-brand-soft shadow-glow"
+                  ? "border-brand bg-brand-soft shadow-[0_0_0_3px_rgb(var(--c-brand-soft))]"
                   : "border-line-2 bg-surface hover:border-line-2"
               )}
             >

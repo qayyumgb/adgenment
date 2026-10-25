@@ -14,7 +14,7 @@ export default function TermsPage() {
   return (
     <LegalLayout title="Terms of" accent="Service" effectiveDate={EFFECTIVE_DATE} current="/terms">
       <div className="mk-legal-body pb-8">
-        <p className="text-sm leading-relaxed text-slate-700">
+        <p className="text-sm leading-relaxed text-mk-ink2">
           These Terms of Service (&ldquo;Terms&rdquo;) form a binding agreement
           between you and Advertix (operated by Abdul Qayyum,
           &ldquo;Advertix&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;) governing
@@ -52,7 +52,7 @@ export default function TermsPage() {
             account. Notify us immediately at{" "}
             <a
               href={`mailto:${CONTACT_EMAIL}`}
-              className="text-primary underline"
+              className="text-mk-brand underline"
             >
               {CONTACT_EMAIL}
             </a>{" "}
@@ -78,7 +78,7 @@ export default function TermsPage() {
 
         <Section title="4. Acceptable use">
           <p>You agree not to use the Service to:</p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-slate-700">
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-mk-ink2">
             <li>Violate any applicable law or regulation</li>
             <li>
               Run advertising campaigns that promote illegal products or
@@ -249,7 +249,7 @@ export default function TermsPage() {
         <Section title="14. Miscellaneous">
           <p>
             These Terms, together with our{" "}
-            <Link href="/privacy" className="text-primary underline">
+            <Link href="/privacy" className="text-mk-brand underline">
               Privacy Policy
             </Link>
             , constitute the entire agreement between you and Advertix
@@ -271,7 +271,7 @@ export default function TermsPage() {
             Email:{" "}
             <a
               href={`mailto:${CONTACT_EMAIL}`}
-              className="text-primary underline"
+              className="text-mk-brand underline"
             >
               {CONTACT_EMAIL}
             </a>

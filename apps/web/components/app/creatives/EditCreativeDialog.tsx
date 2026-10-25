@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 import { Upload, Copy, X, Loader2, Check, Pencil, Save } from "lucide-react";
 import { useApiClient } from "@/lib/api";
 import { Button, Dialog } from "@/components/app/ui";
-import { VideoThumbnailPlayer } from "@/components/ui/VideoThumbnailPlayer";
+import { VideoThumbnailPlayer } from "@/components/app/creatives/VideoThumbnailPlayer";
 import { CarouselCardsEditor, CarouselDetailList } from "./CarouselCardsEditor";
 import { ACCEPTED_IMAGE_TYPES, ACCEPTED_VIDEO_TYPES, MAX_IMAGE_BYTES, MAX_VIDEO_BYTES, cardId, readVideoMetadata, type CarouselCardDraft, type CreativeView as Creative, headlineToName, pickFirst } from "./media";
 

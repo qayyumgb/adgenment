@@ -1,6 +1,6 @@
 # Dashboard redesign — implementation plan
 
-**Status (2026-10-25):** **Phase 0, A1, B1, A2, A3, A4, B2, A5, B5, A6, B3, A10, A7, B4, A8, A9, B6, A11, A12, A13 and A14 done** (see [§ 11](#11-progress)). Next: A15 (dialogs + QA). A10 was done ahead of A7 (it doesn't depend on it). Pre-launch items (OAuth nonce, Clerk production) stay on their own track.
+**Status (2026-10-26):** **Phase 0, A1, B1, A2, A3, A4, B2, A5, B5, A6, B3, A10, A7, B4, A8, A9, B6, A11, A12, A13, A14 and A15 done**: tracks A and B are complete (see [§ 11](#11-progress)). Next: Track C. A10 was done ahead of A7 (it doesn't depend on it). Pre-launch items (OAuth nonce, Clerk production) stay on their own track.
 
 **Goal:** rebuild the logged-in product (`app.advertix.io`) to the new design, keep every feature that works today, and add the new agency features from the mockups. Do it in an order where no button pretends to do something it doesn't.
 
@@ -729,3 +729,33 @@ Not blocking the start, but needed before the named phase:
 
   7 checks. B1, B6, A11 and A13 (7 checks, with platform disconnect) still pass. Screenshots: each tab, dirty save, delete confirm, audit log, analyst, client viewer, dark, mobile.
 - **Later:** Slack and in-app alerts; auto-apply with guardrails, ask-first clients and rules; attribution window; logo upload; in-app billing.
+
+### A15 — Dialogs + QA ✅ (2026-10-26)
+
+- **Dialogs:** D1 (A13), D2 (A9), D3 (A8) and D4 (B6) were finished with their pages. A15 added:
+  - **D6 Export** (`components/app/export/`), on Campaigns, Analytics and the Overview (whose "Export report" was disabled until now).
+    - **CSV:** the rows as shown.
+    - **Excel workbook (decision: CSV + Excel):** built in the browser with `write-excel-file` (loaded only on download). Bold header, frozen first row, number formats, and a bold Total row. Ratios are computed from the sums; money totals are left blank when a sheet mixes currencies.
+    - **Sheets:** Campaigns has one per platform (plus "All campaigns"). Analytics has a Summary (KPIs vs the previous period) plus the breakdown. The Overview has a Summary plus Daily.
+    - "Send to Google Sheets" shows as coming soon. `components/app/campaigns/csv.ts` is gone.
+  - **D7 Duplicate:** for a single campaign, the row menu and the bulk bar now open the dialog (name and budget for the copy). Several selected campaigns are still copied as drafts in one go.
+  - **D5 Schedule report** stays visibly disabled until Track C (C4).
+- **Dark mode for everyone:** the theme follows the device (`DEFAULT_THEME = "system"`), and the top-bar toggle shows in production.
+- **Contrast:** `--c-ink-3` is #6c6980 in light (was the guide's #85829a, about 3.7:1) and #8c899f in dark. Both are at least 4.5:1 on bg, surface and surface-2.
+- **Old code removed:**
+  - `components/{ui,settings,targeting,campaigns,layout}` are gone. The pieces still in use moved into `components/app/`:
+    - `meta/MetaErrorCard` and `meta/MetaHealthStatus`, both restyled onto tokens;
+    - `new-campaign/metaSteps` and `MetaAdPreview`;
+    - `targeting/pickers`;
+    - `creatives/VideoThumbnailPlayer`.
+  - The unused legacy `Skeleton` is deleted.
+  - `globals.css` lost the legacy tokens, the component classes (glass-card, metric-card, nav-item, status-dot, btn-brand, …) and the old animations: 404 → 147 lines.
+  - `tailwind.config.ts` lost the `primary`, `dark` and `sidebar` colours, the `glow` and `card-hover` shadows, and the old keyframes.
+  - `REBUILT_ROUTES` is gone from `AppShell`, since every page renders its own header and body. Plus Jakarta was already gone.
+- **Off-dashboard pages on tokens:** onboarding, sign-in / sign-up (Clerk primary #6448f2), the OAuth `connect/done` popup, and the privacy / terms / data-deletion pages (marketing tokens). The Upload dialog's selected tab was white text on `bg-ink`, unreadable in dark mode.
+- **QA:**
+  - **Screenshots and overflow checks** at 390 / 768 / 1024 / 1440 × light / dark, with mocked API: Overview, Campaigns, Campaign detail, New campaign, Analytics, Creatives and Audiences. No horizontal overflow, theme applied everywhere.
+  - **Not re-run in this pass:** Budgets, AI Planner, Connections and Settings. The dev server was restarted mid-run. They were checked at mobile and dark in A11–A14, and nothing in A15 changes their layout beyond tokens.
+  - **Export test:** every dialog downloads CSV and Excel. Contents verified: sheets, headers, rows, totals.
+  - Type-check and lint clean.
+- **Later:** Google Sheets export (needs Google OAuth); D5 scheduled reports (C4).

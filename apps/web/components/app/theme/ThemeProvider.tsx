@@ -18,9 +18,8 @@ type ThemeCtx = {
 };
 
 const STORAGE_KEY = "advertix.theme";
-// TODO(A15): switch to "system" once every page is rebuilt on the tokens —
-// legacy pages hard-code light colours and would look broken in dark mode.
-const DEFAULT_THEME: ThemePref = "light";
+// Follows the device until someone picks light or dark (plan A15).
+const DEFAULT_THEME: ThemePref = "system";
 
 /** Inline script (render before content) so the first paint has the right theme. */
 export const THEME_SCRIPT = `try{var t=localStorage.getItem('${STORAGE_KEY}')||'${DEFAULT_THEME}';var d=t==='dark'||(t==='system'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d)}catch(e){}`;

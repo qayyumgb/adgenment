@@ -7,7 +7,7 @@ import { useAccess } from "@/components/app/team/access";
 import toast from "react-hot-toast";
 import { Download, Plus, RefreshCw } from "lucide-react";
 import { ConnectDialog } from "@/components/app/connections/ConnectDialog";
-import MetaErrorCard from "@/components/ui/MetaErrorCard";
+import MetaErrorCard from "@/components/app/meta/MetaErrorCard";
 import { useApi } from "@/hooks/useApi";
 import { useApiClient, type Campaign, type CampaignStatus, type Platform } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
@@ -19,8 +19,9 @@ import { useSuggestions } from "@/components/app/suggestions/useSuggestions";
 import { CampaignsGrid, type CampaignRow } from "@/components/app/campaigns/CampaignsGrid";
 import { BulkBudgetDialog } from "@/components/app/campaigns/BulkBudgetDialog";
 import { useCampaignMutations } from "@/components/app/campaigns/useCampaignMutations";
-import { downloadCsv } from "@/components/app/campaigns/csv";
-import { objectiveLabel } from "@/components/app/campaigns/CampaignsGrid";
+import { campaignsExport } from "@/components/app/campaigns/export";
+import { ExportDialog } from "@/components/app/export/ExportDialog";
+import { DuplicateDialog } from "@/components/app/campaign/DuplicateDialog";
 
 /**
  * Campaigns (guide §5.2, plan A5): KPI strip, AI banner with "Only show
@@ -72,6 +73,8 @@ export default function CampaignsPage() {
   const [onlySuggested, setOnlySuggested] = useState(false);
   const [budgetsFor, setBudgetsFor] = useState<Campaign[] | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [duplicateFor, setDuplicateFor] = useState<Campaign | null>(null);
 
   const q = useApi((c) => c.getCampaigns({ limit: LIMIT, days: DAYS, clientId: clientId ?? undefined }), [clientId], { key: "campaigns-grid" });
   const refetch = useCallback(() => void q.refetch(), [q]);
@@ -186,31 +189,7 @@ export default function CampaignsPage() {
         .filter(Boolean)
         .join(" · ");
 
-  const exportCsv = () => {
-    const header = ["Campaign", "Client", "Platform", "Status", "Objective", "Budget", "Budget type", "Currency", `Spend (${DAYS}d)`, `Revenue (${DAYS}d)`, "ROAS", "Conversions", "Clicks", "Impressions", "CTR %", "Reach", "Advertix suggests"];
-    const data = [...rows]
-      .sort((a, b) => b.spend - a.spend)
-      .map((r) => [
-        r.c.name,
-        clientName(r.c.adAccount?.clientId) ?? "",
-        r.c.platform,
-        r.c.status,
-        objectiveLabel(r.c.objective),
-        Number(r.c.budget) || 0,
-        r.c.budgetType,
-        r.currency ?? "",
-        r.spend.toFixed(2),
-        r.revenue.toFixed(2),
-        r.spend > 0 && r.revenue > 0 ? (r.revenue / r.spend).toFixed(2) : "",
-        r.conversions,
-        r.clicks,
-        r.impressions,
-        r.impressions > 0 ? ((r.clicks / r.impressions) * 100).toFixed(2) : "",
-        r.c.reach ?? 0,
-        r.suggestion?.status === "OPEN" ? r.suggestion.title : "",
-      ]);
-    downloadCsv(`advertix-campaigns-${new Date().toISOString().slice(0, 10)}.csv`, header, data);
-  };
+  const exportData = exportOpen ? campaignsExport(rows, DAYS, clientName) : null;
 
   return (
     <>
@@ -223,8 +202,8 @@ export default function CampaignsPage() {
             <Button variant="secondary" icon={<RefreshCw size={16} className={syncStage ? "animate-spin motion-reduce:animate-none" : undefined} />} onClick={handleSync} disabled={!!syncStage || !access.can("connect")} title={access.can("connect") ? "Pull the latest campaigns and metrics from Meta" : access.why("connect")}>
               {syncStage ?? "Sync now"}
             </Button>
-            <Button variant="secondary" icon={<Download size={16} />} onClick={exportCsv} disabled={loading || rows.length === 0} title="Download the rows below as CSV">
-              Export CSV
+            <Button variant="secondary" icon={<Download size={16} />} onClick={() => setExportOpen(true)} disabled={loading || rows.length === 0} title="Download the rows below as CSV or Excel">
+              Export
             </Button>
             <Button variant="primary" icon={<Plus size={16} strokeWidth={2.5} />} onClick={() => router.push("/campaigns/new")} disabled={!access.can("edit")} title={access.can("edit") ? undefined : access.why("edit")}>
               New campaign
@@ -280,6 +259,7 @@ export default function CampaignsPage() {
           mutations={mutations}
           suggestions={suggestions}
           onEditBudgets={setBudgetsFor}
+          onDuplicate={setDuplicateFor}
           footerLabel={`Total · ${rows.length} of ${all.length}`}
           filters={
             <>
@@ -340,6 +320,16 @@ export default function CampaignsPage() {
 
       <BulkBudgetDialog open={budgetsFor !== null} campaigns={budgetsFor ?? []} onClose={() => setBudgetsFor(null)} onSave={mutations.setBudgets} />
       <ConnectDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
+      {duplicateFor && <DuplicateDialog campaign={duplicateFor} open onClose={() => setDuplicateFor(null)} />}
+      {exportData && (
+        <ExportDialog
+          open={exportOpen}
+          onClose={() => setExportOpen(false)}
+          sub={`${rows.length} campaign${rows.length === 1 ? "" : "s"} · current filters · last ${DAYS} days`}
+          filename={`advertix-campaigns-${new Date().toISOString().slice(0, 10)}`}
+          {...exportData}
+        />
+      )}
     </>
   );
 }

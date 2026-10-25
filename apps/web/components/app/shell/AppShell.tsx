@@ -1,8 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
 import { Suspense, type ReactNode } from "react";
-import { cn } from "@/lib/cn";
 import { THEME_SCRIPT, ThemeProvider } from "@/components/app/theme/ThemeProvider";
 import { ClientProvider } from "./ClientContext";
 import { NavigationProgress } from "./NavigationProgress";
@@ -10,23 +8,11 @@ import { SidebarContent } from "./Sidebar";
 import { MobileAppBar, TopBar } from "./TopBar";
 
 /**
- * Pages rebuilt on the new design render their own <PageHeader>/<PageBody>.
- * Everything else still expects the old padded content area, so the shell
- * keeps providing it until each page is migrated (plan A4–A14).
- * TODO(A15): remove once every page is in this list.
- */
-const REBUILT_ROUTES: (string | RegExp)[] = [/^\/campaigns\/[^/]+$/, "/dashboard", "/campaigns", "/analytics", "/creatives", "/audiences", "/budgets", "/ai-planner", "/connections", "/settings", "/dev/analytics", "/dev/creatives", "/dev/audiences", "/dev/budgets", "/dev/planner", "/dev/connections", "/dev/settings", "/dev/team", "/dev/new-campaign", "/dev/shell", "/dev/grid", "/dev/overview", "/dev/campaigns", /^\/dev\/campaign\/[^/]+$/];
-
-/**
  * App shell (guide §3): 256px sticky sidebar + content from 900px up; below
  * that the app bar, drawer and bottom tab bar. The top bar is sticky; page
  * headers stick under it (PageHeader).
  */
 export function AppShell({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
-  // Exact paths, or patterns for dynamic routes (/campaigns/[id]).
-  const rebuilt = REBUILT_ROUTES.some((r) => (typeof r === "string" ? r === pathname : r.test(pathname)));
-
   return (
     <ThemeProvider>
       {/* First paint gets the stored theme (no light/dark flash). */}
@@ -49,9 +35,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <MobileAppBar />
               </div>
             </div>
-            <main className={cn("flex-1 pb-20 min-[900px]:pb-0", !rebuilt && "p-6 pb-24 lg:p-8 min-[900px]:pb-8")}>
-              {rebuilt ? children : <div className="mx-auto w-full max-w-screen-2xl">{children}</div>}
-            </main>
+            {/* Pages render their own <PageHeader>/<PageBody>. */}
+            <main className="flex-1 pb-20 min-[900px]:pb-0">{children}</main>
           </div>
         </div>
       </ClientProvider>
