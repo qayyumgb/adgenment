@@ -60,6 +60,8 @@ declare global {
 /** The signed-in member's access in their workspace (cached on the request). Null when they have no workspace. */
 export async function getAccess(req: Request): Promise<Access | null> {
   if (req.access !== undefined) return req.access;
+  // Without a user, `userId: undefined` would match any member.
+  if (!req.dbUserId) return null;
   const m = await prisma.workspaceMember.findFirst({
     where: { userId: req.dbUserId! },
     include: { workspace: { select: { id: true, plan: true } }, clientAccess: { select: { clientId: true } } },
@@ -103,6 +105,12 @@ export function capabilityFor(method: string, path: string): Capability | null {
   if (path.startsWith("/workspace")) {
     if (read) return "view";
     return /^\/workspace\/(invites|members)/.test(path) || path === "/workspace/invite" ? "team" : "workspace";
+  }
+  // Approvals (C1): everyone sees them (the route narrows it); the requester can
+  // withdraw theirs; deciding and the rules are the owner's.
+  if (path.startsWith("/approvals")) {
+    if (read) return "view";
+    return /^\/approvals\/[^/]+\/cancel$/.test(path) ? "edit" : "workspace";
   }
   // Starting OAuth attaches accounts to the workspace, so it needs connect even though it is a GET.
   if (/^\/(meta|google|tiktok|linkedin)\/oauth-url$/.test(path)) return "connect";

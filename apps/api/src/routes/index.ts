@@ -21,12 +21,16 @@ import plansRouter from "./plans";
 import changeLogRouter from "./change-log";
 import invitesRouter from "./invites";
 import connectionsRouter from "./connections";
+import approvalsRouter from "./approvals";
 import { roleGuard } from "../lib/access";
+import { approvalGate, registerApprovalReplay } from "../services/approvals.service";
 
 const router = Router();
 
 // Team roles (B6): every request with a token is checked here first.
 router.use(roleGuard);
+// Approvals (C1): a Media buyer's spend change may wait for an owner instead of running.
+router.use(approvalGate);
 
 router.use("/auth", authRouter);
 router.use("/campaigns", campaignRouter);
@@ -50,5 +54,9 @@ router.use("/suggestions", suggestionsRouter);
 router.use("/plans", plansRouter);
 router.use("/change-log", changeLogRouter);
 router.use("/invites", invitesRouter);
+router.use("/approvals", approvalsRouter);
+
+// Approving replays the held request through this same router.
+registerApprovalReplay(router);
 
 export default router;

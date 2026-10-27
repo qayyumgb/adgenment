@@ -14,6 +14,7 @@ import { useClientScope } from "./ClientContext";
 import { ClientSwitcherMenu } from "./ClientSwitcher";
 import { ACCOUNT_NAV, WORKSPACE_NAV, isActive, type NavItem } from "./nav";
 import { ROLE_LABEL } from "@/components/app/team/access";
+import { useApprovalSummary } from "@/components/app/approvals/useApprovals";
 
 /**
  * Sidebar content (guide §3.1): logo, client switcher, workspace nav,
@@ -25,7 +26,7 @@ const BOX_PLATFORMS: PlatformKey[] = ["META", "GOOGLE", "TIKTOK", "SNAPCHAT", "L
 // Platforms without a connector yet are always "coming soon" (plan decision 8).
 const COMING_SOON = new Set<PlatformKey>(["SNAPCHAT"]);
 
-function NavLink({ item, count, onNavigate }: { item: NavItem; count?: number; onNavigate?: () => void }) {
+function NavLink({ item, count, alert, onNavigate }: { item: NavItem; count?: number; alert?: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
   const { scoped } = useClientScope();
   const active = isActive(pathname, item);
@@ -44,7 +45,7 @@ function NavLink({ item, count, onNavigate }: { item: NavItem; count?: number; o
       <Icon size={18} strokeWidth={2} className={cn("flex-none", item.brandIcon && !active && "text-brand")} aria-hidden="true" />
       <span className="flex-1">{item.label}</span>
       {count !== undefined && (
-        <span className="rounded-full bg-surface-3 px-[7px] text-xs tabular-nums text-ink-2">{count}</span>
+        <span className={cn("rounded-full px-[7px] text-xs tabular-nums", alert ? "bg-warn-soft font-semibold text-warn" : "bg-surface-3 text-ink-2")}>{count}</span>
       )}
     </Link>
   );
@@ -164,6 +165,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   // The sidebar stays mounted across pages, so recount on every page change
   // (campaigns are added by syncs, connects and the wizard elsewhere).
   const pathname = usePathname();
+  const approvals = useApprovalSummary();
   const { refetch: recount } = campaigns;
   useEffect(() => {
     void recount();
@@ -191,7 +193,13 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       <nav aria-label="Account" className="flex flex-col gap-0.5 border-t border-line pt-3.5">
         {ACCOUNT_NAV.map((item) => (
-          <NavLink key={item.href} item={item} onNavigate={onNavigate} />
+          <NavLink
+            key={item.href}
+            item={item}
+            onNavigate={onNavigate}
+            count={item.count === "approvals" && approvals.data?.pending ? approvals.data.pending : undefined}
+            alert={item.count === "approvals" && Boolean(approvals.data?.overdue)}
+          />
         ))}
       </nav>
 

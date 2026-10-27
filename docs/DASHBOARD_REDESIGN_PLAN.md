@@ -188,7 +188,7 @@ Ordered by value and dependencies (Feature Proposals + review):
 
 | # | Feature | Depends on | Size |
 |---|---|---|---|
-| C1 | **F2 Approvals & history** — `/activity`: waiting-for-approval queue above the guardrail or for ask-first clients, history with Undo | B3, B6 | M |
+| C1 ✅ | **F2 Approvals & history** — `/activity`: waiting-for-approval queue above the guardrail or for ask-first clients, history with Undo | B3, B6 | M |
 | C2 | **F1 Alerts inbox** — header bell panel; anomaly engine (CPA spikes, pacing, tracking silence), health checks for all platforms, grouped per campaign, one-click fixes | B1, B3, job queue (C10), notification channels | L |
 | C3 ✅ | **F5 Command palette (⌘K)** — clients, campaigns, actions; "Ask Advertix" needs `/ai/chat` (not yet) | B1 | S |
 | C4 | **F4 Client portal + D5 Scheduled reports** — share links (token, toggles), public read-only view, weekly PDF + email | B1, PDF rendering service | L |
@@ -762,3 +762,36 @@ Not blocking the start, but needed before the named phase:
   - **Export test:** every dialog downloads CSV and Excel. Contents verified: sheets, headers, rows, totals.
   - Type-check and lint clean.
 - **Later:** Google Sheets export (needs Google OAuth); D5 scheduled reports (C4).
+
+### C1 — Approvals & history ✅ (2026-10-27)
+
+- **What waits:** only Media buyers' changes. Owners never wait; analysts and client viewers can't change anything anyway.
+  - **Big budget increases:** a live Meta campaign's budget raised by more than the workspace limit at once. The default is 20%, settable from 1–1000% or Off.
+  - **"Ask first" clients:** every change that affects spend (budget, status, schedule, targeting, audience, launch / publish, delete, ad set and ad status, applying a suggestion or a budget plan). Drafts and renames pass.
+- **How it works:**
+  - `approvalGate` (after `roleGuard`) answers **202** `{pendingApproval, approval, message}` and stores the method, path and body. Nothing is sent to Meta.
+  - Asking twice for the same thing returns the request already waiting.
+  - Approving replays the stored request through the same router **as the requester**, so role and client limits are checked again. A requester demoted meanwhile gets FAILED.
+  - The change log records `approvalId` and `approvedById`.
+  - A platform error marks the request FAILED, with the reason.
+- **24-hour rule** (Settings › AI & automation › Approvals): if nobody answers within 24 hours, **Keep pending** (default), **Approve** or **Reject**. A scheduler checks every 10 minutes (`APPROVALS_TIMEOUT_ENABLED=false` turns it off).
+- **Surfacing:**
+  - The sidebar **Activity** badge shows the waiting count, in amber once any request is past 24 hours.
+  - Owners see an Overview banner.
+  - The Activity page shows a banner explaining what the 24-hour rule will do.
+  - The `APPROVALS` email event (owners and media buyers, on by default) covers both "waiting for you" and "decided".
+- **Activity page** (`/activity`), following the client switcher:
+  - **Waiting:** owners Approve (confirm) or Reject (optional note); requesters can Withdraw.
+  - **Decided:** with the decider, or "automatically after 24 hours".
+  - **Change history:** with "approved by" and Undo.
+- **Web:** the API client turns a 202 into an "⏳ Sent to an owner for approval" notice (with the reason) instead of an error, so every existing screen works unchanged.
+- **Code:**
+  - `services/approvals.service.ts`, `routes/approvals.ts`, `lib/approval-context.ts`;
+  - `app/(dashboard)/activity/page.tsx`, `components/app/approvals/`, `components/app/settings/ApprovalsCard.tsx`.
+- **Schema:**
+  - `ApprovalRequest`, plus the `ApprovalTimeout` and `ApprovalStatus` enums;
+  - `Workspace.approvalBudgetPct` / `approvalTimeout`;
+  - `Client.askFirst`;
+  - `ChangeLog.approvalId` / `approvedById`.
+  - **Production needs `prisma db push` before the API deploys.**
+- **Test:** 13 scenarios through the full router with Meta stubbed. They include signed-out requests getting 401 everywhere: an early build let `getAccess` match any member when there was no user, and it now returns null.

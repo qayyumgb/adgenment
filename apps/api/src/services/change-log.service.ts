@@ -12,6 +12,7 @@
 import { Prisma, type ChangeActor, type ChangeLog } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { money } from "../lib/format";
+import { approvalContext } from "../lib/approval-context";
 import {
   ActionError,
   setAdSetDailyBudget,
@@ -102,6 +103,7 @@ class ChangeLogService {
     revertOfId?: string;
   } & Actor): Promise<ChangeLog | null> {
     try {
+      const approval = approvalContext.getStore();
       const summary = (input.summary ?? describe(input.action, input.before ?? null, input.after ?? null, input.currency)) + (input.note ? ` ${input.note}` : "");
       return await prisma.changeLog.create({
         data: {
@@ -118,6 +120,8 @@ class ChangeLogService {
           platformPushed: input.platformPushed ?? false,
           suggestionId: input.suggestionId ?? null,
           revertOfId: input.revertOfId ?? null,
+          approvalId: approval?.approvalId ?? null,
+          approvedById: approval?.approvedById ?? null,
         },
       });
     } catch (err) {
@@ -191,13 +195,13 @@ class ChangeLogService {
       orderBy: { createdAt: "desc" },
       take: Math.min(200, Math.max(1, opts.limit ?? 50)),
     });
-    const userIds = [...new Set(rows.flatMap((r) => [r.actorUserId, r.undoneById]).filter((x): x is string => !!x))];
+    const userIds = [...new Set(rows.flatMap((r) => [r.actorUserId, r.undoneById, r.approvedById]).filter((x): x is string => !!x))];
     const users = userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true } }) : [];
     const nameOf = (id: string | null) => {
       const u = users.find((x) => x.id === id);
       return u ? u.name || u.email : null;
     };
-    return rows.map((r) => ({ ...r, actorName: nameOf(r.actorUserId), undoneByName: nameOf(r.undoneById), canUndo: this.canUndo(r) }));
+    return rows.map((r) => ({ ...r, actorName: nameOf(r.actorUserId), undoneByName: nameOf(r.undoneById), approvedByName: nameOf(r.approvedById), canUndo: this.canUndo(r) }));
   }
 
   /** Mark an entry undone and write the reversing entry. */

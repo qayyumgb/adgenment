@@ -130,7 +130,7 @@ export default function SettingsPage() {
       <PageBody className="max-w-[1180px] gap-5">
         {tab === "general" && <GeneralTab setSaver={stableSetSaver} />}
         {tab === "team" && <TeamPanel />}
-        {tab === "ai" && <AiTab />}
+        {tab === "ai" && <AiTab setSaver={stableSetSaver} />}
         {tab === "notifications" && <NotificationsTab setSaver={stableSetSaver} />}
         {tab === "billing" && <BillingTab />}
       </PageBody>

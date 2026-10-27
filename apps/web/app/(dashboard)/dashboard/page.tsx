@@ -17,6 +17,7 @@ import { OverviewSuggestions } from "@/components/app/overview/OverviewSuggestio
 import { ClientsPacingTable } from "@/components/app/overview/ClientsPacingTable";
 import { overviewExport } from "@/components/app/overview/export";
 import { ExportDialog } from "@/components/app/export/ExportDialog";
+import { ApprovalsBanner } from "@/components/app/approvals/ApprovalsBanner";
 
 /**
  * Overview (guide §5.1, plan A4): greeting, 5 KPI cards (last 30 days vs the
@@ -173,6 +174,7 @@ export default function OverviewPage() {
         }
       />
       <PageBody>
+        <ApprovalsBanner />
         {noAccounts ? (
           <Card className="flex flex-col items-start gap-3 p-8">
             <span className="text-lg font-semibold">Welcome to Advertix{firstName ? `, ${firstName}` : ""}</span>

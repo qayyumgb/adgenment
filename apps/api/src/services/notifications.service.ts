@@ -17,19 +17,20 @@ const DAY = 86_400_000;
 const FRONTEND_URL = () => process.env.FRONTEND_URL ?? process.env.WEB_ORIGIN ?? "http://localhost:3000";
 const PLATFORM_NAME: Record<string, string> = { META: "Meta", GOOGLE: "Google Ads", TIKTOK: "TikTok", LINKEDIN: "LinkedIn" };
 
-export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "WEEKLY_SUMMARY";
+export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "WEEKLY_SUMMARY" | "APPROVALS";
 
 export const EVENTS: { id: NotificationEvent; label: string; sub: string; roles: Role[] }[] = [
   { id: "ACCESS", label: "Ad platform access", sub: "A connected account's access expires within 7 days, or has expired", roles: ["OWNER", "MEDIA_BUYER"] },
   { id: "SYNC_FAILED", label: "Sync failures", sub: "An ad account couldn't sync its spend and results", roles: ["OWNER", "MEDIA_BUYER"] },
   { id: "PACING", label: "Budget pacing", sub: "A client will run out early or underspend this month", roles: ["OWNER", "MEDIA_BUYER", "ANALYST"] },
+  { id: "APPROVALS", label: "Approvals", sub: "A change is waiting for an owner, or a change you asked for was approved or rejected", roles: ["OWNER", "MEDIA_BUYER"] },
   { id: "WEEKLY_SUMMARY", label: "Weekly summary", sub: "Spend and results per client, on the first day of your week at 09:00", roles: ["OWNER", "MEDIA_BUYER", "ANALYST", "CLIENT_VIEWER"] },
 ];
 
 /** Who gets what unless they change it. */
 const DEFAULT_ON: Record<Role, NotificationEvent[]> = {
-  OWNER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY"],
-  MEDIA_BUYER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY"],
+  OWNER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY", "APPROVALS"],
+  MEDIA_BUYER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY", "APPROVALS"],
   ANALYST: ["WEEKLY_SUMMARY"],
   CLIENT_VIEWER: ["WEEKLY_SUMMARY"],
 };
@@ -84,7 +85,8 @@ export async function sendTestEmail(userId: string, workspaceId: string) {
 
 /* ── Finding alerts ───────────────────────────────────────────────────────── */
 
-type Item = { key: string; clientId: string | null; line: string };
+export type AlertItem = { key: string; clientId: string | null; line: string };
+type Item = AlertItem;
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
@@ -219,6 +221,23 @@ async function deliver(workspaceId: string, ms: Member[], event: NotificationEve
     if (r.ok) sent++;
   }
   return sent;
+}
+
+/**
+ * Send one event to some members right away (approvals, C1), with the same
+ * preferences, once-per-item log and layout as the scheduled alerts.
+ */
+export async function notifyMembers(
+  workspaceId: string,
+  who: (m: { userId: string; role: Role }) => boolean,
+  event: NotificationEvent,
+  item: Item,
+  subject: string,
+  intro: string,
+  cta: { label: string; path: string }
+) {
+  const ms = (await members(workspaceId)).filter(who);
+  return deliver(workspaceId, ms, event, [item], () => subject, intro, cta);
 }
 
 /** One pass over a workspace: find and send everything due. Returns the number of emails sent. */

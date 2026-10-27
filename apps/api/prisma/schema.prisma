@@ -101,6 +101,8 @@ model User {
   ownedWorkspaces  Workspace[]       @relation("WorkspaceOwner")
   workspaceMembers WorkspaceMember[]
   aiSessions       AiSession[]
+  approvalsRequested ApprovalRequest[] @relation("ApprovalRequester")
+  approvalsDecided   ApprovalRequest[] @relation("ApprovalDecider")
 }
 
 model Workspace {
@@ -115,6 +117,10 @@ model Workspace {
   timezone     String?
   /// 1 = Monday, 0 = Sunday (weekly summaries).
   weekStartsOn Int      @default(1)
+  /// C1: Media buyers' budget increases above this % wait for an owner. Null = off.
+  approvalBudgetPct Int?   @default(20)
+  /// C1: what happens to an approval nobody acted on within 24 hours.
+  approvalTimeout ApprovalTimeout @default(KEEP)
   ownerId      String
   plan         PlanType @default(FREE)
   createdAt    DateTime @default(now())
@@ -145,6 +151,7 @@ model Workspace {
   plans                 Plan[]
   changeLogs            ChangeLog[]
   invites               Invite[]
+  approvals             ApprovalRequest[]
 
   @@index([ownerId])
 }
@@ -169,6 +176,8 @@ model Client {
   currency      String?
   /// The auto-created client for single-brand workspaces.
   isDefault     Boolean  @default(false)
+  /// C1: every spend change a Media buyer makes for this client waits for an owner.
+  askFirst      Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -179,6 +188,7 @@ model Client {
   suggestions  Suggestion[]
   plans        Plan[]
   memberAccess MemberClientAccess[]
+  approvals    ApprovalRequest[]
 
   @@index([workspaceId])
 }
@@ -786,6 +796,9 @@ model ChangeLog {
   /// Set on the original entry once it's undone.
   undoneAt       DateTime?
   undoneById     String?
+  /// C1: set when an owner approved this change (or it was approved on timeout).
+  approvalId     String?
+  approvedById   String?
   createdAt      DateTime    @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -836,4 +849,56 @@ model NotificationLog {
 
   @@unique([userId, event, key])
   @@index([workspaceId, createdAt])
+}
+
+/// C1: what happens to an approval nobody acted on within 24 hours.
+enum ApprovalTimeout {
+  KEEP
+  APPROVE
+  REJECT
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  /// Approved, but running the change failed (the platform refused, access changed…).
+  FAILED
+  /// Withdrawn by the person who asked.
+  CANCELLED
+}
+
+/// C1: a Media buyer's spend change held for an owner. Approving replays the
+/// original API request as the requester, so it runs exactly like a normal change.
+model ApprovalRequest {
+  id            String         @id @default(cuid())
+  workspaceId   String
+  clientId      String?
+  campaignId    String?
+  campaignName  String
+  /// The request to run on approval: method + path under /api + JSON body.
+  method        String
+  path          String
+  body          Json?
+  /// "Raise daily budget from $400 to $560".
+  summary       String
+  /// Why it waits: "Raises the budget 40%, above the 20% limit".
+  reason        String
+  requestedById String
+  status        ApprovalStatus @default(PENDING)
+  decidedById   String?
+  decidedAt     DateTime?
+  /// "manual" | "timeout"
+  decidedVia    String?
+  note          String?
+  error         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client      Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  requestedBy User      @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  decidedBy   User?     @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status, createdAt])
 }

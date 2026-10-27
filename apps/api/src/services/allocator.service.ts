@@ -29,7 +29,7 @@ async function loadClient(workspaceId: string, clientId: string | null) {
 }
 
 /** Active campaigns with a daily budget: the ones a platform total is made of. */
-async function allocatable(workspaceId: string, clientId: string): Promise<AllocCampaign[]> {
+export async function allocatable(workspaceId: string, clientId: string): Promise<AllocCampaign[]> {
   return prisma.campaign.findMany({
     where: { workspaceId, status: "ACTIVE", budgetType: "DAILY", budget: { gt: 0 }, adAccount: { clientId, isActive: true } },
     include: { adAccount: true },

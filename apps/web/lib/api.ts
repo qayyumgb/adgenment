@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useAuth } from "@clerk/nextjs";
+import toast from "react-hot-toast";
 
 /**
  * An error from our API that preserves the server's diagnostic fields.
@@ -29,6 +30,66 @@ export class ApiError extends Error {
     this.detail = opts.detail;
     this.step = opts.step;
   }
+}
+
+/* ── Approvals (C1) ─────────────────────────────────────────────── */
+
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "FAILED" | "CANCELLED";
+export type ApprovalTimeout = "KEEP" | "APPROVE" | "REJECT";
+export interface Approval {
+  id: string;
+  status: ApprovalStatus;
+  summary: string;
+  reason: string;
+  campaignId: string | null;
+  campaignName: string;
+  clientId: string | null;
+  clientName: string | null;
+  requestedById: string;
+  requestedBy: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  /** "manual" | "timeout" */
+  decidedVia: string | null;
+  note: string | null;
+  error: string | null;
+  createdAt: string;
+}
+export interface ApprovalSummary {
+  pending: number;
+  overdue: number;
+  oldestAt: string | null;
+  timeout: ApprovalTimeout;
+  /** True for owners: the waiting ones are theirs to decide. */
+  decides: boolean;
+}
+export interface ApprovalSettings {
+  budgetPct: number | null;
+  timeout: ApprovalTimeout;
+  clients: { id: string; name: string; askFirst: boolean; isDefault: boolean }[];
+}
+
+/** The message a held change fails with; the API client already showed a notice for it. */
+export const APPROVAL_PENDING_MESSAGE = "Sent to an owner for approval.";
+/** Fired when approvals change (one was requested here); badges refetch. */
+export const APPROVALS_CHANGED_EVENT = "advertix:approvals-changed";
+
+/** A Media buyer's change is waiting for an owner instead of being applied (HTTP 202). */
+export class ApprovalPendingError extends ApiError {
+  constructor(readonly approval: Approval) {
+    super(APPROVAL_PENDING_MESSAGE, { status: 202 });
+    this.name = "ApprovalPendingError";
+  }
+}
+
+// Callers show `err.message` with toast.error; the API client already showed
+// a calmer notice for a held change, so don't stack a red error on top of it.
+if (typeof window !== "undefined" && !(toast.error as { __approvals?: boolean }).__approvals) {
+  const original = toast.error;
+  const patched = ((message: Parameters<typeof toast.error>[0], opts?: Parameters<typeof toast.error>[1]) =>
+    message === APPROVAL_PENDING_MESSAGE ? "" : original(message, opts)) as typeof toast.error & { __approvals?: boolean };
+  patched.__approvals = true;
+  toast.error = patched;
 }
 
 /* ───────────────────────────── */
@@ -1029,6 +1090,9 @@ export interface ChangeLogEntry {
   revertOfId: string | null;
   undoneAt: string | null;
   undoneByName: string | null;
+  /** C1: the owner who approved it (approvalId set, approvedByName null = approved after 24 hours). */
+  approvalId: string | null;
+  approvedByName: string | null;
   canUndo: boolean;
   createdAt: string;
 }
@@ -1237,6 +1301,17 @@ export function useApiClient() {
         });
       }
       if (res.status === 204) return undefined as T;
+      if (res.status === 202) {
+        // A Media buyer's change held for an owner (C1): say so once, and
+        // fail the call so no caller reports it as done.
+        const body = await res.json().catch(() => null);
+        if (body?.pendingApproval) {
+          toast(`${APPROVAL_PENDING_MESSAGE} ${body.approval?.reason ? `${body.approval.reason}.` : ""}`, { icon: "⏳", duration: 6000 });
+          window.dispatchEvent(new Event(APPROVALS_CHANGED_EVENT));
+          throw new ApprovalPendingError(body.approval as Approval);
+        }
+        return body as T;
+      }
       return res.json() as Promise<T>;
     }
 
@@ -1274,6 +1349,16 @@ export function useApiClient() {
         `/change-log${buildQuery({ campaignId: params.campaignId, clientId: params.clientId ?? undefined, limit: params.limit, before: params.before })}`
       ),
     undoChange: (id: string) => apiFetch<{ ok: boolean }>(`/change-log/${id}/undo`, { method: "POST" }),
+
+    /* Approvals (C1) */
+    getApprovals: (status: "pending" | "decided" | "all" = "pending") => apiFetch<{ approvals: Approval[] }>(`/approvals?status=${status}`),
+    getApprovalSummary: () => apiFetch<ApprovalSummary>("/approvals/summary"),
+    approve: (id: string, note?: string) => apiFetch<Approval>(`/approvals/${id}/approve`, { method: "POST", body: JSON.stringify({ note }) }),
+    reject: (id: string, note?: string) => apiFetch<Approval>(`/approvals/${id}/reject`, { method: "POST", body: JSON.stringify({ note }) }),
+    cancelApproval: (id: string) => apiFetch<Approval>(`/approvals/${id}/cancel`, { method: "POST" }),
+    getApprovalSettings: () => apiFetch<ApprovalSettings>("/approvals/settings"),
+    saveApprovalSettings: (data: { budgetPct?: number | null; timeout?: ApprovalTimeout; askFirstClientIds?: string[] }) =>
+      apiFetch<ApprovalSettings>("/approvals/settings", { method: "PUT", body: JSON.stringify(data) }),
 
     /* Saved AI plans (B5) */
     getPlans: (params?: { clientId?: string | null; includeArchived?: boolean }) =>

@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  ClipboardCheck,
   Image as ImageIcon,
   LayoutDashboard,
   Megaphone,
@@ -25,7 +26,7 @@ export type NavItem = {
   /** Extra path prefixes that mark this item active. */
   match?: string[];
   /** Live count shown as a pill (resolved by the sidebar). */
-  count?: "campaigns";
+  count?: "campaigns" | "approvals";
   /** Brand-coloured icon (AI Planner's sparkle). */
   brandIcon?: boolean;
 };
@@ -41,7 +42,7 @@ export const WORKSPACE_NAV: NavItem[] = [
 ];
 
 export const ACCOUNT_NAV: NavItem[] = [
-  // TODO(A13): → /connections
+  { label: "Activity", href: "/activity", icon: ClipboardCheck, count: "approvals" },
   { label: "Connections", href: "/connections", icon: Plug },
   { label: "Settings", href: "/settings", icon: SlidersHorizontal, match: ["/billing"] },
 ];

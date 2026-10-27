@@ -485,6 +485,21 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-27 — C1 Approvals & history
+
+- **Held changes:** a Media buyer's big budget increase (over the workspace limit, 20% by default, live Meta campaigns only), or any spend change on an "Ask first" client, waits for an owner.
+  - The API answers 202 and nothing reaches Meta.
+  - Approving replays the change as the requester, re-checking their role. It is logged with "approved by".
+- **24-hour rule:** if an owner doesn't answer within 24 hours, Keep pending (default), Approve or Reject. It is set in Settings › AI & automation › Approvals, along with the limit and the "Ask first" clients.
+- **Surfacing:**
+  - the **Activity** sidebar item has a badge, amber after 24 hours;
+  - owners see an Overview banner;
+  - `/activity` has Waiting / Decided / Change history (with Undo);
+  - the `APPROVALS` email event.
+- **Routes:** `GET /approvals`, `GET /approvals/summary`, `GET/PUT /approvals/settings`, `POST /approvals/:id/approve | reject | cancel`.
+- **Hardening:** `getAccess` returns null when there's no signed-in user. Before, it matched any member.
+- **Deploy:** schema change. Run `prisma db push` on production before the API deploy.
+
 ### 2026-10-27 — C3 Command palette (⌘K)
 
 - **Opening it:** ⌘K / Ctrl+K anywhere in the app, the top-bar search (now active) or a new search button in the mobile app bar.

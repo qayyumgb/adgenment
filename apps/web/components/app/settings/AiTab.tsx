@@ -3,12 +3,15 @@
 import { Check } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Card, Pill } from "@/components/app/ui";
+import { ApprovalsCard } from "./ApprovalsCard";
+import type { SettingsSaver } from "./types";
 
 /**
  * Settings › AI & automation (plan A14, decision 11): "Suggest only" is how
  * Advertix works today. Auto-apply and Autopilot (with their guardrails,
  * ask-first clients and automated rules) aren't built yet, so they show as
- * coming soon instead of switches that do nothing.
+ * coming soon instead of switches that do nothing. Approvals (C1) decide
+ * which Media buyer changes wait for an owner.
  */
 
 const LEVELS = [
@@ -22,10 +25,11 @@ const TODAY = [
   "Every change is recorded in the change log with who made it, and can be undone for 7 days.",
   "Budget suggestions stay between half and double the current daily budget.",
   "Changes reach Meta directly; Google, TikTok and LinkedIn are read-only for now.",
+  "Media buyers' big budget increases, and their changes to “Ask first” clients, wait for an owner (see Approvals).",
   "Analysts and client viewers can't apply anything.",
 ];
 
-export function AiTab() {
+export function AiTab({ setSaver }: { setSaver: (s: SettingsSaver | null) => void }) {
   return (
     <>
       <Card padded={false} className="flex flex-col gap-[18px] p-[22px]">
@@ -54,9 +58,11 @@ export function AiTab() {
           ))}
         </div>
         <p className="border-t border-line pt-4 text-[13px] text-ink-2">
-          Guardrails (the largest automatic budget change), clients that always need approval, and automated rules arrive with auto-apply. Until then nothing changes without a click.
+          Guardrails (the largest automatic budget change) and automated rules arrive with auto-apply. Until then nothing changes without a click.
         </p>
       </Card>
+
+      <ApprovalsCard setSaver={setSaver} />
 
       <Card padded={false} className="flex flex-col gap-3 p-[22px]">
         <span className="text-base font-semibold">What Advertix does today</span>
