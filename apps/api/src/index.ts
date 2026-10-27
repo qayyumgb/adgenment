@@ -16,6 +16,7 @@ import {
 } from "./services/sync-scheduler.service";
 import { startNotificationScheduler } from "./services/notifications.service";
 import { startApprovalScheduler } from "./services/approvals.service";
+import { startSafetyScheduler } from "./services/safety.service";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -139,6 +140,8 @@ async function startServer() {
     // Hourly email alerts (A14); nothing is sent without RESEND_API_KEY.
     startNotificationScheduler();
     startApprovalScheduler();
+    // Safety rules (C14) and auto-apply (C13): only for clients that opted in.
+    startSafetyScheduler();
 
     // Graceful shutdown — Railway sends SIGTERM during redeploy
     const shutdown = (signal: string) => {

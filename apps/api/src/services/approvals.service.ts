@@ -48,6 +48,8 @@ const WATCHED: { method: string; re: RegExp }[] = [
   { method: "POST", re: /^\/campaigns\/([^/]+)\/ads\/([^/]+)\/status$/ },
   { method: "POST", re: /^\/suggestions\/([^/]+)\/apply$/ },
   { method: "POST", re: /^\/budgets\/allocator\/apply$/ },
+  { method: "POST", re: /^\/change-log\/([^/]+)\/undo$/ },
+  { method: "POST", re: /^\/suggestions\/([^/]+)\/undo$/ },
 ];
 
 const pctUp = (from: number, to: number) => (from > 0 ? ((to - from) / from) * 100 : to > 0 ? Infinity : 0);
@@ -99,6 +101,34 @@ async function evaluate(workspaceId: string, method: string, path: string, body:
     const held = (reason: string): Held => ({ summary, reason, campaignId: null, campaignName: `${client.name} · budget split`, clientId: client.id });
     if (client.askFirst) return held(askFirstReason(client.name));
     if (Number.isFinite(to) && overLimit(from, to)) return held(limitReason(from, to, cur));
+    return null;
+  }
+
+  // Undo: judged by what it would change, like the edit itself.
+  if ((m = path.match(/^\/(change-log|suggestions)\/([^/]+)\/undo$/))) {
+    const e =
+      m[1] === "change-log"
+        ? await prisma.changeLog.findFirst({ where: { id: m[2], workspaceId } })
+        : await prisma.changeLog.findFirst({ where: { workspaceId, suggestionId: m[2], undoneAt: null }, orderBy: { createdAt: "desc" } });
+    if (!e?.campaignId || e.undoneAt) return null;
+    const c = await loadCampaign(workspaceId, e.campaignId);
+    if (!c || c.platform !== "META" || !c.externalId) return null;
+    const client = c.adAccount.client;
+    const before = (e.before ?? {}) as Record<string, unknown>;
+    const held = (reason: string): Held => ({ summary: `Undo: ${e.summary}`, reason, campaignId: c.id, campaignName: c.name, clientId: client?.id ?? null });
+    if (e.action === "campaign.rename") return null;
+    if (client?.askFirst) return held(askFirstReason(client.name));
+    if (e.action === "campaign.budget") {
+      const from = Number(c.budget);
+      const to = Number(before.budget);
+      return overLimit(from, to) ? held(limitReason(from, to, c.adAccount.currency)) : null;
+    }
+    if (e.action === "adset.budget") {
+      const s = await prisma.adSet.findFirst({ where: { id: String(((e.after ?? {}) as Record<string, unknown>).adSetId), campaignId: c.id }, select: { dailyBudget: true } });
+      const from = Number(s?.dailyBudget ?? 0);
+      const to = Number(before.dailyBudget);
+      return overLimit(from, to) ? held(limitReason(from, to, c.adAccount.currency)) : null;
+    }
     return null;
   }
 

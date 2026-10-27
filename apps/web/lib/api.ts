@@ -68,6 +68,13 @@ export interface ApprovalSettings {
   timeout: ApprovalTimeout;
   clients: { id: string; name: string; askFirst: boolean; isDefault: boolean }[];
 }
+/** C13 auto-apply, C14 safety rules and the workspace's automation switches. */
+export interface SafetySettings {
+  maxCutPct: number;
+  autoApplyMaxPct: number;
+  automationPaused: boolean;
+  clients: { id: string; name: string; pixel: boolean; cap: boolean; autoApply: boolean; askFirst: boolean; hasMonthlyBudget: boolean }[];
+}
 
 /** The message a held change fails with; the API client already showed a notice for it. */
 export const APPROVAL_PENDING_MESSAGE = "Sent to an owner for approval.";
@@ -1027,7 +1034,7 @@ export interface BillingUsage {
   spendThisMonth: { currency: string; amount: number }[];
 }
 
-export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "WEEKLY_SUMMARY";
+export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "APPROVALS" | "SAFETY" | "MORNING_BRIEFING" | "WEEKLY_SUMMARY";
 
 /** GET /auth/notifications (A14): my email alert choices. */
 export interface MyNotifications {
@@ -1360,6 +1367,11 @@ export function useApiClient() {
     saveApprovalSettings: (data: { budgetPct?: number | null; timeout?: ApprovalTimeout; askFirstClientIds?: string[] }) =>
       apiFetch<ApprovalSettings>("/approvals/settings", { method: "PUT", body: JSON.stringify(data) }),
 
+    /* Automation: auto-apply (C13) and safety rules (C14) */
+    getSafetySettings: () => apiFetch<SafetySettings>("/automation/settings"),
+    saveSafetySettings: (data: { maxCutPct?: number; autoApplyMaxPct?: number; automationPaused?: boolean; clients?: { id: string; pixel?: boolean; cap?: boolean; autoApply?: boolean }[] }) =>
+      apiFetch<SafetySettings>("/automation/settings", { method: "PUT", body: JSON.stringify(data) }),
+
     /* Saved AI plans (B5) */
     getPlans: (params?: { clientId?: string | null; includeArchived?: boolean }) =>
       apiFetch<{ plans: PlanSummary[] }>(
@@ -1495,6 +1507,8 @@ export function useApiClient() {
     saveMyNotifications: (prefs: Partial<Record<NotificationEvent, boolean>>) =>
       apiFetch<MyNotifications>("/auth/notifications", { method: "PUT", body: JSON.stringify({ prefs }) }),
     sendTestNotification: () => apiFetch<{ success: boolean }>("/auth/notifications/test", { method: "POST" }),
+    /** C12: today's morning briefing to me now. */
+    sendBriefingNow: () => apiFetch<{ success: boolean }>("/auth/notifications/briefing", { method: "POST" }),
     updateWorkspace: (data: UpdateWorkspaceInput) =>
       apiFetch<Workspace>("/workspace", {
         method: "PATCH",

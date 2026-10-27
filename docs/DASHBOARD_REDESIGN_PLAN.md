@@ -199,9 +199,9 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C9 | **F3 Experiments** — tests with significance, scale the winner | B4, C1 | XL |
 | C10 | **Job queue** — BullMQ + Redis replaces the in-process `setInterval`; multi-platform sync, alerts, reports, scheduled budgets / launches | Adds a Redis service on Railway (≈ $1–3 / month extra) | M |
 | C11 | Stripe billing, Shopify / GA4 revenue truth, activation checklist | — | L each (checklist S) |
-| C12 | **Morning briefing email** — daily, in the workspace time zone: top 3 decisions across clients (numbers + one-click link) and anything applied overnight. Opt-in per person in Settings › Notifications | A14 notifications, B2 | S |
-| C13 | **Guarded auto-apply** — per client "Suggest only" / "Auto-apply small changes" (Settings › AI). Only executable Meta budget suggestions, under a daily limit (default 15% of the campaign's budget), one move per campaign per day, logged as applied automatically with 7-day undo; workspace "Pause all automation" switch. Runs after each sync | B2, B3, A14 | M |
-| C14 | **Safety rules** (opt-in per client) — pixel stopped firing → pause affected Meta campaigns until it fires again; monthly cap run-out → lower daily budgets inside the guardrail. Each action emailed with Undo | C13, Meta health, `computePacing` | M |
+| C12 ✅ | **Morning briefing email** — daily, in the workspace time zone: top 3 decisions across clients (numbers + one-click link) and anything applied overnight. Opt-in per person in Settings › Notifications | A14 notifications, B2 | S |
+| C13 ✅ | **Guarded auto-apply** — per client "Suggest only" / "Auto-apply small changes" (Settings › AI). Only executable Meta budget suggestions, under a daily limit (default 15% of the campaign's budget), one move per campaign per day, logged as applied automatically with 7-day undo; workspace "Pause all automation" switch. Runs after each sync | B2, B3, A14 | M |
+| C14 ✅ | **Safety rules** (opt-in per client) — pixel stopped firing → pause affected Meta campaigns until it fires again; monthly cap run-out → lower daily budgets inside the guardrail. Each action emailed with Undo | C13, Meta health, `computePacing` | M |
 
 ---
 
@@ -795,3 +795,83 @@ Not blocking the start, but needed before the named phase:
   - `ChangeLog.approvalId` / `approvedById`.
   - **Production needs `prisma db push` before the API deploys.**
 - **Test:** 13 scenarios through the full router with Meta stubbed. They include signed-out requests getting 401 everywhere: an early build let `getAccess` match any member when there was no user, and it now returns null.
+
+### C12 — Morning briefing email ✅ (2026-10-27)
+
+- **What:** one email per person per day, with four sections:
+  - **Changes waiting for your approval:** owners only.
+  - **Today's top 3 decisions:** open, unexpired suggestions by priority. Each has its impact and reason, and the title links to the campaign.
+  - **What changed in the last 24 hours:** up to 6 entries, each saying who made it: a teammate (with "approved" when it went through C1), an applied suggestion, or "changed on the ad platform". The rest link to Activity.
+  - **Yesterday's spend per client:** spend plus revenue and ROAS, or results.
+- **Who:** owners, media buyers and analysts, limited to the clients they can see.
+  - **Opt-in:** off by default; turned on per person in Settings › Notifications.
+  - Client viewers aren't offered it.
+- **When:** from 08:00 in the workspace time zone, through the hourly alerts job. A late server still catches up until 11:00; after that it waits for the next day. Logged once per person per local date (`briefing:<date>`).
+  - A day with nothing to say sends nothing.
+- **Send me today's briefing now:** a link under the Morning briefing row in Settings › Notifications (`POST /auth/notifications/briefing`). It sends regardless of the time or the setting.
+- **Code:** `briefingData` / `briefingEmail` / `sendBriefing` in `services/notifications.service.ts`. No schema change.
+- **Test:** 5 checks:
+  - content and order;
+  - per-person scope;
+  - only from 08:00 until 11:00 local, once a day, opt-in;
+  - send-now, and an empty day sending nothing;
+  - the defaults.
+
+### C14 — Safety rules ✅ (2026-10-27)
+
+- **Where:** Settings › AI & automation › Safety rules. Each rule is turned on per client and is off by default. Owners edit; everyone else reads. It shares the page's Save button with Approvals.
+- **Pixel stopped firing:**
+  - **When it acts:** no Meta Pixel on the client's ad account has had an event for 24 hours, and it had fired before. A pixel that never fired is a setup problem, which Connections already shows.
+  - **What it does:** pauses the client's active campaigns whose ad sets optimise for conversions (`OFFSITE_CONVERSIONS` / `VALUE`).
+  - **Recovery:** once a pixel fires again, it resumes only what it paused, and only if nobody changed the campaign since.
+  - **One outage = one episode,** named by the last event before it.
+- **Monthly budget running out:**
+  - **When it acts:** from the 5th of the month, when pacing says the client is AHEAD of its monthly budget. Mixed-currency clients are skipped.
+  - **What it does:** lowers the active Meta daily budgets so the rest of the month fits. It cuts at most the guardrail (default 20%, 1–50%) per day, once a day, respects Meta's minimum budget, and never raises a budget.
+- **Hands off after Undo:** every action is a change-log entry by "Safety rule", with a note and the 7-day Undo.
+  - An undone pause means the rule leaves that campaign alone for the rest of the outage.
+  - An undone cut means the rule leaves that client alone for the rest of the month.
+- **Pause all automation** (`Workspace.automationPaused`) stops every rule and keeps the choices. C13 auto-apply will use it too.
+- **Emails:** the new `SAFETY` event, on by default for owners and media buyers, with a link to Activity. Activity and the morning briefing label these entries "Safety rule".
+- **Runs:** hourly, only for workspaces with a client opted in (`SAFETY_RULES_ENABLED=false` turns it off).
+- **Code:**
+  - `services/safety.service.ts`;
+  - `routes/automation.ts` (`GET/PUT /automation/settings`);
+  - `components/app/settings/SafetyCard.tsx`.
+- **Schema:** `Client.safetyPixel` / `safetyCap`, `Workspace.safetyMaxCutPct` / `automationPaused`. **Production needs `prisma db push`.**
+- **Test:** 8 scenarios with Meta stubbed:
+  - pause and resume;
+  - same outage;
+  - undo means hands off;
+  - a person's change wins;
+  - never-fired pixel, rule off, and Pause all;
+  - cap trimming, once a day, undo for the month;
+  - early in the month, validation, permissions and emails.
+
+### C13 — Guarded auto-apply ✅ (2026-10-27)
+
+- **Where:** Settings › AI & automation › **Automation** (the card that also holds the C14 safety rules). Each client gets an **Auto-apply** switch, off by default, meaning "Suggest only". The workspace sets the limit: default 15%, range 1–30%.
+  - The "How much should Advertix do on its own?" card now shows how many clients use each level; Autopilot is still coming soon.
+- **What applies on its own:** only open, unexpired `SET_DAILY_BUDGET` suggestions on live Meta campaigns that are active and whose daily budget Advertix can change, and only if the move is within the limit and at or above Meta's minimum budget.
+  - Order: highest priority first.
+  - **One automatic move per campaign per day.** This counts safety-rule cuts too.
+- **Never:**
+  - "Ask first" clients (their switch is disabled, with a hint);
+  - review-only cards;
+  - a suggestion someone undid (the existing 7-day `suppressUntil`);
+  - a raise while the C14 cap rule is holding that client's budgets down this month (cuts still apply);
+  - anything while **Pause all automation** is on.
+- **Logged as:** "Suggestion, applied automatically". The suggestion moves to Applied with no applier; the change-log entry has `actorUserId` null, the note "(applied automatically)", `after.auto = <day>`, and the normal 7-day Undo. Emailed through the `SAFETY` alert, now labelled "Automatic changes".
+- **Runs:** hourly in the same pass as the safety rules, rules first. It applies suggestions that already exist (Claude writes them when someone runs the check), so it makes no extra AI calls. (The plan said "after each sync"; syncs are periodic too, and running in the same pass keeps it next to the cap rule.)
+- **Code:**
+  - `autoApply` in `services/safety.service.ts`;
+  - `suggestionsService.apply(…, userId: null, { day })`;
+  - `components/app/settings/SafetyCard.tsx` and `AiTab.tsx`.
+- **Schema:** `Client.autoApply`, `Workspace.autoApplyMaxPct`. **Production needs `prisma db push`.**
+- **Test:** 6 checks:
+  - applies only small budget moves, logged with Undo;
+  - every skip case;
+  - one move per campaign per day;
+  - an undo isn't repeated;
+  - no raises while the cap rule holds;
+  - Pause all, the limit and Suggest only.

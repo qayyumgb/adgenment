@@ -106,6 +106,8 @@ export function capabilityFor(method: string, path: string): Capability | null {
     if (read) return "view";
     return /^\/workspace\/(invites|members)/.test(path) || path === "/workspace/invite" ? "team" : "workspace";
   }
+  // Safety rules and automation settings (C14): everyone sees them; owners change them.
+  if (path.startsWith("/automation")) return read ? "view" : "workspace";
   // Approvals (C1): everyone sees them (the route narrows it); the requester can
   // withdraw theirs; deciding and the rules are the owner's.
   if (path.startsWith("/approvals")) {

@@ -16,7 +16,7 @@ import type { SettingsSaver } from "./types";
  * something happens); Slack and in-app are shown as coming soon.
  */
 
-const EVENT_LABEL: Record<string, string> = { ACCESS: "Ad platform access", SYNC_FAILED: "Sync failures", PACING: "Budget pacing", WEEKLY_SUMMARY: "Weekly summary", TEST: "Test email" };
+const EVENT_LABEL: Record<string, string> = { ACCESS: "Ad platform access", SYNC_FAILED: "Sync failures", PACING: "Budget pacing", APPROVALS: "Approvals", SAFETY: "Safety rules", MORNING_BRIEFING: "Morning briefing", WEEKLY_SUMMARY: "Weekly summary", TEST: "Test email" };
 
 function Box({ checked, disabled, onChange, label }: { checked: boolean; disabled?: boolean; onChange?: (v: boolean) => void; label: string }) {
   return (
@@ -46,6 +46,7 @@ export function NotificationsTab({ setSaver }: { setSaver: (s: SettingsSaver | n
   const initial = useMemo(() => Object.fromEntries((data?.events ?? []).map((e) => [e.id, e.email])) as Record<NotificationEvent, boolean>, [data]);
   const [prefs, setPrefs] = useState<Record<NotificationEvent, boolean> | null>(null);
   const [testing, setTesting] = useState(false);
+  const [briefing, setBriefing] = useState(false);
   useEffect(() => setPrefs(data ? initial : null), [data, initial]);
   const dirty = Boolean(prefs && JSON.stringify(prefs) !== JSON.stringify(initial));
 
@@ -74,6 +75,19 @@ export function NotificationsTab({ setSaver }: { setSaver: (s: SettingsSaver | n
       toast.error(err instanceof Error ? err.message : "The test email didn't send.");
     } finally {
       setTesting(false);
+    }
+  };
+
+  const briefNow = async () => {
+    setBriefing(true);
+    try {
+      await api.sendBriefingNow();
+      toast.success("Today's briefing is on its way. Check your inbox.");
+      void q.refetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "The briefing didn't send.");
+    } finally {
+      setBriefing(false);
     }
   };
 
@@ -117,6 +131,11 @@ export function NotificationsTab({ setSaver }: { setSaver: (s: SettingsSaver | n
             <span className="flex min-w-0 flex-col pr-3">
               <span className="font-semibold">{e.label}</span>
               <span className="text-[13px] text-ink-2">{e.eligible ? e.sub : "Not available for your role"}</span>
+              {e.id === "MORNING_BRIEFING" && e.eligible && data.emailConfigured && (
+                <button type="button" disabled={briefing} onClick={() => void briefNow()} className="mt-1 self-start text-[13px] font-semibold text-brand hover:text-brand-hover disabled:opacity-60">
+                  {briefing ? "Sending…" : "Send me today's briefing now"}
+                </button>
+              )}
             </span>
             <Box checked={prefs[e.id]} disabled={!e.eligible} onChange={(v) => setPrefs((p) => (p ? { ...p, [e.id]: v } : p))} label={`Email: ${e.label}`} />
             <Box checked={false} disabled label="Slack alerts are coming soon" />

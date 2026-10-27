@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma";
 import { getUserWorkspace } from "../lib/workspace";
 import { getAccess } from "../lib/access";
 import { pendingInviteFor } from "../services/team.service";
-import { myNotifications, saveNotifications, sendTestEmail } from "../services/notifications.service";
+import { myNotifications, saveNotifications, sendBriefingNow, sendTestEmail } from "../services/notifications.service";
 
 const router = Router();
 
@@ -186,6 +186,20 @@ router.post("/notifications/test", async (req: Request, res: Response, next: Nex
     const workspace = await getUserWorkspace(req.dbUserId!);
     if (!workspace) return res.status(404).json({ error: "No workspace found" });
     const r = await sendTestEmail(req.dbUserId!, workspace.id);
+    if (!r.ok) return res.status(502).json({ error: r.error ?? "The email didn't send." });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /auth/notifications/briefing — today's morning briefing (C12) to me now. */
+router.post("/notifications/briefing", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const workspace = await getUserWorkspace(req.dbUserId!);
+    if (!workspace) return res.status(404).json({ error: "No workspace found" });
+    const r = await sendBriefingNow(req.dbUserId!, workspace.id);
+    if (r.empty) return res.status(409).json({ error: "Nothing to brief you on yet: no open suggestions, changes, approvals or spend for your clients." });
     if (!r.ok) return res.status(502).json({ error: r.error ?? "The email didn't send." });
     res.json({ success: true });
   } catch (err) {

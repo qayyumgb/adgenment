@@ -121,6 +121,12 @@ model Workspace {
   approvalBudgetPct Int?   @default(20)
   /// C1: what happens to an approval nobody acted on within 24 hours.
   approvalTimeout ApprovalTimeout @default(KEEP)
+  /// C14: the most a safety rule may cut a campaign's daily budget in one day (%).
+  safetyMaxCutPct Int     @default(20)
+  /// C13: auto-apply only moves a daily budget by at most this % (once per campaign per day).
+  autoApplyMaxPct Int     @default(15)
+  /// C13/C14: stops every automatic change (safety rules, auto-apply) until switched back on.
+  automationPaused Boolean @default(false)
   ownerId      String
   plan         PlanType @default(FREE)
   createdAt    DateTime @default(now())
@@ -178,6 +184,11 @@ model Client {
   isDefault     Boolean  @default(false)
   /// C1: every spend change a Media buyer makes for this client waits for an owner.
   askFirst      Boolean  @default(false)
+  /// C14 safety rules (opt-in): pause conversion campaigns while the pixel is silent; trim budgets before the monthly cap runs out.
+  safetyPixel   Boolean  @default(false)
+  safetyCap     Boolean  @default(false)
+  /// C13: "Auto-apply small changes" (false = Suggest only).
+  autoApply     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

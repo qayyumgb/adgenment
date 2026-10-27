@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { normalizeRole, type Role } from "../lib/access";
 import { emailConfigured, emailLayout, escapeHtml, sendEmail } from "../lib/email";
 import { computePacing } from "./pacing.service";
+import { changeLog } from "./change-log.service";
 
 /**
  * Email alerts (plan A14; decision: real email for a few events). Advertix
@@ -10,27 +11,30 @@ import { computePacing } from "./pacing.service";
  * expire, accounts that failed to sync, clients pacing ahead of or behind their
  * monthly budget, and a weekly summary on the workspace's first day of the
  * week. Each person picks which ones they get; every alert is logged once per
- * person (NotificationLog), so nobody gets the same email twice.
+ * person (NotificationLog), so nobody gets the same email twice. The morning
+ * briefing (C12, opt-in) is one email per person per local day from 08:00.
  */
 
 const DAY = 86_400_000;
 const FRONTEND_URL = () => process.env.FRONTEND_URL ?? process.env.WEB_ORIGIN ?? "http://localhost:3000";
 const PLATFORM_NAME: Record<string, string> = { META: "Meta", GOOGLE: "Google Ads", TIKTOK: "TikTok", LINKEDIN: "LinkedIn" };
 
-export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "WEEKLY_SUMMARY" | "APPROVALS";
+export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "WEEKLY_SUMMARY" | "APPROVALS" | "SAFETY" | "MORNING_BRIEFING";
 
 export const EVENTS: { id: NotificationEvent; label: string; sub: string; roles: Role[] }[] = [
   { id: "ACCESS", label: "Ad platform access", sub: "A connected account's access expires within 7 days, or has expired", roles: ["OWNER", "MEDIA_BUYER"] },
   { id: "SYNC_FAILED", label: "Sync failures", sub: "An ad account couldn't sync its spend and results", roles: ["OWNER", "MEDIA_BUYER"] },
   { id: "PACING", label: "Budget pacing", sub: "A client will run out early or underspend this month", roles: ["OWNER", "MEDIA_BUYER", "ANALYST"] },
   { id: "APPROVALS", label: "Approvals", sub: "A change is waiting for an owner, or a change you asked for was approved or rejected", roles: ["OWNER", "MEDIA_BUYER"] },
+  { id: "SAFETY", label: "Automatic changes", sub: "A safety rule or auto-apply changed a campaign on its own (with Undo)", roles: ["OWNER", "MEDIA_BUYER"] },
+  { id: "MORNING_BRIEFING", label: "Morning briefing", sub: "Every morning at 08:00: the top decisions for your clients, what changed in the last 24 hours and yesterday's spend", roles: ["OWNER", "MEDIA_BUYER", "ANALYST"] },
   { id: "WEEKLY_SUMMARY", label: "Weekly summary", sub: "Spend and results per client, on the first day of your week at 09:00", roles: ["OWNER", "MEDIA_BUYER", "ANALYST", "CLIENT_VIEWER"] },
 ];
 
-/** Who gets what unless they change it. */
+/** Who gets what unless they change it. The morning briefing (C12) is opt-in. */
 const DEFAULT_ON: Record<Role, NotificationEvent[]> = {
-  OWNER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY", "APPROVALS"],
-  MEDIA_BUYER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY", "APPROVALS"],
+  OWNER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY", "APPROVALS", "SAFETY"],
+  MEDIA_BUYER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY", "APPROVALS", "SAFETY"],
   ANALYST: ["WEEKLY_SUMMARY"],
   CLIENT_VIEWER: ["WEEKLY_SUMMARY"],
 };
@@ -267,7 +271,170 @@ export async function runWorkspaceAlerts(workspaceId: string, now = new Date()) 
     }));
     sent += await deliver(workspaceId, ms, "WEEKLY_SUMMARY", items, () => `Your week in ${ws.name}`, "The last 7 days, compared with the 7 before:", { label: "Open Analytics", path: "/analytics" });
   }
+
+  const wanting = ms.filter((m) => m.prefs.find((p) => p.id === "MORNING_BRIEFING")?.email);
+  const local = localParts(now, ws.timezone);
+  if (wanting.length && local.hour >= BRIEFING_FROM && local.hour <= BRIEFING_UNTIL) {
+    const data = await briefingData(workspaceId, now, local.date);
+    for (const m of wanting) if (await sendBriefing(workspaceId, ws.name, m, data)) sent++;
+  }
   return sent;
+}
+
+/* ── Morning briefing (C12) ───────────────────────────────────────────────── */
+
+/** Goes out from 08:00 local; until 11:00 a late server still catches up, after that it waits for tomorrow. */
+const BRIEFING_FROM = 8;
+const BRIEFING_UNTIL = 11;
+
+const money = (n: number, c: string | null) => {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: c ?? "USD", maximumFractionDigits: 0 }).format(n);
+  } catch {
+    return String(Math.round(n));
+  }
+};
+
+type BriefingData = {
+  date: string;
+  decisions: { clientId: string | null; title: string; reason: string; impact: string | null; client: string | null; path: string }[];
+  changes: { clientId: string | null; line: string }[];
+  spend: { clientId: string; name: string; spend: number; revenue: number; results: number; currency: string | null }[];
+  pending: number;
+};
+
+/** Everything the briefing can say for one workspace on local date `date`; each member gets their clients' part. */
+async function briefingData(workspaceId: string, now: Date, date: string): Promise<BriefingData> {
+  const today = new Date(`${date}T00:00:00Z`);
+  const [suggestions, logs, clients, pending] = await Promise.all([
+    prisma.suggestion.findMany({
+      where: { workspaceId, status: "OPEN", OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+      include: { client: { select: { name: true } } },
+      orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+      take: 50,
+    }),
+    changeLog.list(workspaceId, { limit: 100 }),
+    prisma.client.findMany({ where: { workspaceId }, select: { id: true, name: true, currency: true, adAccounts: { where: { archivedAt: null }, select: { id: true, currency: true } } } }),
+    prisma.approvalRequest.count({ where: { workspaceId, status: "PENDING" } }),
+  ]);
+
+  const who = (e: (typeof logs)[number]) =>
+    e.actorType === "SYNC" ? "changed on the ad platform" : e.actorType === "AI" ? `Advertix suggestion, ${e.actorName ? `applied by ${escapeHtml(e.actorName)}` : "applied automatically"}` : e.actorType === "RULE" ? "safety rule" : `${escapeHtml(e.actorName ?? "a teammate")}${e.approvalId ? " (approved)" : ""}`;
+  const changes = logs
+    .filter((e) => e.createdAt.getTime() >= now.getTime() - DAY)
+    .map((e) => ({ clientId: e.clientId, line: `<strong>${escapeHtml(e.campaignName)}</strong>: ${escapeHtml(e.summary)} · ${who(e)}` }));
+
+  const spend = [];
+  for (const c of clients) {
+    const ids = c.adAccounts.map((a) => a.id);
+    if (!ids.length) continue;
+    const s = await prisma.campaignMetrics.aggregate({ where: { campaign: { adAccountId: { in: ids } }, date: { gte: new Date(today.getTime() - DAY), lt: today } }, _sum: { spend: true, revenue: true, conversions: true } });
+    const amount = Number(s._sum.spend ?? 0);
+    if (amount > 0) spend.push({ clientId: c.id, name: c.name, spend: amount, revenue: Number(s._sum.revenue ?? 0), results: s._sum.conversions ?? 0, currency: c.currency ?? c.adAccounts[0]?.currency ?? null });
+  }
+  spend.sort((a, b) => b.spend - a.spend);
+
+  return {
+    date,
+    decisions: suggestions.map((s) => ({
+      clientId: s.clientId,
+      title: s.title,
+      reason: s.reason,
+      impact: s.impact,
+      client: s.client?.name ?? null,
+      path: s.reviewHref?.startsWith("/") ? s.reviewHref : s.campaignId ? `/campaigns/${s.campaignId}` : "/dashboard",
+    })),
+    changes,
+    spend,
+    pending,
+  };
+}
+
+/** One member's briefing, or null when there's nothing to say. */
+function briefingEmail(m: Member, d: BriefingData, workspaceName: string) {
+  const url = (path: string) => `${FRONTEND_URL()}${path}`;
+  const decisions = d.decisions.filter((s) => visible(m, s.clientId)).slice(0, 3);
+  const changes = d.changes.filter((c) => visible(m, c.clientId));
+  const spend = d.spend.filter((s) => visible(m, s.clientId));
+  const pending = m.role === "OWNER" ? d.pending : 0;
+  if (!decisions.length && !changes.length && !spend.length && !pending) return null;
+
+  const h = (t: string) => `<p style="margin:20px 0 8px;font-weight:600;color:#14121f">${t}</p>`;
+  const ul = (items: string[]) => `<ul style="margin:0;padding-left:18px">${items.map((i) => `<li style="margin:0 0 8px">${i}</li>`).join("")}</ul>`;
+  const parts: string[] = [];
+  if (pending) {
+    parts.push(`<p style="margin:0;padding:10px 12px;border-radius:10px;background:#fff4e0;color:#14121f"><strong>${pending} change${pending === 1 ? "" : "s"} waiting for your approval.</strong> <a href="${url("/activity")}" style="color:#6448f2">Review</a></p>`);
+  }
+  if (decisions.length) {
+    parts.push(h(`Today's top ${decisions.length === 1 ? "decision" : `${decisions.length} decisions`}`));
+    parts.push(
+      ul(
+        decisions.map(
+          (s) =>
+            `<a href="${url(s.path)}" style="color:#14121f;font-weight:600">${escapeHtml(s.title)}</a>${s.client ? ` · ${escapeHtml(s.client)}` : ""}${s.impact ? ` · <span style="color:#16794a;font-weight:600">${escapeHtml(s.impact)}</span>` : ""}<br><span>${escapeHtml(s.reason.length > 200 ? `${s.reason.slice(0, 197)}…` : s.reason)}</span>`
+        )
+      )
+    );
+  }
+  if (changes.length) {
+    parts.push(h("What changed in the last 24 hours"));
+    parts.push(ul(changes.slice(0, 6).map((c) => c.line)));
+    if (changes.length > 6) parts.push(`<p style="margin:0"><a href="${url("/activity")}" style="color:#6448f2">and ${changes.length - 6} more in Activity</a></p>`);
+  }
+  if (spend.length) {
+    parts.push(h("Yesterday"));
+    parts.push(
+      ul(
+        spend.slice(0, 6).map(
+          (s) =>
+            `<strong>${escapeHtml(s.name)}</strong>: ${money(s.spend, s.currency)} spent · ${s.revenue > 0 ? `${money(s.revenue, s.currency)} revenue (${(s.revenue / s.spend).toFixed(2)}x ROAS)` : `${s.results} result${s.results === 1 ? "" : "s"}`}`
+        )
+      )
+    );
+  }
+
+  const n = decisions.length;
+  const subject = n ? `Your morning in ${workspaceName}: ${n} decision${n === 1 ? "" : "s"}` : `Your morning in ${workspaceName}`;
+  return {
+    subject,
+    html: emailLayout({
+      heading: "Good morning",
+      body: `<p style="margin:0 0 4px">Here's where ${escapeHtml(workspaceName)} stands today.</p>${parts.join("")}`,
+      cta: { label: "Open Advertix", url: url("/dashboard") },
+      footer: `You get this because the morning briefing is on in <a href="${url("/settings?tab=notifications")}" style="color:#6448f2">Settings › Notifications</a>.`,
+    }),
+  };
+}
+
+/** Send a member today's briefing once (logged per local date). `force` skips the once-a-day check (Send me today's briefing). */
+async function sendBriefing(workspaceId: string, workspaceName: string, m: Member, d: BriefingData, force = false) {
+  const key = `briefing:${d.date}`;
+  if (!force && (await prisma.notificationLog.findFirst({ where: { userId: m.userId, event: "MORNING_BRIEFING", key } }))) return false;
+  const email = briefingEmail(m, d, workspaceName);
+  if (!email) return false;
+  const r = await sendEmail(m.email, email.subject, email.html);
+  await prisma.notificationLog.create({ data: { workspaceId, userId: m.userId, event: "MORNING_BRIEFING", key: force ? `${key}:now:${Date.now()}` : key, status: r.ok ? "sent" : "failed", error: r.error } });
+  return r.ok;
+}
+
+/** POST /auth/notifications/briefing: today's briefing to me now, whatever the time or my setting. */
+export async function sendBriefingNow(userId: string, workspaceId: string, now = new Date()) {
+  const ws = await prisma.workspace.findUniqueOrThrow({ where: { id: workspaceId }, select: { name: true, timezone: true } });
+  const m = (await members(workspaceId)).find((x) => x.userId === userId);
+  if (!m || m.role === "CLIENT_VIEWER") throw Object.assign(new Error("The morning briefing isn't available for your role."), { status: 403 });
+  const d = await briefingData(workspaceId, now, localParts(now, ws.timezone).date);
+  if (!briefingEmail(m, d, ws.name)) return { ok: false, empty: true, error: null };
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true } });
+  const sent = await sendBriefing(workspaceId, ws.name, { ...m, email: user.email }, d, true);
+  return { ok: sent, empty: false, error: sent ? null : "The email didn't send." };
+}
+
+/** For tests: the briefing a member would get at `now` (null = nothing to say). */
+export async function previewBriefing(workspaceId: string, userId: string, now = new Date()) {
+  const ws = await prisma.workspace.findUniqueOrThrow({ where: { id: workspaceId }, select: { name: true, timezone: true } });
+  const m = (await members(workspaceId)).find((x) => x.userId === userId);
+  if (!m) return null;
+  return briefingEmail(m, await briefingData(workspaceId, now, localParts(now, ws.timezone).date), ws.name);
 }
 
 /* ── Scheduler ────────────────────────────────────────────────────────────── */

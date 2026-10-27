@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSWRConfig } from "swr";
 import Link from "next/link";
 import { AlertTriangle, Check } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
@@ -35,6 +36,7 @@ export function ApprovalsCard({ setSaver }: { setSaver: (s: SettingsSaver | null
   const q = useApi((c) => c.getApprovalSettings(), [], { key: "approval-settings" });
   const summary = useApprovalSummary();
   const refresh = useRefreshApprovals();
+  const { mutate } = useSWRConfig();
   const s = q.data;
   const initial = useMemo<Form | null>(
     () => (s ? { limitOn: s.budgetPct !== null, budgetPct: String(s.budgetPct ?? 20), timeout: s.timeout, askFirst: s.clients.filter((c) => c.askFirst).map((c) => c.id).sort() } : null),
@@ -57,6 +59,8 @@ export function ApprovalsCard({ setSaver }: { setSaver: (s: SettingsSaver | null
         await api.saveApprovalSettings({ budgetPct: form.limitOn ? pct : null, timeout: form.timeout, askFirstClientIds: form.askFirst });
         await q.refetch();
         void refresh();
+        // The Automation card disables auto-apply for "Ask first" clients.
+        void mutate((key) => Array.isArray(key) && key[0] === "safety-settings");
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

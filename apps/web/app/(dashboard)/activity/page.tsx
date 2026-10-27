@@ -240,7 +240,7 @@ export default function ActivityPage() {
                         <span className="font-semibold">{e.campaignName}</span> · {e.summary}
                       </span>
                       <span className="text-xs text-ink-3">
-                        {e.actorType === "SYNC" ? "Changed outside Advertix" : e.actorName ?? "Someone"}
+                        {e.actorType === "SYNC" ? "Changed outside Advertix" : e.actorType === "RULE" ? "Safety rule" : e.actorType === "AI" ? `Suggestion, ${e.actorName ? `applied by ${e.actorName}` : "applied automatically"}` : e.actorName ?? "Someone"}
                         {e.approvalId && <> · approved {e.approvedByName ? `by ${e.approvedByName}` : "after 24 hours"}</>} · {timeAgo(e.createdAt)}
                         {e.undoneAt && <> · undone{e.undoneByName ? ` by ${e.undoneByName}` : ""}</>}
                       </span>

@@ -300,7 +300,8 @@ class SuggestionsService {
     return s;
   }
 
-  async apply(workspaceId: string, id: string, userId: string): Promise<Suggestion> {
+  /** `auto` (C13): applied by auto-apply on that day: no person, noted in the change log. */
+  async apply(workspaceId: string, id: string, userId: string | null, auto?: { day: string }): Promise<Suggestion> {
     const s = await this.find(workspaceId, id);
     if (!s.actionType || !s.actionPayload) throw new ActionError(400, "This suggestion can't be applied from Advertix. Review it instead.");
     if (s.status === "APPLIED") throw new ActionError(409, "Already applied.");
@@ -315,7 +316,7 @@ class SuggestionsService {
 
     try {
       const revert = await this.execute(workspaceId, s.actionType, s.actionPayload, "apply");
-      await this.logChange(workspaceId, s, s.actionType, revert, s.actionPayload as Partial<SetBudgetPayload & SetStatusPayload>, userId);
+      await this.logChange(workspaceId, s, s.actionType, revert, s.actionPayload as Partial<SetBudgetPayload & SetStatusPayload>, userId, "AI", auto);
       return await prisma.suggestion.update({
         where: { id },
         data: { revertPayload: revert as unknown as Prisma.InputJsonValue, undoneAt: null },
@@ -381,7 +382,8 @@ class SuggestionsService {
     before: Partial<SetBudgetPayload & SetStatusPayload> | null,
     after: Partial<SetBudgetPayload & SetStatusPayload> | null,
     userId: string | null,
-    actorType: "AI" | "USER" = "AI"
+    actorType: "AI" | "USER" = "AI",
+    auto?: { day: string }
   ) {
     const campaignId = after?.campaignId ?? before?.campaignId;
     if (!campaignId) return;
@@ -400,7 +402,8 @@ class SuggestionsService {
       platformPushed: true,
       action: budget ? "campaign.budget" : "campaign.status",
       before: budget ? { budget: Number(before?.dailyBudget), budgetType: "DAILY" } : { status: before?.status },
-      after: budget ? { budget: Number(after?.dailyBudget), budgetType: "DAILY" } : { status: after?.status },
+      after: { ...(budget ? { budget: Number(after?.dailyBudget), budgetType: "DAILY" } : { status: after?.status }), ...(auto ? { auto: auto.day } : {}) },
+      ...(auto ? { note: "(applied automatically)" } : {}),
     });
   }
 

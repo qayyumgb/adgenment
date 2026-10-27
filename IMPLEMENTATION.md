@@ -485,6 +485,33 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-27 — C13 Guarded auto-apply
+
+- **Per client** "Auto-apply small changes" (Settings › AI & automation › Automation): open Meta budget suggestions that move a daily budget by at most 15% (adjustable, 1–30%) apply on their own, one move per campaign per day.
+- Logged as "applied automatically" with 7-day Undo and emailed ("Automatic changes" alert).
+- **Never applies:** on "Ask first" clients, a suggestion someone undid, raises while the monthly-cap rule is holding, or anything while Pause all automation is on.
+- **Schema change:** `Client.autoApply`, `Workspace.autoApplyMaxPct`. Run `prisma db push` on production.
+
+### 2026-10-27 — C14 Safety rules
+
+- **Opt-in per client** (Settings › AI & automation › Safety rules):
+  - **Pixel stopped firing** (no event for 24 hours): pause the active conversion campaigns, and resume them when the pixel fires again.
+  - **Monthly budget running out:** lower Meta daily budgets by at most 20% (adjustable, 1–50%) a day so the month fits.
+- Every action is logged as "Safety rule" with 7-day Undo and emailed (new `SAFETY` alert). An Undo tells the rule to keep its hands off.
+- **Pause all automation** switch.
+- **Schema change:** `Client.safetyPixel` / `safetyCap`, `Workspace.safetyMaxCutPct` / `automationPaused`. Run `prisma db push` on production before the API deploy.
+
+### 2026-10-27 — C12 Morning briefing email
+
+- **Opt-in daily email** from 08:00 workspace time (Settings › Notifications › Morning briefing):
+  - the approvals waiting (owners);
+  - the top 3 decisions with links;
+  - what changed in the last 24 hours;
+  - yesterday's spend per client.
+- Scoped to the clients each person can see. Nothing is sent on an empty day.
+- "Send me today's briefing now" sends it straight away, for testing.
+- No schema change.
+
 ### 2026-10-27 — C1 Approvals & history
 
 - **Held changes:** a Media buyer's big budget increase (over the workspace limit, 20% by default, live Meta campaigns only), or any spend change on an "Ask first" client, waits for an owner.
@@ -500,6 +527,8 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 - **Hardening:** `getAccess` returns null when there's no signed-in user. Before, it matched any member.
 - **Older Advertix campaigns:** some were published before the ad set id was stored, so they showed a budget of 0 that couldn't be changed. Sync now links them to their ad set when there is exactly one, named "<campaign> — Ad Set", with no campaign-level budget. The ad set's budget becomes the campaign's. Linked campaigns also follow ad set budget edits made in Ads Manager.
   - A budget change that can't be applied is no longer sent for approval; it's refused straight away.
+- **Undo goes through approvals:** a Media buyer's Undo (from the change log or a suggestion) is judged by what it would change. Putting a budget back up past the limit, or anything on an "Ask first" client, waits for an owner; renames and small changes go through.
+- **Settings › AI & automation** now has the Save changes button (owners).
 - **Deploy:** schema change. Run `prisma db push` on production before the API deploy.
 
 ### 2026-10-27 — C3 Command palette (⌘K)
