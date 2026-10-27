@@ -3,6 +3,7 @@
 import { Suspense, type ReactNode } from "react";
 import { THEME_SCRIPT, ThemeProvider } from "@/components/app/theme/ThemeProvider";
 import { ClientProvider } from "./ClientContext";
+import { CommandPalette } from "./CommandPalette";
 import { NavigationProgress } from "./NavigationProgress";
 import { SidebarContent } from "./Sidebar";
 import { MobileAppBar, TopBar } from "./TopBar";
@@ -22,6 +23,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <NavigationProgress />
       </Suspense>
       <ClientProvider>
+        <CommandPalette />
         <div className="grid min-h-screen grid-cols-1 bg-bg text-sm leading-normal text-ink min-[900px]:grid-cols-[256px_minmax(0,1fr)]">
           <aside className="sticky top-0 hidden h-screen overflow-y-auto border-r border-line bg-surface min-[900px]:block">
             <SidebarContent />

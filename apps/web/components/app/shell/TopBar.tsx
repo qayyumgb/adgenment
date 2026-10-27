@@ -14,6 +14,7 @@ import { useClientScope } from "./ClientContext";
 import { ClientSwitcherMenu } from "./ClientSwitcher";
 import { SidebarContent } from "./Sidebar";
 import { MOBILE_TABS, isActive } from "./nav";
+import { openCommandPalette } from "./CommandPalette";
 import { ROLE_LABEL } from "@/components/app/team/access";
 
 const HELP_HREF = "mailto:support@advertix.io";
@@ -58,16 +59,17 @@ function RolePill() {
 export function TopBar() {
   return (
     <header className="flex h-16 flex-none items-center gap-1 border-b border-line bg-surface px-6">
-      {/* TODO(C3): opens the ⌘K command palette. Until then: visibly inactive. */}
-      <div
-        aria-disabled="true"
-        title="Search arrives with the command palette"
-        className="flex h-10 min-w-0 max-w-[440px] flex-[0_1_440px] cursor-not-allowed items-center gap-2.5 rounded-ctl border border-line-2 bg-surface px-3 text-ink-3 opacity-70"
+      {/* Opens the ⌘K command palette (C3). */}
+      <button
+        type="button"
+        onClick={openCommandPalette}
+        aria-label="Search pages, clients, campaigns and actions"
+        className="flex h-10 min-w-0 max-w-[440px] flex-[0_1_440px] items-center gap-2.5 rounded-ctl border border-line-2 bg-surface px-3 text-left text-ink-3 transition-colors hover:border-line-2 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft"
       >
         <Search size={16} className="flex-none" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate">Search campaigns, ads, clients</span>
+        <span className="min-w-0 flex-1 truncate">Search campaigns, clients, pages</span>
         <span className="rounded-md border border-line-2 px-1.5 text-xs text-ink-2">⌘K</span>
-      </div>
+      </button>
       <div className="flex-1" />
       <RolePill />
       <AlertsButton />
@@ -122,6 +124,9 @@ export function MobileAppBar() {
           <MenuIcon size={20} />
         </IconButton>
         <ClientSwitcherMenu variant="chip" />
+        <IconButton label="Search" size={38} onClick={openCommandPalette}>
+          <Search size={19} />
+        </IconButton>
         <AlertsButton size={38} />
         <ThemeButton size={38} />
       </header>

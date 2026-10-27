@@ -190,7 +190,7 @@ Ordered by value and dependencies (Feature Proposals + review):
 |---|---|---|---|
 | C1 | **F2 Approvals & history** — `/activity`: waiting-for-approval queue above the guardrail or for ask-first clients, history with Undo | B3, B6 | M |
 | C2 | **F1 Alerts inbox** — header bell panel; anomaly engine (CPA spikes, pacing, tracking silence), health checks for all platforms, grouped per campaign, one-click fixes | B1, B3, job queue (C10), notification channels | L |
-| C3 | **F5 Command palette (⌘K)** — clients, campaigns, actions; "Ask Advertix" needs `/ai/chat` | B1 | S |
+| C3 ✅ | **F5 Command palette (⌘K)** — clients, campaigns, actions; "Ask Advertix" needs `/ai/chat` (not yet) | B1 | S |
 | C4 | **F4 Client portal + D5 Scheduled reports** — share links (token, toggles), public read-only view, weekly PDF + email | B1, PDF rendering service | L |
 | C5 | **F7 Flight calendar** — every client's launches and end dates on one timeline, overlap warnings, holiday markers | B1, SCHEDULED status | M |
 | C6 | **F8 Schedule step** in the wizard (end date, smart-hours toggle, auto-pause rules) — auto-pause triggers later | C1, C2 engine | M (+L for triggers) |

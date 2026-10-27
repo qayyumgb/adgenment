@@ -485,6 +485,14 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-27 — C3 Command palette (⌘K)
+
+- **Opening it:** ⌘K / Ctrl+K anywhere in the app, the top-bar search (now active) or a new search button in the mobile app bar.
+- **What it finds:** pages and Settings tabs, clients (switch scope), campaigns by name (loaded once, then cached), and quick actions filtered by role: New campaign, Plan with AI, Creatives, Connect an ad account, Invite a teammate, Switch theme.
+- **Keyboard:** ↑↓ to move, Enter to open, Esc to close; Esc closes only the palette when other overlays are open.
+- **Code:** `components/app/shell/CommandPalette.tsx`; open it from code with `openCommandPalette()`.
+- **Not yet:** "Ask Advertix" (needs `/ai/chat`) and ad or creative search.
+
 ### 2026-10-27 — Marketing site: honest claims + dashboard theme with dark mode
 
 - **Claims audit** (`docs/MARKETING_CLAIMS_AUDIT.md`): every page now matches the product.
