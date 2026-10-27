@@ -62,6 +62,3 @@ export const SUPPORT_EMAIL = "support@advertix.io";
 // Privacy/Terms pages name an individual operator, not "Advertix, Inc."
 // (docs/MARKETING_REDESIGN_PLAN.md § 2, item 6).
 export const COPYRIGHT = "© 2026 ADVERTIX, INC.";
-
-/** Static header badge, kept as designed (decision 2026-10-20). */
-export const LIVE_TICKER = "LIVE · 23 ACCOUNTS · CHECKED 4 MIN AGO";

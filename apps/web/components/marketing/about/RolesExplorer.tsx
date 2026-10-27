@@ -6,16 +6,16 @@ type Who = "AI" | "SHARED" | "YOU";
 
 const ROLES: { t: string; who: Who; by: string; you: string }[] = [
   { t: "Media buyer", who: "AI", by: "Decision feed and budget allocator, checked every six hours.", you: "Setting strategy and client goals." },
-  { t: "Analyst", who: "AI", by: "Statistical models: response curves, anomalies, significance.", you: "Deciding which questions matter." },
+  { t: "Analyst", who: "AI", by: "Models on your data: response curves, fatigue and pacing.", you: "Deciding which questions matter." },
   { t: "Pacing manager", who: "AI", by: "Monthly caps per client with run-out dates and cap changes.", you: "Agreeing budgets with the client." },
   { t: "Creative strategist", who: "SHARED", by: "Fatigue detection and variants drafted from proven hooks.", you: "Taste, brand voice and final approval." },
   { t: "Copywriter", who: "SHARED", by: "Claude drafts headlines and primary text per platform.", you: "Editing for voice and claims." },
-  { t: "Tracking engineer", who: "AI", by: "Pixel and conversion API health alerts within the hour.", you: "Fixing the site tag when it breaks." },
-  { t: "Report writer", who: "AI", by: "Weekly white-label PDF with a plain-English summary.", you: "A quick read before it sends." },
-  { t: "Account manager", who: "YOU", by: "Client portal and reports make the conversations easier.", you: "The relationship. That stays human." },
+  { t: "Tracking engineer", who: "SHARED", by: "Pixel and account health checks on Meta; alerts inbox coming soon.", you: "Fixing the site tag when it breaks." },
+  { t: "Report writer", who: "SHARED", by: "CSV and Excel exports today; weekly white-label PDFs coming soon.", you: "A quick read before it sends." },
+  { t: "Account manager", who: "YOU", by: "Free client viewer seats today; a client portal is coming soon.", you: "The relationship. That stays human." },
   { t: "Planner", who: "AI", by: "AI Planner turns a goal and budget into draft campaigns.", you: "Choosing the goal." },
-  { t: "Platform specialists ×3", who: "AI", by: "One builder that maps to Meta, Google, TikTok, Snapchat and LinkedIn.", you: "Platform policy questions." },
-  { t: "Head of growth", who: "YOU", by: "Autonomy levels, guardrails and approvals keep you in charge.", you: "Every big call." },
+  { t: "Platform specialists ×3", who: "AI", by: "One builder that publishes to Meta, with Google, TikTok and LinkedIn synced in.", you: "Platform policy questions." },
+  { t: "Head of growth", who: "YOU", by: "Every change waits for your approval, with history and undo.", you: "Every big call." },
 ];
 
 const TAG: Record<Who, { bg: string; fg: string; label: string }> = {
@@ -41,7 +41,7 @@ export function RolesExplorer() {
               aria-pressed={on}
               onClick={() => setI(j)}
               className={`h-9 whitespace-nowrap rounded-full border px-3.5 text-sm font-medium transition-colors duration-[250ms] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mk-brand ${
-                on ? "border-mk-ink bg-mk-ink text-white" : "border-mk-line2 bg-mk-paper2 text-mk-ink hover:bg-white"
+                on ? "border-mk-ink bg-mk-ink text-mk-paper" : "border-mk-line2 bg-mk-paper2 text-mk-ink hover:bg-mk-s2"
               }`}
             >
               {x.t}
@@ -52,7 +52,7 @@ export function RolesExplorer() {
       <div
         data-reveal="up"
         aria-live="polite"
-        className="flex min-h-[180px] flex-col gap-3 rounded-[22px] bg-mk-ink p-5 text-mk-on-dark"
+        className="flex min-h-[180px] flex-col gap-3 rounded-[22px] bg-mk-band p-5 text-mk-on-dark"
       >
         <div className="flex items-center gap-2.5">
           <span className="text-[17px] font-semibold">{r.t}</span>

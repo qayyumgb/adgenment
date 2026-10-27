@@ -13,24 +13,24 @@ export const metadata: Metadata = {
 };
 
 const FACTS = [
-  { v: "90 days", l: "history read" },
+  { v: "90 days", l: "of history, at most" },
   { v: "6 h", l: "between checks" },
   { v: "3", l: "decisions a day" },
   { v: "7 days", l: "to undo" },
 ];
 
 const PIPE = [
-  { n: "01", t: "Platform APIs", b: "Spend, conversions and delivery straight from each platform, synced hourly.", ex: "meta.spend_7d = 14,260\ntiktok.cpa_7d = 14.20" },
-  { n: "02", t: "Normalise", b: "Five platforms mapped to one model: campaign, ad set, ad, client.", ex: "objective: purchase\nclient: fieldhouse" },
-  { n: "03", t: "Models", b: "Response curves, fatigue, anomalies and significance tests. Maths, not guesses.", ex: "marginal_roas(tiktok)\n= 3.80" },
+  { n: "01", t: "Platform APIs", b: "Spend, conversions and delivery straight from each platform, synced every few hours or on demand.", ex: "meta.spend_7d = 14,260\ntiktok.cpa_7d = 14.20" },
+  { n: "02", t: "Normalise", b: "Every platform mapped to one model: campaign, ad set, ad, client.", ex: "objective: purchase\nclient: fieldhouse" },
+  { n: "03", t: "Models", b: "Response curves, fatigue and pacing today; anomaly alerts and significance tests next. Maths, not guesses.", ex: "marginal_roas(tiktok)\n= 3.80" },
   { n: "04", t: "Claude", b: "Turns signals into a plain-English decision and cites the numbers.", ex: "“next dollar earns\n2.4× more on TikTok”" },
-  { n: "05", t: "Guardrails", b: "Your autonomy level and daily limit decide what applies and what waits.", ex: "limit = 15%/day\nabove → approval" },
+  { n: "05", t: "You decide", b: "Every change waits for your click and can be undone for 7 days. Guardrails for automatic moves are coming.", ex: "apply → logged\nundo ≤ 7 days" },
 ];
 
 export default function HowItWorksPage() {
   return (
     <>
-      <section className="border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(40px,6vw,72px)] pt-[clamp(48px,8vw,104px)]">
+      <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(40px,6vw,72px)] pt-[clamp(48px,8vw,104px)]">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-end justify-between gap-x-16 gap-y-7">
           <div className="flex min-w-0 flex-[1_1_600px] flex-col gap-[18px]">
             <Eyebrow>HOW IT WORKS</Eyebrow>

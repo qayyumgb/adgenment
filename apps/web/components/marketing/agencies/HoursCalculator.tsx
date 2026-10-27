@@ -7,9 +7,9 @@ import { AccentHeading, Eyebrow } from "@/components/marketing/ui/Heading";
 const HOURS = [
   { task: "Morning account checks", b: 3.5, a: 0.5, how: "One briefing ranks what matters across every client and platform." },
   { task: "Budget pacing and moves", b: 2, a: 0.3, how: "Monthly caps per client; the allocator proposes moves on response curves." },
-  { task: "Weekly client report", b: 2.5, a: 0.2, how: "A live white-label link plus a scheduled PDF with an AI-drafted summary." },
+  { task: "Weekly client report", b: 2.5, a: 0.2, how: "Coming soon: a live white-label link plus a scheduled PDF with an AI-drafted summary." },
   { task: "Creative refresh", b: 3, a: 1, how: "Fatigue flagged early; variants drafted from proven hooks." },
-  { task: "Chasing tracking issues", b: 1.5, a: 0.2, how: "Pixel and CPA alerts within the hour, grouped per campaign." },
+  { task: "Chasing tracking issues", b: 1.5, a: 0.2, how: "Pixel and access health checks today; CPA alerts grouped per campaign coming soon." },
 ];
 const MAX = 3.5;
 const RATE = 85;
@@ -95,7 +95,7 @@ export function HoursCalculator() {
         <div
           data-reveal="up"
           aria-live="polite"
-          className="grid grid-cols-1 overflow-hidden rounded-3xl bg-mk-ink text-mk-on-dark mk-sm:grid-cols-3"
+          className="grid grid-cols-1 overflow-hidden rounded-3xl bg-mk-band text-mk-on-dark mk-sm:grid-cols-3"
         >
           {sums.map((s) => (
             <div
@@ -108,7 +108,8 @@ export function HoursCalculator() {
           ))}
         </div>
         <span className="text-[13px] text-mk-ink3">
-          Estimates per client per week, based on the workflows we design around. Your numbers will vary.
+          Estimates per client per week, based on the workflows we design around, including features still coming.
+          Your numbers will vary.
         </span>
       </div>
     </section>

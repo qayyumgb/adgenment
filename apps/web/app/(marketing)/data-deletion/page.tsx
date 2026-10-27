@@ -11,7 +11,7 @@ const CONTACT_EMAIL = "support@advertix.io";
 
 export default function DataDeletionPage() {
   return (
-    <main className="bg-white text-mk-ink">
+    <main className="bg-mk-paper2 text-mk-ink">
       <Hero />
       <article className="mx-auto max-w-3xl px-6 py-12 lg:px-8">
         <Intro />

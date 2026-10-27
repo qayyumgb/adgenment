@@ -8,13 +8,8 @@ export function SiteFooter() {
       <div className="mx-auto flex max-w-[1280px] flex-col gap-9">
         <div className="flex flex-wrap justify-between gap-x-14 gap-y-8 border-b-2 border-mk-rule pb-7">
           <div className="flex max-w-[320px] flex-[1_1_240px] flex-col gap-3">
-            <Image
-              src="/brand/advertix-logo-black.png"
-              alt="Advertix"
-              width={152}
-              height={44}
-              className="h-[clamp(34px,4vw,44px)] w-auto self-start"
-            />
+            <Image src="/brand/advertix-logo-black.png" alt="Advertix" width={152} height={44} className="h-[clamp(34px,4vw,44px)] w-auto self-start dark:hidden" />
+            <Image src="/brand/advertix-logo-white.png" alt="Advertix" width={152} height={44} className="hidden h-[clamp(34px,4vw,44px)] w-auto self-start dark:block" />
             <span className="text-sm text-mk-ink2">
               Give every advertiser a senior media buyer in their pocket.
             </span>

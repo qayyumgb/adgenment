@@ -13,15 +13,15 @@ const STEPS = [
     n: "01",
     k: "CONNECT",
     t: "Connect every ad account",
-    b: "Sign in to Meta, Google, TikTok, Snapchat and LinkedIn with their official OAuth. Advertix reads 90 days of history and keeps it in sync both ways, every hour.",
-    tags: ["Official APIs", "90-day backfill", "Read + manage scopes"],
+    b: "Sign in to Meta, Google, TikTok and LinkedIn with their official OAuth (Snapchat is coming soon). Advertix reads up to 90 days of history and syncs every few hours: two-way on Meta, campaigns and results in from the others.",
+    tags: ["Official APIs", "Up to 90 days of history", "Read + manage scopes"],
   },
   {
     n: "02",
     k: "READ",
     t: "It reads the patterns",
-    b: "Every six hours, statistical models check spend, cost by hour, creative fatigue, audience overlap, pacing and tracking health across every platform at once.",
-    tags: ["Response curves", "Fatigue detection", "Anomaly alerts"],
+    b: "Every six hours, models check spend against plan, the next dollar’s return, creative fatigue, audience overlap, pacing and tracking health across your accounts at once.",
+    tags: ["Response curves", "Fatigue detection", "Pacing per client"],
   },
   {
     n: "03",
@@ -34,8 +34,8 @@ const STEPS = [
     n: "04",
     k: "CONTROL",
     t: "You stay in control",
-    b: "Small moves inside your guardrail apply on their own. Bigger ones wait for approval. Every change, by a person or the AI, is logged and reversible for 7 days.",
-    tags: ["Per-client autonomy", "Daily guardrail", "7-day undo"],
+    b: "Nothing changes until someone on your team applies it, and every change is logged with who made it and reversible for 7 days. Coming soon: let small moves inside a guardrail apply on their own, per client.",
+    tags: ["You approve", "Full history", "7-day undo"],
   },
 ];
 
@@ -44,7 +44,7 @@ const CONNS: { p: PlatformKey; n: string; a: string }[] = [
   { p: "G", n: "Google Ads", a: "6 accounts" },
   { p: "T", n: "TikTok", a: "4 accounts" },
   { p: "L", n: "LinkedIn", a: "3 accounts" },
-  { p: "S", n: "Snapchat", a: "1 account" },
+  { p: "S", n: "Snapchat", a: "Coming soon" },
 ];
 
 // 7 days × 24 hours of cost-per-purchase, coloured by tier (mockup formula).
@@ -58,7 +58,7 @@ const HEAT = Array.from({ length: 168 }, (_, k) => {
 
 const CHECKS = [
   { l: "Spend vs plan, per client", v: "ON PACE", c: "#41d39a" },
-  { l: "Cost per result by hour", v: "−$290/WK", c: "#ff8a8e" },
+  { l: "Platform access", v: "ALL VALID", c: "#41d39a" },
   { l: "Creative frequency", v: "1 FATIGUED", c: "#f2b44e" },
   { l: "Audience overlap", v: "38% · 1 PAIR", c: "#f2b44e" },
   { l: "Pixel and API health", v: "ALL FIRING", c: "#41d39a" },
@@ -72,8 +72,8 @@ const DECISIONS: { p: PlatformKey; t: string; why: string; v: string }[] = [
 ];
 
 const HISTORY = [
-  { w: "09:12", t: "Rotated out “UGC v3” · rule" },
-  { w: "06:00", t: "Moved $310/day to TikTok · in guardrail" },
+  { w: "09:12", t: "Paused “UGC v3” · Sara" },
+  { w: "08:40", t: "Moved $310/day to TikTok · Sara" },
   { w: "TUE", t: "Raised Broad ad set · Sara" },
 ];
 
@@ -171,7 +171,7 @@ export function StepsScroller() {
         <div className="min-w-0 flex-[1.15_1_460px]">
           <div
             aria-live="polite"
-            className="relative min-h-[clamp(420px,46vw,540px)] overflow-hidden rounded-[28px] bg-mk-ink p-[clamp(18px,3vw,28px)] text-mk-on-dark shadow-[0_50px_100px_-50px_rgba(40,24,120,.6)]"
+            className="relative min-h-[clamp(420px,46vw,540px)] overflow-hidden rounded-[28px] bg-mk-band p-[clamp(18px,3vw,28px)] text-mk-on-dark shadow-[0_50px_100px_-50px_rgba(40,24,120,.6)]"
           >
             <span aria-hidden="true" className="mk-dot-grid absolute inset-0" />
             <div className="relative mb-[18px] flex items-center gap-2.5 font-mk-mono text-xs tracking-[.06em] text-mk-lav-ink">
@@ -196,7 +196,7 @@ export function StepsScroller() {
                   </div>
                 ))}
                 <span className="mt-1.5 text-[13px] text-mk-on-dark2">
-                  Read 90 days of history · tokens encrypted with AES-256 · nothing changes on your accounts
+                  Up to 90 days of history · tokens encrypted with AES-256 · nothing changes on your accounts
                 </span>
               </div>
             )}
@@ -204,7 +204,7 @@ export function StepsScroller() {
             {step === 1 && (
               <div ref={paneRef} className="relative flex flex-col gap-3">
                 <div className={`flex flex-col gap-2.5 p-3.5 ${tile}`}>
-                  <span className="text-[12.5px] text-mk-on-dark2">Cost per purchase by hour · Fieldhouse · 45 days</span>
+                  <span className="text-[12.5px] text-mk-on-dark2">Cost per purchase by hour · illustrative · Smart hours, coming soon</span>
                   <div className="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-0.5" aria-hidden="true">
                     {HEAT.map((c, k) => (
                       <span key={k} className="aspect-square rounded-sm" style={{ background: c }} />
@@ -258,8 +258,8 @@ export function StepsScroller() {
             {step === 3 && (
               <div ref={paneRef} className="relative flex flex-col gap-3">
                 <div className="flex flex-col gap-3 rounded-[18px] bg-mk-paper2 p-4 text-mk-ink">
-                  <span className="self-start whitespace-nowrap rounded-full bg-[#fff1dc] px-2.5 py-[3px] font-mk-mono text-[11.5px] text-mk-warn">
-                    NEEDS APPROVAL · ABOVE 15%
+                  <span className="self-start whitespace-nowrap rounded-full bg-mk-warn-soft px-2.5 py-[3px] font-mk-mono text-[11.5px] text-mk-warn">
+                    WAITING FOR YOUR CLICK
                   </span>
                   <span className="text-base font-semibold">Raise Lumen’s TikTok budget</span>
                   <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
@@ -280,7 +280,7 @@ export function StepsScroller() {
                     aria-pressed={approved}
                     onClick={() => setApproved((a) => !a)}
                     className={`h-10 self-start rounded-full px-[18px] font-semibold text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mk-brand ${
-                      approved ? "bg-mk-pos" : "bg-mk-ink hover:bg-[#2a2733]"
+                      approved ? "bg-mk-pos" : "bg-mk-band hover:bg-mk-band/90"
                     }`}
                   >
                     {approved ? "✓ Approved · applies 06:00" : "Approve change"}

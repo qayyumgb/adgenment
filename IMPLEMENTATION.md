@@ -485,6 +485,20 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-27 — Marketing site: honest claims + dashboard theme with dark mode
+
+- **Claims audit** (`docs/MARKETING_CLAIMS_AUDIT.md`): every page now matches the product.
+  - Meta is the only two-way platform; Snapchat and the Track C features are marked "coming soon".
+  - Removed the fake live ticker, the invented release-board progress, lead forms, upload checks, quiet hours and the Enterprise SSO/SLA promises.
+  - "Night shift" now shows what Advertix *finds* overnight.
+  - New plan items: C12 morning briefing email, C13 guarded auto-apply, C14 safety rules.
+- **Theme:**
+  - The marketing tokens use the dashboard's palette.
+  - Dark mode shares the app's light / dark / system preference, using the existing `ThemeProvider` imported into the marketing layout. A theme toggle is in the site header.
+  - Dark panels use a new `mk-band` token, so they stay dark in both themes.
+  - The serif accent headings are kept.
+- No dashboard code changed. Settings › Billing shows the corrected plan feature list, because it reads `lib/marketing/pricing.ts`.
+
 ### 2026-10-27 — OAuth state nonce (security)
 
 - **The old state:** the connect flows for Meta, Google, TikTok and LinkedIn sent the bare user id as OAuth `state`, and the callback trusted it. That let someone craft a callback for another user.

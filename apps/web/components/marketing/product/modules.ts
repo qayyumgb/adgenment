@@ -24,6 +24,8 @@ export type ProductModule = {
   dark: boolean;
   ui: { title: string; tag: string; tone: Tone; rows: ModuleRow[]; note: string };
   points: { t: string; b: string }[];
+  /** Shown with a "Coming soon" tag: the module is planned, not live (Track C). */
+  soon?: string;
 };
 
 export const MODULES: ProductModule[] = [
@@ -75,7 +77,7 @@ export const MODULES: ProductModule[] = [
     points: [
       { t: "Apply, snooze or undo", b: "Every action is reversible for 7 days" },
       { t: "Grouped by client", b: "One feed for 20 clients" },
-      { t: "Learns from “not now”", b: "Declined ideas stop coming back" },
+      { t: "“Not now” hides it", b: "For a week, then it’s checked again" },
     ],
   },
   {
@@ -84,7 +86,7 @@ export const MODULES: ProductModule[] = [
     kicker: "BUDGET ALLOCATOR",
     lead: "See where the next dollar",
     accent: "earns the most.",
-    body: "Drag a platform’s daily budget and watch projected revenue update. Advertix marks its recommended split and keeps each client inside their monthly cap.",
+    body: "Drag a platform’s daily budget and watch projected revenue update. Advertix marks its recommended split and shows each client’s pace against their monthly cap.",
     dark: true,
     ui: {
       title: "Fieldhouse · daily budget",
@@ -100,7 +102,7 @@ export const MODULES: ProductModule[] = [
     points: [
       { t: "Marginal return per platform", b: "Not just averages" },
       { t: "Monthly caps per client", b: "With run-out dates" },
-      { t: "Scheduled changes", b: "New budgets go live at midnight" },
+      { t: "Apply in one click", b: "Meta budgets change straight away" },
     ],
   },
   {
@@ -109,7 +111,7 @@ export const MODULES: ProductModule[] = [
     kicker: "CREATIVE STUDIO",
     lead: "Variants from the hooks",
     accent: "that already convert.",
-    body: "Brief a format and tone, and Advertix drafts copy and layouts from each client’s best openings. Fatigue is flagged before CTR collapses, with the replacement already drafted.",
+    body: "Brief a format and tone, and Advertix drafts copy and images from each client’s best openings. Fatigue is flagged before CTR collapses, and a fresh variant is one click away.",
     dark: false,
     ui: {
       title: "Lumen · Glow Serum",
@@ -123,34 +125,35 @@ export const MODULES: ProductModule[] = [
       note: "Two new variants reuse the founder hook in 9:16 for Reels and Stories.",
     },
     points: [
-      { t: "Per-platform cuts", b: "1:1, 4:5 and 9:16" },
-      { t: "Fatigue bar on every ad", b: "With a rotate action" },
-      { t: "Upload checks", b: "Text coverage and safe zones" },
+      { t: "A shape per placement", b: "1:1, 9:16 and 16:9" },
+      { t: "Fatigue bar on every ad", b: "Pause tired Meta ads in place" },
+      { t: "Image quality", b: "Low, medium or high" },
     ],
   },
   {
     id: "alerts",
     name: "Alerts",
     kicker: "ALERTS",
-    lead: "Know within the hour",
-    accent: "when something breaks.",
-    body: "Broken pixels, CPA spikes, expiring tokens and pacing problems are caught across every platform and grouped per campaign, so one problem sends one alert, with the fix one click away.",
+    lead: "Know when",
+    accent: "something breaks.",
+    body: "Today, email alerts tell the right people when platform access is about to expire, a sync fails or a client is off pace, plus a weekly summary. Coming soon: broken pixels and CPA spikes, grouped per campaign in one inbox, with the fix one click away.",
+    soon: "Alerts inbox",
     dark: true,
     ui: {
       title: "Alerts · open",
       tag: "2 CRITICAL",
       tone: "neg",
       rows: [
-        { mark: "N", label: "Mara · Snapchat pixel stopped", value: "12 MIN", valueTone: "neg", sub: "Spend continues at $85/day with nothing measured" },
+        { mark: "N", label: "Mara · Meta pixel stopped", value: "12 MIN", valueTone: "neg", sub: "Spend continues at $85/day with nothing measured" },
         { mark: "N", label: "Orbit · LinkedIn CPL 2.4× normal", value: "1 H", valueTone: "neg", sub: "New placement on Audience Network" },
         { mark: "W", label: "Kobo · budget runs out 26 Oct", value: "06:00", sub: "Lower the daily cap by $430 to last the month" },
       ],
-      note: "Pause Mara’s two Snapchat campaigns until the pixel fires again?",
+      note: "Pause Mara’s two sales campaigns until the pixel fires again?",
     },
     points: [
-      { t: "Email, Slack or in-app", b: "Per event type" },
-      { t: "Quiet hours", b: "Except money-burning issues" },
-      { t: "Fix from the alert", b: "No hunting through menus" },
+      { t: "Email alerts today", b: "Access, sync failures, pacing, weekly summary" },
+      { t: "Each person chooses", b: "Per event type" },
+      { t: "Inbox and fix from the alert", b: "Coming soon" },
     ],
   },
   {
@@ -159,7 +162,8 @@ export const MODULES: ProductModule[] = [
     kicker: "REPORTS & CLIENT PORTAL",
     lead: "Status updates",
     accent: "that write themselves.",
-    body: "Share a live white-label link per client and schedule a weekly PDF with KPIs, the platform split, top ads and a plain-English summary your team can edit before it sends.",
+    body: "Coming soon: a live link per client and a weekly PDF with KPIs, the platform split, top ads and a plain-English summary your team edits before it sends. Today, export any report view to CSV or Excel.",
+    soon: "Client portal & scheduled reports",
     dark: false,
     ui: {
       title: "Weekly report · Lumen Skincare",
@@ -173,21 +177,24 @@ export const MODULES: ProductModule[] = [
       note: "Sara reviewed this summary; it sends automatically at 09:00.",
     },
     points: [
-      { t: "Your logo and domain", b: "Not ours" },
-      { t: "Choose what clients see", b: "Spend, names, notes" },
-      { t: "Weekly, monthly or on demand", b: "PDF or live link" },
+      { t: "Your logo on every report", b: "Coming soon" },
+      { t: "Choose what clients see", b: "Coming soon" },
+      { t: "Export today", b: "CSV or Excel from Campaigns, Analytics and Overview" },
     ],
   },
 ];
 
-/** Coverage per capability: F = full, H = partial, N = not offered (Meta, Google, TikTok, Snapchat, LinkedIn). */
+/**
+ * Coverage per capability (Meta, Google, TikTok, Snapchat, LinkedIn):
+ * F = works today, H = partly, C = coming soon, N = not offered by the platform.
+ */
 export const COVERAGE: { l: string; c: string }[] = [
-  { l: "Two-way campaign sync", c: "FFFHF" },
-  { l: "Publish from Advertix", c: "FFFHF" },
-  { l: "AI suggestions and apply", c: "FFFHF" },
-  { l: "Cross-platform budget moves", c: "FFFHF" },
-  { l: "Hour-of-day scheduling", c: "HFFHN" },
-  { l: "Creative upload and variants", c: "FFFHF" },
-  { l: "Conversion tracking health", c: "FFFHH" },
-  { l: "Lead forms", c: "FFHNF" },
+  { l: "Campaigns and results sync in", c: "FFFCF" },
+  { l: "Publish, pause and change budgets", c: "FCCCC" },
+  { l: "AI suggestions", c: "FHHCH" },
+  { l: "Apply suggestions in one click", c: "FCCCC" },
+  { l: "Budget allocator and pacing", c: "FFFCF" },
+  { l: "Creative studio drafts", c: "FFFCF" },
+  { l: "Ads synced with fatigue tracking", c: "FCCCC" },
+  { l: "Pixel and account health checks", c: "FCCCC" },
 ];

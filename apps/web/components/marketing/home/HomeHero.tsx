@@ -48,6 +48,7 @@ export function HomeHero() {
   const [mode, setMode] = useState<Mode>("adv");
 
   const secRef = useRef<HTMLElement>(null);
+  const shadeRef = useRef<HTMLDivElement>(null);
   const introRef = useRef<HTMLDivElement>(null);
   const capRef = useRef<HTMLParagraphElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -130,7 +131,8 @@ export function HomeHero() {
           Object.assign(nx.style, {
             position: "relative",
             zIndex: "3",
-            background: "rgb(248 246 241)",
+            // The page colour of the current theme (a token, not a fixed value).
+            background: "rgb(var(--mk-paper))",
             marginTop: `${-gap}px`,
           });
         };
@@ -158,7 +160,7 @@ export function HomeHero() {
           .to(capRef.current, { autoAlpha: 0, duration: 0.2 }, 0)
           .to(wrap, { y: () => G.y, scale: () => G.s, ease: "power2.inOut", duration: 1, force3D: true }, 0)
           .to(eng, { borderRadius: 0, boxShadow: "0 0 0 0 rgba(0,0,0,0)", ease: "power2.inOut", duration: 1 }, 0)
-          .to(sec, { backgroundColor: "#15131a", ease: "power1.inOut", duration: 0.7 }, 0.3)
+          .to(shadeRef.current, { opacity: 1, ease: "power1.inOut", duration: 0.7 }, 0.3)
           .to({}, { duration: 0.25 });
 
         return () => {
@@ -222,16 +224,20 @@ export function HomeHero() {
   return (
     <section
       ref={secRef}
-      className="relative bg-mk-paper px-[clamp(12px,3vw,32px)] pb-[clamp(48px,7vw,88px)] pt-[clamp(36px,6vw,72px)]"
+      className="mk-grid-bg relative bg-mk-paper px-[clamp(12px,3vw,32px)] pb-[clamp(48px,7vw,88px)] pt-[clamp(36px,6vw,72px)]"
     >
-      <div className="mx-auto max-w-[1280px]">
+      {/* Darkens the section as the engine takes over. An overlay's opacity, not
+          the section's background colour: a colour tween records its start value,
+          which would lock in the wrong theme if recorded mid-switch. */}
+      <div ref={shadeRef} aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[#15131a] opacity-0" />
+      <div className="relative mx-auto max-w-[1280px]">
         <div
           ref={introRef}
           className="flex origin-top flex-wrap items-end justify-between gap-x-16 gap-y-6 px-[clamp(4px,1vw,0px)] pb-[clamp(28px,4vw,44px)] will-change-transform"
         >
           <div className="flex min-w-0 flex-[1_1_560px] flex-col gap-[18px]">
             <span data-reveal="up" className="font-mk-mono text-xs tracking-[.06em] text-mk-brand-ink">
-              ONE BUDGET · FIVE PLATFORMS · ONE AI THAT SEES ALL OF THEM
+              ONE BUDGET · EVERY PLATFORM · ONE AI THAT SEES ALL OF THEM
             </span>
             <h1 className="m-0 text-[clamp(46px,10vw,124px)] font-medium leading-[.9] tracking-[-0.055em]">
               <span className="-mb-[.14em] block overflow-hidden pb-[.18em]">
@@ -251,8 +257,8 @@ export function HomeHero() {
           </div>
           <div className="flex max-w-[440px] flex-[1_1_340px] flex-col gap-5">
             <p data-reveal="up" className="m-0 text-[clamp(16px,1.6vw,18px)] text-mk-ink2 [text-wrap:pretty]">
-              Plan, generate, launch and optimize ad campaigns across Meta, Google, TikTok, Snapchat and
-              LinkedIn — from one intelligent workspace where AI does the heavy lifting.
+              Plan, generate, launch and optimize ad campaigns across Meta, Google, TikTok and LinkedIn
+              (Snapchat coming soon) — from one intelligent workspace where AI does the heavy lifting.
             </p>
             <div data-reveal="up" className="flex flex-wrap gap-2.5">
               <PillButton href={SIGN_UP_HREF} variant="brand" className="h-[54px] flex-[1_1_150px]">
@@ -269,7 +275,7 @@ export function HomeHero() {
           <div
             ref={engRef}
             data-reveal="up"
-            className="relative overflow-hidden rounded-[clamp(20px,3vw,32px)] bg-mk-ink text-mk-on-dark shadow-[0_50px_100px_-50px_rgba(40,24,120,.6)]"
+            className="relative overflow-hidden rounded-[clamp(20px,3vw,32px)] bg-mk-band text-mk-on-dark shadow-[0_50px_100px_-50px_rgba(40,24,120,.6)]"
           >
             <span
               aria-hidden="true"
@@ -311,7 +317,7 @@ export function HomeHero() {
                   $50,000
                 </span>
                 <span className="text-[12.5px] leading-[1.4] text-[#b9b4cc]">
-                  One pool. The AI decides which platform gets each dollar.
+                  One pool. Advertix shows which platform earns most from each dollar.
                 </span>
               </div>
               <svg
@@ -411,7 +417,7 @@ export function HomeHero() {
 
             {/* Totals + narration */}
             <div className="relative grid grid-cols-1 gap-px border-t border-white/[.08] bg-white/[.08] mk-sm:grid-cols-2 mk-lg:grid-cols-[1fr_1fr_1.6fr]">
-              <div className="flex flex-col gap-1 bg-mk-ink px-[clamp(16px,2.6vw,28px)] py-[18px]">
+              <div className="flex flex-col gap-1 bg-mk-band px-[clamp(16px,2.6vw,28px)] py-[18px]">
                 <span className="text-[12.5px] text-mk-on-dark2">Projected revenue / month</span>
                 <span
                   ref={revEl}
@@ -421,7 +427,7 @@ export function HomeHero() {
                   {money(S0.rev)}
                 </span>
               </div>
-              <div className="flex flex-col gap-1 bg-mk-ink px-[clamp(16px,2.6vw,28px)] py-[18px]">
+              <div className="flex flex-col gap-1 bg-mk-band px-[clamp(16px,2.6vw,28px)] py-[18px]">
                 <span className="text-[12.5px] text-mk-on-dark2">Compared with an even split</span>
                 <span
                   ref={deltaEl}
@@ -430,7 +436,7 @@ export function HomeHero() {
                   {deltaText(S0.rev)}
                 </span>
               </div>
-              <div className="flex items-start gap-3 bg-mk-ink px-[clamp(16px,2.6vw,28px)] py-[18px]">
+              <div className="flex items-start gap-3 bg-mk-band px-[clamp(16px,2.6vw,28px)] py-[18px]">
                 <span
                   aria-hidden="true"
                   className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-[9px] bg-[linear-gradient(115deg,#8a3ffc,#5d5cff_50%,#2d8cff)] text-[13px]"
@@ -460,8 +466,8 @@ export function HomeHero() {
           </div>
         </div>
         <p ref={capRef} className="mx-1 mb-0 mt-3.5 text-[12.5px] text-mk-ink3">
-          Illustrative account. Toggle “Even split” to see what the same budget earns without cross-platform
-          allocation.
+          Illustrative account (Snapchat is coming soon). Toggle “Even split” to see what the same budget earns
+          without cross-platform allocation.
         </p>
       </div>
     </section>

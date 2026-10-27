@@ -7,7 +7,7 @@ export function CtaShell({ children }: { children: ReactNode }) {
     <section className="px-[clamp(12px,3vw,24px)] pb-[clamp(12px,3vw,24px)]">
       <div
         data-reveal="up"
-        className="relative mx-auto max-w-[1280px] overflow-hidden rounded-[clamp(24px,4vw,40px)] bg-mk-ink px-[clamp(20px,5vw,64px)] py-[clamp(40px,7vw,88px)] text-mk-on-dark"
+        className="relative mx-auto max-w-[1280px] overflow-hidden rounded-[clamp(24px,4vw,40px)] bg-mk-band px-[clamp(20px,5vw,64px)] py-[clamp(40px,7vw,88px)] text-mk-on-dark"
       >
         <span
           aria-hidden="true"

@@ -18,7 +18,7 @@ const LANE_COLOR: Record<PlatformKey, string> = {
 };
 
 const FACTS = [
-  { v: "Daily", l: "budget moves between platforms" },
+  { v: "6 h", l: "between checks of every account" },
   { v: "$3.80", l: "vs $1.58: the gap it found" },
   { v: "7 days", l: "to undo any move" },
 ];
@@ -47,7 +47,7 @@ export function ProblemSection() {
             {LANES.map((l) => (
               <div key={l.p} className="grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3">
                 <PlatformMark p={l.p} size={28} />
-                <span className="relative h-2.5 rounded-full border border-dashed border-mk-line2 bg-white">
+                <span className="relative h-2.5 rounded-full border border-dashed border-mk-line2 bg-mk-paper2">
                   <span
                     className="absolute inset-y-0 left-0 rounded-full opacity-45"
                     style={{ width: l.w, background: LANE_COLOR[l.p] }}

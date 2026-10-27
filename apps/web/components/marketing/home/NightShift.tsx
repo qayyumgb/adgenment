@@ -9,23 +9,24 @@ import { PlatformMark, type PlatformKey } from "@/components/marketing/ui/Platfo
 
 gsap.registerPlugin(ScrollTrigger, useGSAP);
 
-type Tag = "Synced" | "Fixed" | "Drafted" | "Proposed" | "Moved" | "Ready";
+type Tag = "Synced" | "Found" | "Flagged" | "Proposed" | "Ready";
 const TAG: Record<Tag, string> = {
-  Fixed: "bg-[#e5f4ec] text-mk-pos",
-  Moved: "bg-[#e5f4ec] text-mk-pos",
-  Drafted: "bg-mk-soft text-mk-brand-ink",
-  Proposed: "bg-[#fff1dc] text-mk-warn",
-  Synced: "bg-[#eceae6] text-mk-ink2",
+  Found: "bg-mk-neg-soft text-mk-neg",
+  Flagged: "bg-mk-soft text-mk-brand-ink",
+  Proposed: "bg-mk-warn-soft text-mk-warn",
+  Synced: "bg-mk-s3 text-mk-ink2",
   Ready: "bg-mk-ink text-mk-paper",
 };
 
-const EVENTS: { time: string; tag: Tag; t: string; b: string; p: PlatformKey | "A"; client: string; v: string }[] = [
-  { time: "00:12", tag: "Synced", t: "Read every account", b: "23 ad accounts across five platforms, 412 live ads, 90 days of history refreshed.", p: "A", client: "All clients", v: "23 / 23" },
-  { time: "02:14", tag: "Fixed", t: "Paused spend on a broken pixel", b: "Mara’s Snapchat pixel stopped firing. Two campaigns were paused, inside your guardrail.", p: "S", client: "Mara Home", v: "Saved $85" },
-  { time: "03:40", tag: "Drafted", t: "Caught creative fatigue", b: "Lumen’s best ad reached frequency 4.8. Two variants were drafted from the same hook.", p: "M", client: "Lumen Skincare", v: "CTR −38%" },
-  { time: "04:55", tag: "Proposed", t: "Flagged a pacing problem", b: "Kobo will run out of budget on the 26th. A lower daily cap is waiting for you.", p: "G", client: "Kobo Coffee", v: "5 days" },
-  { time: "06:00", tag: "Moved", t: "Moved $310 a day to TikTok", b: "TikTok’s next dollar earned 2.4× more than Search. The move was within your 15% limit.", p: "T", client: "Fieldhouse", v: "+$3.1k / wk" },
-  { time: "07:00", tag: "Ready", t: "Wrote your briefing", b: "Three decisions, each with the numbers behind it. Everything else is already handled.", p: "A", client: "For Sara", v: "3 open" },
+// What Advertix does today: it finds and proposes; you apply. `soon` names
+// the automatic version that's coming (plan C12–C14).
+const EVENTS: { time: string; tag: Tag; t: string; b: string; soon?: string; p: PlatformKey | "A"; client: string; v: string }[] = [
+  { time: "00:12", tag: "Synced", t: "Read every account", b: "23 ad accounts across four platforms and 412 live ads, with the latest results refreshed.", p: "A", client: "All clients", v: "23 / 23" },
+  { time: "02:14", tag: "Found", t: "Spotted a broken pixel", b: "Mara’s Meta pixel stopped firing. Pausing its two sales campaigns is waiting for you.", soon: "Safety rules pause them for you", p: "M", client: "Mara Home", v: "$85 at risk" },
+  { time: "03:40", tag: "Flagged", t: "Caught creative fatigue", b: "Lumen’s best ad reached frequency 4.8. Fresh variants from the same hook are one click away in the Creative studio.", p: "M", client: "Lumen Skincare", v: "CTR −38%" },
+  { time: "04:55", tag: "Proposed", t: "Flagged a pacing problem", b: "Kobo will run out of budget on the 26th. A lower daily budget is waiting for you.", p: "G", client: "Kobo Coffee", v: "5 days" },
+  { time: "06:00", tag: "Proposed", t: "Found $310 a day for TikTok", b: "TikTok’s next dollar earns 2.4× more than Search. Moving it is one click.", soon: "Auto-apply makes moves inside your 15% limit on its own", p: "T", client: "Fieldhouse", v: "+$3.1k / wk" },
+  { time: "07:00", tag: "Ready", t: "Your briefing is ready", b: "Three decisions, each with the numbers behind it, at the top of your Overview.", soon: "A morning briefing email", p: "A", client: "For Sara", v: "3 open" },
 ];
 
 /** 00:00 → 07:00 across the scroll. */
@@ -36,6 +37,7 @@ const clockText = (p: number) => {
 
 export function NightShift() {
   const secRef = useRef<HTMLElement>(null);
+  const shadeRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLOListElement>(null);
   const clockRef = useRef<HTMLSpanElement>(null);
@@ -69,8 +71,10 @@ export function NightShift() {
             onUpdate: (s) => setClock(s.progress),
           },
         });
-        gsap.to(sec, {
-          backgroundColor: "#f6efe3",
+        // Scroll deepens the section to the theme's second surface: an overlay in
+        // that token (so it follows light / dark), faded in by opacity.
+        gsap.to(shadeRef.current, {
+          opacity: 1,
           ease: "none",
           scrollTrigger: { trigger: sec, start: "top top", end: () => `+=${len()}`, scrub: true, invalidateOnRefresh: true },
         });
@@ -106,11 +110,12 @@ export function NightShift() {
       id="night"
       className="relative overflow-x-clip border-y-2 border-mk-rule bg-mk-paper"
     >
-      <div className="flex flex-col justify-center gap-[clamp(24px,4vw,40px)] py-[clamp(56px,8vw,96px)] mk-md:min-h-[100svh]">
+      <div ref={shadeRef} aria-hidden="true" className="pointer-events-none absolute inset-0 bg-mk-s2 opacity-0" />
+      <div className="relative flex flex-col justify-center gap-[clamp(24px,4vw,40px)] py-[clamp(56px,8vw,96px)] mk-md:min-h-[100svh]">
         <div className="mx-auto flex w-full max-w-[1280px] flex-wrap items-end justify-between gap-x-12 gap-y-3 px-[clamp(16px,4vw,32px)]">
           <div className="flex flex-col gap-2.5">
             <Eyebrow>THE NIGHT SHIFT</Eyebrow>
-            <AccentHeading lead="What Advertix did" accent="while you slept." />
+            <AccentHeading lead="What Advertix found" accent="while you slept." />
           </div>
           <span
             ref={clockRef}
@@ -143,6 +148,12 @@ export function NightShift() {
                 </div>
                 <span className="text-[clamp(18px,1.8vw,21px)] font-semibold leading-[1.25] tracking-[-0.02em]">{e.t}</span>
                 <span className="text-[14.5px] text-mk-ink2 [text-wrap:pretty]">{e.b}</span>
+                {e.soon && (
+                  <span className="flex items-start gap-2 text-[13px] text-mk-ink2">
+                    <span className="flex-none rounded-full bg-mk-soft px-2 py-px text-[11px] font-semibold text-mk-brand-ink">Coming soon</span>
+                    <span className="[text-wrap:pretty]">{e.soon}</span>
+                  </span>
+                )}
                 <div className="mt-auto flex items-center gap-2.5 border-t border-mk-hair pt-3">
                   {e.p === "A" ? (
                     <span

@@ -30,18 +30,18 @@ const COMPARE: { t: string; rows: { l: string; c: string[] }[] }[] = [
     rows: [
       { l: "Planner and decision feed", c: [Y, Y, Y, Y] },
       { l: "Budget allocator", c: [Y, Y, Y, Y] },
-      { l: "Smart hours", c: [N, Y, Y, Y] },
-      { l: "Experiments", c: [N, Y, Y, Y] },
-      { l: "Per-client autonomy", c: [N, N, Y, Y] },
+      { l: "Smart hours · coming soon", c: [N, Y, Y, Y] },
+      { l: "Experiments · coming soon", c: [N, Y, Y, Y] },
+      { l: "Per-client autonomy · coming soon", c: [N, N, Y, Y] },
     ],
   },
   {
     t: "CONTROL & REPORTING",
     rows: [
       { l: "History and 7-day undo", c: [Y, Y, Y, Y] },
-      { l: "Approvals and guardrails", c: [N, Y, Y, Y] },
-      { l: "White-label portal", c: [N, N, Y, Y] },
-      { l: "SSO / SAML, audit export", c: [N, N, N, Y] },
+      { l: "Approvals and guardrails · coming soon", c: [N, Y, Y, Y] },
+      { l: "White-label portal · coming soon", c: [N, N, Y, Y] },
+      { l: "CSV and Excel export", c: [Y, Y, Y, Y] },
     ],
   },
 ];
@@ -61,7 +61,7 @@ const FAQS = [
   },
   {
     q: "Can clients log in?",
-    a: "On Agency and Enterprise, client viewer seats are free. Clients see only their own dashboards and reports.",
+    a: "On Agency and Enterprise, client viewer seats are free. Clients see only their own dashboards and data.",
   },
   {
     q: "Can I cancel any time?",

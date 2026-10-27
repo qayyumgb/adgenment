@@ -8,6 +8,7 @@ import {
   MarketingMotion,
   MOTION_GATE_SCRIPT,
 } from "@/components/marketing/motion/MarketingMotion";
+import { THEME_SCRIPT, ThemeProvider } from "@/components/app/theme/ThemeProvider";
 import "./marketing.css";
 
 const instrumentSerif = Instrument_Serif({
@@ -23,16 +24,21 @@ export default function MarketingLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // Same light / dark / system preference as the dashboard (one stored
+  // choice), applied before first paint so there's no flash.
   return (
-    <div
-      className={`mk min-h-screen ${instrumentSerif.variable}`}
-    >
-      {/* Sets the scroll-reveal gate before first paint (see marketing.css). */}
-      <script dangerouslySetInnerHTML={{ __html: MOTION_GATE_SCRIPT }} />
-      <SiteHeader />
-      <main>{children}</main>
-      <SiteFooter />
-      <MarketingMotion />
-    </div>
+    <ThemeProvider>
+      <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      <div
+        className={`mk min-h-screen ${instrumentSerif.variable}`}
+      >
+        {/* Sets the scroll-reveal gate before first paint (see marketing.css). */}
+        <script dangerouslySetInnerHTML={{ __html: MOTION_GATE_SCRIPT }} />
+        <SiteHeader />
+        <main>{children}</main>
+        <SiteFooter />
+        <MarketingMotion />
+      </div>
+    </ThemeProvider>
   );
 }

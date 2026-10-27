@@ -5,7 +5,7 @@ type Tone = "paper" | "band" | "dark";
 const TONES: Record<Tone, string> = {
   paper: "",
   band: "bg-mk-s2",
-  dark: "bg-mk-ink text-mk-on-dark",
+  dark: "bg-mk-band text-mk-on-dark",
 };
 
 /**

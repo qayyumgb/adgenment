@@ -25,7 +25,7 @@ const CALL = [
 export default function ContactPage() {
   return (
     <>
-      <section className="border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(48px,7vw,88px)] pt-[clamp(48px,8vw,104px)]">
+      <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(48px,7vw,88px)] pt-[clamp(48px,8vw,104px)]">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-start gap-[clamp(32px,5vw,64px)]">
           <div className="flex min-w-0 flex-[1_1_400px] flex-col gap-5">
             <Eyebrow>CONTACT · REPLIES WITHIN ONE WORKING DAY</Eyebrow>

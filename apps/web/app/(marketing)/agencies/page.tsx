@@ -12,25 +12,25 @@ import { planByName } from "@/lib/marketing/pricing";
 export const metadata: Metadata = {
   title: "For agencies",
   description:
-    "Twenty clients, one morning. Per-client caps and AI autonomy, white-label client reports and one briefing across every client and platform.",
+    "Twenty clients, one morning. A monthly cap per client, roles for your team and clients, and one set of decisions across every client and platform. White-label reports and per-client AI autonomy are coming soon.",
 };
 
 const H2_SM = "!text-[clamp(34px,5vw,64px)]";
 
 const PILLARS = [
-  { t: "Client switcher everywhere", b: "Every page filters by client. Jump between clients with ⌘K in two keystrokes." },
+  { t: "Client switcher everywhere", b: "Every page filters by client. ⌘K search is coming soon." },
   { t: "Monthly caps and pacing", b: "Set each client’s budget once. Advertix warns days before anyone overspends or underspends." },
-  { t: "Approvals and history", b: "Changes above a guardrail wait for sign-off. Every change records who or what made it, and why." },
+  { t: "History and undo", b: "Every change records who made it and can be undone for 7 days. Sign-off for big changes is coming soon." },
   { t: "Roles that fit agencies", b: "Buyers see their clients, analysts view everything, client viewers see only their own account." },
   { t: "Free client seats", b: "Invite every client stakeholder at no extra cost on the Agency plan." },
-  { t: "Reports on autopilot", b: "Weekly PDFs per client with KPIs, top ads and a summary your team edits before it sends." },
+  { t: "Client reports · coming soon", b: "Weekly PDFs per client with KPIs, top ads and a summary your team edits. Today: CSV and Excel exports." },
 ];
 
 const ONBOARD = [
   { t: "0:00", h: "Connect three clients", b: "OAuth for each platform; assign accounts to clients together." },
-  { t: "0:10", h: "Set caps and autonomy", b: "One monthly budget per client and an AI level for each." },
+  { t: "0:10", h: "Set monthly caps", b: "One monthly budget per client; pacing starts right away." },
   { t: "0:20", h: "Invite your team", b: "Buyers, analysts and client viewers with the right access." },
-  { t: "Next day", h: "First briefing at 08:00", b: "Three decisions across all three clients, ready with your coffee." },
+  { t: "Same day", h: "First decisions on the Overview", b: "The top decisions across all three clients, each with the numbers behind it." },
 ];
 
 export default function AgenciesPage() {
@@ -38,15 +38,16 @@ export default function AgenciesPage() {
 
   return (
     <>
-      <section className="border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(40px,6vw,72px)] pt-[clamp(48px,8vw,104px)]">
+      <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(40px,6vw,72px)] pt-[clamp(48px,8vw,104px)]">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-[clamp(32px,5vw,64px)]">
           <div className="flex min-w-0 flex-[1_1_520px] flex-col gap-5">
             {/* TODO(copy): "5 to 50 clients" vs the Agency plan's 10-client limit — confirm (plan § 2, item 8). */}
             <Eyebrow>FOR AGENCIES · 5 TO 50 CLIENTS</Eyebrow>
             <HeroTitle line1="Twenty clients." line2="One morning." className="text-[clamp(46px,8.6vw,108px)]" />
             <p data-reveal="up" className="m-0 max-w-[520px] text-[clamp(16px,1.6vw,18px)] text-mk-ink2">
-              One briefing across every client and platform, a monthly cap per client, AI autonomy set per client, and
-              reports that send themselves. Your team spends its week on strategy instead of spreadsheets.
+              One set of decisions across every client and platform, a monthly cap per client and roles for your whole
+              team, with per-client AI autonomy and reports that send themselves coming soon. Your team spends its week on
+              strategy instead of spreadsheets.
             </p>
             <div data-reveal="up" className="flex flex-wrap gap-2.5">
               <PillButton href={DEMO_HREF} variant="ink" className="px-[26px]">
@@ -69,8 +70,8 @@ export default function AgenciesPage() {
             <Eyebrow>AUTONOMY, PER CLIENT</Eyebrow>
             <AccentHeading lead="Your cautious client" accent="and your hands-off one." className={H2_SM} />
             <p data-reveal="up" className="m-0 max-w-[460px] text-mk-ink2">
-              A regulated fintech can stay on suggest-only while a DTC brand runs on autopilot inside a 15% daily limit.
-              Change it any time; every action stays logged and reversible.
+              Coming soon: a regulated fintech stays on suggest-only while a DTC brand lets small moves apply on their own
+              inside a 15% daily limit. Today every client is on suggest-only, and every action is logged and reversible.
             </p>
           </div>
           <AutonomyCards />
@@ -83,7 +84,7 @@ export default function AgenciesPage() {
         <div className="mx-auto flex max-w-[1280px] flex-col gap-[clamp(28px,4vw,44px)]">
           <div className="flex max-w-[820px] flex-col gap-3">
             <Eyebrow>BUILT FOR HOW AGENCIES WORK</Eyebrow>
-            <AccentHeading lead="Roles, caps and approvals" accent="out of the box." className={H2_SM} />
+            <AccentHeading lead="Roles, caps and history" accent="out of the box." className={H2_SM} />
           </div>
           <div className="grid grid-cols-1 border-t-2 border-mk-rule mk-sm:grid-cols-2 mk-xl:grid-cols-3">
             {PILLARS.map((p, i) => (

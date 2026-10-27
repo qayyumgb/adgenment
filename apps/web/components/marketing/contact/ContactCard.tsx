@@ -53,7 +53,7 @@ function Chip({ on, onClick, children, mono }: { on: boolean; onClick: () => voi
       onClick={onClick}
       className={`whitespace-nowrap rounded-full border-[1.5px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mk-brand ${
         mono ? "h-[42px] font-mk-mono text-[13.5px]" : "h-[38px] px-3.5 text-sm"
-      } ${on ? "border-mk-ink bg-mk-ink text-white" : "border-mk-line2 text-mk-ink hover:bg-mk-s2"}`}
+      } ${on ? "border-mk-ink bg-mk-ink text-mk-paper" : "border-mk-line2 text-mk-ink hover:bg-mk-s2"}`}
     >
       {children}
     </button>
@@ -183,7 +183,7 @@ export function ContactCard() {
           role="status"
           className={`flex flex-col items-start gap-3 pb-[clamp(24px,4vw,36px)] pt-2 outline-none ${pad}`}
         >
-          <span aria-hidden="true" className="flex h-[52px] w-[52px] items-center justify-center rounded-2xl bg-[#e5f4ec] text-[22px] font-bold text-mk-pos">
+          <span aria-hidden="true" className="flex h-[52px] w-[52px] items-center justify-center rounded-2xl bg-mk-pos-soft text-[22px] font-bold text-mk-pos">
             ✓
           </span>
           <span className="text-[clamp(24px,3vw,32px)] font-medium leading-[1.1] tracking-[-0.03em]">
@@ -207,7 +207,7 @@ export function ContactCard() {
           <iframe
             title="Book a 20-minute Advertix demo"
             src={`https://cal.com/${CAL_LINK}?embed=true&theme=light&layout=month_view`}
-            className="h-[640px] w-full rounded-2xl border border-mk-hair bg-white"
+            className="h-[640px] w-full rounded-2xl border border-mk-hair bg-mk-paper2"
             loading="lazy"
           />
         </div>
@@ -242,7 +242,7 @@ export function ContactCard() {
                           setSlot(null);
                         }}
                         className={`flex w-16 flex-none flex-col items-center rounded-2xl border-[1.5px] py-2.5 leading-[1.2] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mk-brand ${
-                          on ? "border-mk-ink bg-mk-ink text-white" : "border-mk-line2 text-mk-ink hover:bg-mk-s2"
+                          on ? "border-mk-ink bg-mk-ink text-mk-paper" : "border-mk-line2 text-mk-ink hover:bg-mk-s2"
                         }`}
                       >
                         <span className="font-mk-mono text-[11px]">{d.w}</span>
@@ -341,7 +341,7 @@ export function ContactCard() {
           )}
 
           {status === "error" && (
-            <p role="alert" className="m-0 rounded-xl bg-[#fbe9e9] px-3.5 py-2.5 text-sm text-mk-neg">
+            <p role="alert" className="m-0 rounded-xl bg-mk-neg-soft px-3.5 py-2.5 text-sm text-mk-neg">
               {error}{" "}
               <a href={`mailto:${SUPPORT_EMAIL}`} className="font-semibold underline">
                 Email us instead
@@ -353,7 +353,7 @@ export function ContactCard() {
             type="submit"
             disabled={!canSend || status === "sending"}
             aria-describedby={reason ? `${id}-reason` : undefined}
-            className="flex h-14 items-center justify-between rounded-full bg-mk-ink px-[22px] text-base font-semibold text-white transition-opacity enabled:hover:bg-[#2a2733] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mk-brand"
+            className="flex h-14 items-center justify-between rounded-full bg-mk-ink px-[22px] text-base font-semibold text-mk-paper transition-opacity enabled:hover:bg-mk-ink/90 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mk-brand"
           >
             {status === "sending"
               ? "Sending…"

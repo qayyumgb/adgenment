@@ -29,8 +29,8 @@ const CLIENTS: {
 
 const LEVELS: { value: Level; label: string; desc: string }[] = [
   { value: "suggest", label: "Suggest only", desc: "Every change waits for a person. Good for regulated or cautious clients." },
-  { value: "small", label: "Small changes", desc: "Moves under 15% a day and creative rotations apply on their own. Bigger ones wait." },
-  { value: "auto", label: "Autopilot", desc: "Advertix manages budgets, bids and rotation inside the guardrail and sends a daily summary." },
+  { value: "small", label: "Small changes", desc: "Coming soon. Budget moves under 15% a day apply on their own; bigger ones wait." },
+  { value: "auto", label: "Autopilot", desc: "Coming soon. Advertix manages budgets inside the guardrail and sends a daily summary." },
 ];
 
 export function AgenciesDemo() {
@@ -87,7 +87,7 @@ export function AgenciesDemo() {
                   </span>
                   <span
                     className={`whitespace-nowrap rounded-full px-2.5 py-[3px] text-xs font-semibold ${
-                      onTrack ? "bg-[#e5f4ec] text-mk-pos" : "bg-[#fff1dc] text-mk-warn"
+                      onTrack ? "bg-mk-pos-soft text-mk-pos" : "bg-mk-warn-soft text-mk-warn"
                     }`}
                   >
                     {x.status}
@@ -138,7 +138,7 @@ export function AgenciesDemo() {
               />
               <span className="text-sm text-mk-ink2">{LEVELS.find((l) => l.value === level)!.desc}</span>
             </div>
-            <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-3 rounded-[18px] bg-mk-ink p-4 text-mk-on-dark">
+            <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-3 rounded-[18px] bg-mk-band p-4 text-mk-on-dark">
               <span className="flex min-w-0 flex-[1_1_220px] flex-col gap-[3px]">
                 <span className="font-mk-mono text-[11.5px] tracking-[.06em] text-mk-lav-ink">NEXT DECISION</span>
                 <span className="font-semibold leading-[1.35]">{c.decision}</span>
@@ -148,8 +148,8 @@ export function AgenciesDemo() {
                 type="button"
                 aria-pressed={done}
                 onClick={() => setApplied((s) => ({ ...s, [pick]: !done }))}
-                className={`h-10 whitespace-nowrap rounded-full px-4 text-[13.5px] font-semibold text-mk-ink transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
-                  done || level === "auto" ? "bg-mk-pos-on-dark" : "bg-white hover:bg-mk-soft"
+                className={`h-10 whitespace-nowrap rounded-full px-4 text-[13.5px] font-semibold text-mk-on-light transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
+                  done || level === "auto" ? "bg-mk-pos-on-dark" : "bg-white hover:bg-[#efebff]"
                 }`}
               >
                 {btnLabel}

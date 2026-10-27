@@ -1,26 +1,26 @@
 import { AccentHeading, Eyebrow } from "@/components/marketing/ui/Heading";
 import { FaqAccordion } from "@/components/marketing/ui/FaqAccordion";
 
-// TODO(copy): confirm each claim before launch (plan § 2, item 8).
+// Checked against the product (docs/MARKETING_CLAIMS_AUDIT.md).
 const TRUST = [
   { v: "AES-256", l: "encryption on every OAuth token at rest" },
-  { v: "MFA", l: "Clerk-hardened sign-in and session controls" },
-  { v: "7 days", l: "to undo any change, by a person or the AI" },
+  { v: "MFA", l: "two-step sign-in and session controls, through Clerk" },
+  { v: "7 days", l: "to undo any change made in Advertix" },
   { v: "0", l: "models trained on your data, ever" },
 ];
 
 const FAQS = [
   {
     q: "Will Advertix change my campaigns without asking?",
-    a: "Only if you allow it. By default it suggests and you approve. Per client, you can let small changes apply on their own inside a daily guardrail, and undo anything for 7 days.",
+    a: "No. Advertix suggests and you approve: nothing changes until someone clicks, and anything can be undone for 7 days. Coming soon, you’ll be able to let small budget moves apply on their own, per client, inside a daily limit you set.",
   },
   {
     q: "What exactly does the AI do?",
-    a: "Statistical models find the signals in your platform data. Claude turns them into plain-language decisions, plans and copy, and cites the numbers it used. Your guardrails decide what applies.",
+    a: "Models on your own platform data find the signals: where the next dollar earns most, which ads are tiring, which clients are off pace. Claude turns them into plain-language decisions, plans and copy, and cites the numbers it used. You decide what applies.",
   },
   {
     q: "Which platforms work today?",
-    a: "Meta, Google, TikTok and LinkedIn connect through their official APIs with two-way sync. Snapchat is rolling out now.",
+    a: "Meta is fully two-way: publish, pause, resume and change budgets from Advertix. Google, TikTok and LinkedIn connect through their official APIs and sync campaigns and results in, so you see everything in one place; publishing to them from Advertix is coming. Snapchat is coming soon.",
   },
   {
     q: "Do you train AI models on my data?",
@@ -28,7 +28,7 @@ const FAQS = [
   },
   {
     q: "Is it for agencies or single brands?",
-    a: "Both. Agencies get a client switcher, per-client caps and autonomy, and white-label reports. A founder gets the same AI with a simpler setup.",
+    a: "Both. Agencies get a client switcher, a monthly cap per client and roles for their team and clients, with white-label reports coming soon. A founder gets the same AI with a simpler setup.",
   },
 ];
 

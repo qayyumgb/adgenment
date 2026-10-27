@@ -45,7 +45,7 @@ export function SegmentedControl<T extends string | number>({
     tone === "dark" ? "bg-white/[.07] border border-white/10 p-1" : tone === "paper" ? "bg-mk-s3 p-[3px]" : "bg-mk-s2 p-1";
   const on =
     tone === "dark"
-      ? "bg-white text-mk-ink"
+      ? "bg-white text-mk-on-light"
       : tone === "paper"
         ? "bg-mk-paper2 text-mk-ink shadow-[0_1px_2px_rgba(21,19,26,.12)]"
         : "bg-mk-ink text-mk-paper";

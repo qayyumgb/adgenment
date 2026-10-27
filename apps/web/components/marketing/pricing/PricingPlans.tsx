@@ -22,12 +22,12 @@ export function PricingPlans() {
   const price = (p: Plan) => (p.monthly == null ? "Custom" : `$${annual ? yearlyMonthly(p.monthly) : p.monthly}`);
   const why =
     fit.monthly == null
-      ? "Above $250k a month or 10 clients, we tailor limits, SSO and support."
+      ? "Above $250k a month or 10 clients, we tailor limits and support."
       : `Covers ${clients} ${clients === 1 ? "brand" : "brands"} and ${kMoney(spend)} a month, with room to grow to ${kMoney(fit.spendLimit)}.`;
 
   return (
     <>
-      <section className="border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(36px,5vw,56px)] pt-[clamp(48px,8vw,104px)]">
+      <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(36px,5vw,56px)] pt-[clamp(48px,8vw,104px)]">
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-end justify-between gap-x-16 gap-y-7">
           <div className="flex min-w-0 flex-[1_1_600px] flex-col gap-[18px]">
             <Eyebrow>PRICING · FREE DURING BETA</Eyebrow>
@@ -56,7 +56,7 @@ export function PricingPlans() {
                   label: (
                     <>
                       Yearly
-                      <span className="rounded-full bg-[#e5f4ec] px-[7px] py-0.5 font-mk-mono text-[11px] text-mk-pos">−2 MO</span>
+                      <span className="rounded-full bg-mk-pos-soft px-[7px] py-0.5 font-mk-mono text-[11px] text-mk-pos">−2 MO</span>
                     </>
                   ),
                 },
@@ -67,7 +67,7 @@ export function PricingPlans() {
       </section>
 
       <section className="px-[clamp(16px,4vw,32px)] pt-[clamp(40px,6vw,72px)]">
-        <div className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-x-12 gap-y-7 rounded-[28px] bg-mk-ink p-[clamp(20px,3.4vw,36px)] text-mk-on-dark">
+        <div className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-x-12 gap-y-7 rounded-[28px] bg-mk-band p-[clamp(20px,3.4vw,36px)] text-mk-on-dark">
           <div className="flex min-w-0 flex-[1.3_1_380px] flex-col gap-[18px]">
             <span className="font-mk-mono text-xs tracking-[.06em] text-mk-lav">FIND YOUR PLAN</span>
             <label htmlFor={`${id}-spend`} className="flex flex-col gap-2">
@@ -131,7 +131,7 @@ export function PricingPlans() {
                 key={p.name}
                 data-reveal="rise"
                 className={`relative flex flex-col gap-4 rounded-[26px] p-6 transition-[box-shadow,border-color] duration-[350ms] ${
-                  dark ? "bg-mk-ink text-mk-on-dark" : "bg-mk-paper2 text-mk-ink"
+                  dark ? "bg-mk-band text-mk-on-dark" : "bg-mk-paper2 text-mk-ink"
                 } ${
                   rec
                     ? "border-2 border-mk-brand shadow-[0_0_0_5px_rgb(var(--mk-soft)),0_40px_80px_-40px_rgba(100,72,242,.55)]"

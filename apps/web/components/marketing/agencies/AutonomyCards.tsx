@@ -7,8 +7,8 @@ type Level = "suggest" | "small" | "auto";
 
 const LEVELS: { value: Level; label: string; tag: string; text: string; box: string; tagColor: string }[] = [
   { value: "suggest", label: "Suggest", tag: "WAITS FOR YOU", text: "Every change is a suggestion. Nothing moves until someone on your team approves it.", box: "bg-mk-s2", tagColor: "text-mk-ink3" },
-  { value: "small", label: "Small changes", tag: "AUTO ≤ 15%/DAY", text: "Budget moves under 15% a day and creative rotations apply on their own. Bigger moves wait.", box: "bg-mk-soft", tagColor: "text-mk-brand-ink" },
-  { value: "auto", label: "Autopilot", tag: "RUNS ITSELF", text: "Advertix manages budgets, bids and rotation inside the monthly cap, and sends a daily summary.", box: "bg-[#e5f4ec]", tagColor: "text-mk-pos" },
+  { value: "small", label: "Small changes", tag: "COMING SOON · AUTO ≤ 15%/DAY", text: "Budget moves under 15% a day apply on their own. Bigger moves wait for you.", box: "bg-mk-soft", tagColor: "text-mk-brand-ink" },
+  { value: "auto", label: "Autopilot", tag: "COMING SOON · RUNS ITSELF", text: "Advertix manages budgets inside the monthly cap and your guardrails, and sends a daily summary.", box: "bg-mk-pos-soft", tagColor: "text-mk-pos" },
 ];
 
 const CLIENTS = [

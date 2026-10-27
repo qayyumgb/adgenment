@@ -37,7 +37,7 @@ export function PortalPreview() {
               <span className="h-[9px] w-[9px] rounded-full bg-mk-line2" />
               <span className="flex-1" />
               <span className="rounded-lg bg-mk-paper2 px-2.5 py-[3px] font-mk-mono text-[11.5px] text-mk-ink3">
-                {own ? "reports.haldenpike.com/lumen" : "app.advertix.io/r/lumen"}
+                app.advertix.io/r/lumen
               </span>
               <span className="flex-1" />
             </div>
@@ -45,7 +45,7 @@ export function PortalPreview() {
               <div className="flex items-center gap-3">
                 <span
                   className={`flex h-10 w-10 items-center justify-center rounded-xl text-xs font-bold text-white transition-colors duration-300 ${
-                    own ? "bg-mk-ink" : "bg-mk-brand"
+                    own ? "bg-mk-band" : "bg-mk-brand"
                   }`}
                 >
                   {own ? "H&P" : "✦"}
@@ -77,7 +77,7 @@ export function PortalPreview() {
                 </div>
               )}
               {show.notes && (
-                <div className="rounded-[14px] border border-dashed border-mk-line2 bg-[#fff7e8] p-3.5 text-sm">
+                <div className="rounded-[14px] border border-dashed border-mk-line2 bg-mk-warn-soft p-3.5 text-sm">
                   <span className="font-mk-mono text-[11.5px] tracking-[.06em] text-mk-warn">INTERNAL NOTE · VISIBLE TO CLIENT</span>
                   <br />
                   Client asked to hold weekend budget changes until the holiday push starts.
@@ -106,11 +106,11 @@ export function PortalPreview() {
           </div>
         </div>
         <div className="flex flex-[1_1_360px] flex-col gap-3.5">
-          <Eyebrow>WHITE-LABEL CLIENT PORTAL</Eyebrow>
+          <Eyebrow>WHITE-LABEL CLIENT PORTAL · COMING SOON</Eyebrow>
           <AccentHeading lead="Your brand on the report." accent="Not ours." className="!text-[clamp(34px,5vw,64px)]" />
           <p data-reveal="up" className="m-0 max-w-[460px] text-mk-ink2">
-            Each client gets a live link on your domain and a weekly summary your team can edit before it sends. You choose
-            what they see.
+            Each client will get a live link with your logo and a weekly summary your team can edit before it sends. You
+            choose what they see.
           </p>
           <SegmentedControl
             label="Report branding"

@@ -24,16 +24,16 @@ const VALUES = [
 // started in May 2026 (docs/MARKETING_REDESIGN_PLAN.md § 2, item 8).
 const TIMELINE: { d: string; t: string; b: string; kind?: "now" | "next" }[] = [
   { d: "2025", t: "The first planner", b: "A prompt-to-plan prototype for Meta, built with a handful of founders." },
-  { d: "Early 2026", t: "Four platforms, one workspace", b: "Google, TikTok and LinkedIn joined Meta with two-way sync." },
-  { d: "Mid 2026", t: "Budget optimizer and insights", b: "Cross-platform budget moves and AI insights went into beta." },
-  { d: "Oct 2026", t: "Built for agencies", b: "Client switcher, approvals, alerts and the redesigned workspace.", kind: "now" },
-  { d: "Next", t: "Snapchat and client portal", b: "Snapchat leaves beta; white-label reporting for every agency plan.", kind: "next" },
+  { d: "Early 2026", t: "Four platforms, one workspace", b: "Google, TikTok and LinkedIn joined Meta: every campaign and result in one workspace." },
+  { d: "Mid 2026", t: "Budget allocator and insights", b: "Cross-platform budget suggestions and AI insights went into beta." },
+  { d: "Oct 2026", t: "Built for agencies", b: "Client switcher, roles, email alerts and the redesigned workspace.", kind: "now" },
+  { d: "Next", t: "Approvals, auto-apply and client reports", b: "Then Snapchat and a white-label client portal for agencies.", kind: "next" },
 ];
 
 export default function AboutPage() {
   return (
     <>
-      <section className="border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(40px,6vw,72px)] pt-[clamp(48px,8vw,112px)]">
+      <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(40px,6vw,72px)] pt-[clamp(48px,8vw,112px)]">
         <div className="mx-auto flex max-w-[1280px] flex-col gap-5">
           <Eyebrow>ABOUT ADVERTIX</Eyebrow>
           <HeroTitle
@@ -61,7 +61,7 @@ export default function AboutPage() {
           </div>
           <div
             data-reveal="rise"
-            className="relative flex min-h-[360px] flex-col gap-[18px] overflow-hidden rounded-[28px] bg-mk-ink p-[clamp(24px,4vw,44px)] text-mk-on-dark"
+            className="relative flex min-h-[360px] flex-col gap-[18px] overflow-hidden rounded-[28px] bg-mk-band p-[clamp(24px,4vw,44px)] text-mk-on-dark"
           >
             <span
               aria-hidden="true"

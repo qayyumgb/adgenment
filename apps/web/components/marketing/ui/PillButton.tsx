@@ -11,10 +11,10 @@ export type PillVariant =
 
 const VARIANTS: Record<PillVariant, string> = {
   brand: "bg-mk-brand text-white shadow-mk-brand hover:bg-mk-brand-hover",
-  ink: "bg-mk-ink text-white hover:bg-[#2a2733]",
+  ink: "bg-mk-ink text-mk-paper hover:bg-mk-ink/90",
   outline: "border-[1.5px] border-mk-ink text-mk-ink hover:bg-mk-paper2",
   "outline-soft": "border-[1.5px] border-mk-line2 text-mk-ink hover:bg-mk-s2",
-  white: "bg-white text-mk-ink hover:bg-mk-soft",
+  white: "bg-white text-mk-on-light hover:bg-[#efebff]",
   "ghost-dark": "border-[1.5px] border-white/35 text-white hover:bg-white/[.08]",
 };
 

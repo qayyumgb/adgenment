@@ -6,21 +6,29 @@
  * Spec: docs/MARKETING_REDESIGN_PLAN.md
  */
 .mk {
-  --mk-paper: 248 246 241;
-  --mk-paper2: 255 253 248;
-  --mk-s2: 241 238 230;
-  --mk-s3: 231 227 216;
-  --mk-ink: 21 19 26;
-  --mk-ink2: 90 86 100;
-  /* Mockup uses #8e8a97 (3.1:1 on paper); darkened to pass WCAG AA. */
-  --mk-ink3: 108 104 117;
+  /* Same palette as the dashboard (app/globals.css --c-*), so the site and
+     the app read as one product. Dark values follow under `.dark .mk`. */
+  --mk-paper: 246 246 249;
+  --mk-paper2: 255 255 255;
+  --mk-s2: 243 242 248;
+  --mk-s3: 235 233 243;
+  --mk-ink: 22 20 31;
+  --mk-ink2: 89 86 105;
+  --mk-ink3: 108 105 128;
   --mk-brand: 100 72 242;
   --mk-brand-hover: 85 55 230;
-  --mk-brand-ink: 68 40 214;
-  --mk-soft: 239 234 253;
-  --mk-pos: 11 125 80;
-  --mk-neg: 194 58 63;
-  --mk-warn: 154 92 0;
+  --mk-brand-ink: 75 47 208;
+  --mk-soft: 239 235 255;
+  --mk-pos: 13 143 90;
+  --mk-neg: 210 60 66;
+  --mk-warn: 168 100 0;
+  --mk-pos-soft: 227 246 236;
+  --mk-neg-soft: 253 236 235;
+  --mk-warn-soft: 253 242 223;
+  /* Dark bands and panels (hero engine, CTA, release board…) stay dark in
+     both themes; `on-light` is text on the few always-light chips there. */
+  --mk-band: 22 20 31;
+  --mk-on-light: 22 20 31;
   --mk-night: 13 11 23;
   --mk-on-dark: 244 242 250;
   --mk-on-dark2: 170 166 186;
@@ -41,10 +49,38 @@
   font-feature-settings: normal;
 }
 
-/* Overscroll / rubber-band area matches the paper instead of the root white. */
+.dark .mk {
+  --mk-paper: 12 11 18;
+  --mk-paper2: 21 19 29;
+  --mk-s2: 28 26 39;
+  --mk-s3: 37 35 49;
+  --mk-ink: 243 242 248;
+  --mk-ink2: 174 171 191;
+  --mk-ink3: 140 137 159;
+  --mk-brand: 124 100 255;
+  --mk-brand-hover: 144 121 255;
+  --mk-brand-ink: 194 182 255;
+  --mk-soft: 34 28 64;
+  --mk-pos: 65 211 154;
+  --mk-neg: 255 113 117;
+  --mk-warn: 242 180 78;
+  --mk-pos-soft: 15 42 31;
+  --mk-neg-soft: 49 22 24;
+  --mk-warn-soft: 45 34 19;
+  /* A step above the page so dark panels still read as panels. */
+  --mk-band: 28 26 39;
+  --mk-night: 8 7 13;
+  color-scheme: dark;
+}
+
+/* Overscroll / rubber-band area matches the page instead of the root white. */
 html:has(.mk),
 html:has(.mk) body {
-  background: rgb(248 246 241);
+  background: rgb(246 246 249);
+}
+html.dark:has(.mk),
+html.dark:has(.mk) body {
+  background: rgb(12 11 18);
 }
 
 .mk input[type="range"] {
@@ -60,6 +96,37 @@ html:has(.mk) body {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+
+/*
+ * Graph-paper grid behind hero areas (light sections; dark panels keep
+ * .mk-dot-grid). Drawn on a ::before layer so the fade mask only touches
+ * the grid, never the content; the line colour is a token so it reads the
+ * same in light and dark.
+ */
+.mk {
+  --mk-grid-line: 104 27 204 / 0.07;
+}
+.dark .mk {
+  --mk-grid-line: 185 171 255 / 0.09;
+}
+.mk .mk-grid-bg {
+  position: relative;
+  isolation: isolate;
+}
+.mk .mk-grid-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgb(var(--mk-grid-line)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--mk-grid-line)) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -0.5px -0.5px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 30%, #000 25%, transparent 78%);
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 30%, #000 25%, transparent 78%);
 }
 
 .mk .mk-dot-grid {

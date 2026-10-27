@@ -39,7 +39,7 @@ export const SCENARIOS: Scenario[] = [
     n: [2.71, 2.05, 3.8, 1.62, 1.95],
     rev: 198_300,
     title: "Started from last month’s split",
-    body: "Reading 23 accounts across five platforms",
+    body: "Reading 23 accounts across every platform",
   },
   {
     a: [34, 22, 26, 6, 12],

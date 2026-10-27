@@ -10,21 +10,26 @@ import { SIGN_UP_HREF } from "@/lib/marketing/nav";
 export const metadata: Metadata = {
   title: "Product",
   description:
-    "Planning, decisions, budgets, creative, alerts and reporting on one data model. Six Advertix modules for running ads across Meta, Google, TikTok, Snapchat and LinkedIn.",
+    "Planning, decisions, budgets, creative, alerts and reporting on one data model. Six Advertix modules for running ads across Meta, Google, TikTok and LinkedIn, with Snapchat coming soon.",
 };
 
 const TRUST = [
   { v: "AES-256", t: "Encrypted tokens", b: "Every OAuth token encrypted at rest; disconnect any platform instantly." },
   { v: "7 days", t: "Undo anything", b: "Every change by a person or the AI is logged and reversible." },
-  { v: "15%", t: "Daily guardrail", b: "Automatic moves stay under your limit; bigger ones wait for approval." },
+  { v: "1 click", t: "You approve", b: "Nothing changes on your accounts until someone on your team applies it." },
   { v: "0", t: "Models trained on you", b: "Your data runs your workspace and nothing else." },
 ];
 
-// Tag colours per tone: [dark panel bg, dark fg, light bg, light fg].
-const TONE: Record<Tone, [string, string, string, string]> = {
-  pos: ["rgba(65,211,154,.16)", "#41d39a", "#e5f4ec", "#0b7d50"],
-  brand: ["rgba(185,171,255,.18)", "#c7bcff", "#efeafd", "#4428d6"],
-  neg: ["rgba(255,113,117,.16)", "#ff8a8e", "#fbe9e9", "#c23a3f"],
+// Tag colours per tone: fixed on the always-dark panels, theme tokens on the others.
+const TONE_ON_DARK: Record<Tone, [string, string]> = {
+  pos: ["rgba(65,211,154,.16)", "#41d39a"],
+  brand: ["rgba(185,171,255,.18)", "#c7bcff"],
+  neg: ["rgba(255,113,117,.16)", "#ff8a8e"],
+};
+const TONE_CLASS: Record<Tone, string> = {
+  pos: "bg-mk-pos-soft text-mk-pos",
+  brand: "bg-mk-soft text-mk-brand-ink",
+  neg: "bg-mk-neg-soft text-mk-neg",
 };
 
 const STATUS_MARKS: Record<"A" | "N" | "W" | "K", { mark: string; bg: string; fg: string; label: string }> = {
@@ -53,7 +58,7 @@ function RowMark({ k, dark }: { k: MarkKey; dark: boolean }) {
 
 function ModuleUi({ m }: { m: ProductModule }) {
   const d = m.dark;
-  const tone = TONE[m.ui.tone];
+  const tone = TONE_ON_DARK[m.ui.tone];
   const valueColor = (t?: "pos" | "neg") =>
     t === "pos" ? (d ? "text-mk-pos-on-dark" : "text-mk-pos") : t === "neg" ? (d ? "text-[#ff8a8e]" : "text-mk-neg") : "";
   return (
@@ -61,7 +66,7 @@ function ModuleUi({ m }: { m: ProductModule }) {
       data-reveal="up"
       className={`relative flex flex-col gap-3 overflow-hidden rounded-[28px] border p-[clamp(16px,2.6vw,26px)] ${
         d
-          ? "border-mk-ink bg-mk-ink text-mk-on-dark shadow-[0_50px_100px_-50px_rgba(40,24,120,.55)]"
+          ? "border-mk-band bg-mk-band text-mk-on-dark shadow-[0_50px_100px_-50px_rgba(40,24,120,.55)]"
           : "border-mk-hair bg-mk-paper2 text-mk-ink shadow-[0_30px_60px_-40px_rgba(40,30,80,.3)]"
       }`}
     >
@@ -69,8 +74,8 @@ function ModuleUi({ m }: { m: ProductModule }) {
         <span className="font-semibold">{m.ui.title}</span>
         <span className="flex-1" />
         <span
-          className="whitespace-nowrap rounded-full px-2.5 py-[3px] font-mk-mono text-[11.5px] tracking-[.04em]"
-          style={{ background: d ? tone[0] : tone[2], color: d ? tone[1] : tone[3] }}
+          className={`whitespace-nowrap rounded-full px-2.5 py-[3px] font-mk-mono text-[11.5px] tracking-[.04em] ${d ? "" : TONE_CLASS[m.ui.tone]}`}
+          style={d ? { background: tone[0], color: tone[1] } : undefined}
         >
           {m.ui.tag}
         </span>
@@ -79,7 +84,7 @@ function ModuleUi({ m }: { m: ProductModule }) {
         <div
           key={r.label}
           className={`relative grid grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border px-3.5 py-3 ${
-            d ? "border-white/[.09] bg-white/[.05]" : "border-mk-hair bg-white"
+            d ? "border-white/[.09] bg-white/[.05]" : "border-mk-hair bg-mk-paper2"
           }`}
         >
           <RowMark k={r.mark} dark={d} />
@@ -116,14 +121,15 @@ function ModuleUi({ m }: { m: ProductModule }) {
   );
 }
 
-const COVERAGE_LABEL = { F: "Full support", H: "Partial, platform limits apply", N: "Not offered by the platform" } as const;
+type Cov = "F" | "H" | "C" | "N";
+const COVERAGE_LABEL: Record<Cov, string> = { F: "Works today", H: "Partly", C: "Coming soon", N: "Not offered by the platform" };
 
-function Dot({ v }: { v: "F" | "H" | "N" }) {
+function Dot({ v }: { v: Cov }) {
   return (
     <span
       aria-hidden="true"
       className={`inline-block h-3 w-3 rounded-full border-2 ${
-        v === "F" ? "border-mk-ink bg-mk-ink" : v === "H" ? "border-mk-ink bg-mk-paper2" : "border-mk-ink3"
+        v === "F" ? "border-mk-ink bg-mk-ink" : v === "H" ? "border-mk-ink bg-mk-paper2" : v === "C" ? "border-dashed border-mk-brand" : "border-mk-ink3"
       }`}
     />
   );
@@ -132,7 +138,7 @@ function Dot({ v }: { v: "F" | "H" | "N" }) {
 export default function ProductPage() {
   return (
     <>
-      <section className="border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(36px,5vw,56px)] pt-[clamp(48px,8vw,104px)]">
+      <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(36px,5vw,56px)] pt-[clamp(48px,8vw,104px)]">
         <div className="mx-auto flex max-w-[1280px] flex-col gap-[clamp(28px,4vw,48px)]">
           <div className="flex flex-wrap items-end justify-between gap-x-16 gap-y-6">
             <div className="flex min-w-0 flex-[1_1_640px] flex-col gap-[18px]">
@@ -172,6 +178,7 @@ export default function ProductPage() {
                 <div className="flex max-w-[720px] flex-col gap-3">
                   <Eyebrow>
                     {String(i + 1).padStart(2, "0")} · {m.kicker}
+                    {m.soon && <span className="ml-2 rounded-full bg-mk-soft px-2 py-0.5 font-mk text-[11px] font-semibold tracking-normal text-mk-brand-ink">Coming soon · {m.soon}</span>}
                   </Eyebrow>
                   <h2 data-reveal="up" className="m-0 text-[clamp(32px,4.6vw,58px)] font-medium leading-none tracking-[-0.05em]">
                     {m.lead} <Accent>{m.accent}</Accent>
@@ -201,7 +208,7 @@ export default function ProductPage() {
             eyebrow="PLATFORM COVERAGE"
             lead="What works where,"
             accent="today."
-            lede="Built on each platform’s official API. Where a platform limits something, we say so instead of faking it."
+            lede="Built on each platform’s official API. Meta is fully two-way today; for the others we say exactly what works instead of faking it."
           />
           {/* `relative` keeps the absolutely-positioned sr-only labels inside the scroller. */}
           <div className="relative overflow-x-auto border-t-2 border-mk-rule" tabIndex={0} aria-label="Platform coverage table">
@@ -229,8 +236,8 @@ export default function ProductPage() {
                     </th>
                     {r.c.split("").map((v, j) => (
                       <td key={j} className="py-3.5">
-                        <Dot v={v as "F" | "H" | "N"} />
-                        <span className="sr-only">{COVERAGE_LABEL[v as "F" | "H" | "N"]}</span>
+                        <Dot v={v as Cov} />
+                        <span className="sr-only">{COVERAGE_LABEL[v as Cov]}</span>
                       </td>
                     ))}
                   </tr>
@@ -239,7 +246,7 @@ export default function ProductPage() {
             </table>
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-mk-ink2">
-            {(["F", "H", "N"] as const).map((v) => (
+            {(["F", "H", "C"] as const).map((v) => (
               <span key={v} className="flex items-center gap-2">
                 <Dot v={v} />
                 {COVERAGE_LABEL[v]}

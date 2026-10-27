@@ -199,6 +199,9 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C9 | **F3 Experiments** — tests with significance, scale the winner | B4, C1 | XL |
 | C10 | **Job queue** — BullMQ + Redis replaces the in-process `setInterval`; multi-platform sync, alerts, reports, scheduled budgets / launches | Adds a Redis service on Railway (≈ $1–3 / month extra) | M |
 | C11 | Stripe billing, Shopify / GA4 revenue truth, activation checklist | — | L each (checklist S) |
+| C12 | **Morning briefing email** — daily, in the workspace time zone: top 3 decisions across clients (numbers + one-click link) and anything applied overnight. Opt-in per person in Settings › Notifications | A14 notifications, B2 | S |
+| C13 | **Guarded auto-apply** — per client "Suggest only" / "Auto-apply small changes" (Settings › AI). Only executable Meta budget suggestions, under a daily limit (default 15% of the campaign's budget), one move per campaign per day, logged as applied automatically with 7-day undo; workspace "Pause all automation" switch. Runs after each sync | B2, B3, A14 | M |
+| C14 | **Safety rules** (opt-in per client) — pixel stopped firing → pause affected Meta campaigns until it fires again; monthly cap run-out → lower daily budgets inside the guardrail. Each action emailed with Undo | C13, Meta health, `computePacing` | M |
 
 ---
 

@@ -4,12 +4,16 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { HEADER_LINKS, LIVE_TICKER, SIGN_UP_HREF } from "@/lib/marketing/nav";
+import { Moon, Sun } from "lucide-react";
+import { HEADER_LINKS, SIGN_UP_HREF } from "@/lib/marketing/nav";
+import { useTheme } from "@/components/app/theme/ThemeProvider";
 
 const GUTTER = "px-[clamp(16px,4vw,32px)]";
+const CONTACT_HREF = "/contact";
 
 export function SiteHeader() {
   const pathname = usePathname();
+  const { resolved, toggle } = useTheme();
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
@@ -37,25 +41,11 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-[100] border-b border-mk-hair bg-mk-paper/[.86] backdrop-blur-[12px] backdrop-saturate-[1.4]">
-      <div className={`mx-auto flex h-16 max-w-[1280px] items-center gap-5 ${GUTTER}`}>
+      <div className={`mx-auto flex h-16 max-w-[1280px] items-center gap-2 mk-sm:gap-5 ${GUTTER}`}>
         <Link href="/" className="flex flex-none" aria-label="Advertix home">
-          <Image
-            src="/brand/advertix-logo-black.png"
-            alt="Advertix"
-            width={83}
-            height={24}
-            priority
-            className="block h-6 w-auto"
-          />
+          <Image src="/brand/advertix-logo-black.png" alt="Advertix" width={120} height={35} priority className="block h-auto w-[120px] dark:hidden" />
+          <Image src="/brand/advertix-logo-white.png" alt="Advertix" width={120} height={35} priority className="hidden h-auto w-[120px] dark:block" />
         </Link>
-
-        <span className="hidden items-center gap-2 whitespace-nowrap font-mk-mono text-xs tracking-[.04em] text-mk-ink3 mk-2xl:inline-flex">
-          <span className="relative h-[7px] w-[7px]" aria-hidden="true">
-            <span className="absolute inset-0 rounded-full bg-mk-pos" />
-            <span className="absolute inset-0 animate-mk-ping rounded-full bg-mk-pos" />
-          </span>
-          {LIVE_TICKER}
-        </span>
 
         <span className="flex-1" />
 
@@ -72,9 +62,28 @@ export function SiteHeader() {
           ))}
         </nav>
 
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          title={resolved === "dark" ? "Light theme" : "Dark theme"}
+          className="flex h-11 w-11 flex-none items-center justify-center rounded-full text-mk-ink2 transition-colors hover:bg-mk-s2 hover:text-mk-ink"
+        >
+          {resolved === "dark" ? <Moon size={18} aria-hidden="true" /> : <Sun size={18} aria-hidden="true" />}
+        </button>
+
+        {/* Phones get Contact in the menu instead, so the bar doesn't overflow. */}
+        <Link
+          href={CONTACT_HREF}
+          aria-current={isCurrent(CONTACT_HREF) ? "page" : undefined}
+          className="hidden h-[42px] items-center whitespace-nowrap rounded-full border-[1.5px] border-mk-line2 px-[18px] text-sm font-semibold text-mk-ink transition-colors hover:bg-mk-s2 aria-[current=page]:border-mk-ink mk-sm:inline-flex"
+        >
+          Contact
+        </Link>
+
         <Link
           href={SIGN_UP_HREF}
-          className="inline-flex h-[42px] items-center whitespace-nowrap rounded-full bg-mk-ink px-[18px] text-sm font-semibold text-mk-paper transition-colors hover:bg-[#2d2a35]"
+          className="inline-flex h-[42px] items-center whitespace-nowrap rounded-full bg-mk-ink px-[18px] text-sm font-semibold text-mk-paper transition-colors hover:bg-mk-ink/90"
         >
           Start free
         </Link>
@@ -110,7 +119,7 @@ export function SiteHeader() {
           aria-label="Main"
           className={`flex flex-col border-t-2 border-mk-rule bg-mk-paper pb-5 pt-1 mk-lg:hidden ${GUTTER}`}
         >
-          {HEADER_LINKS.map((l, i) => (
+          {[...HEADER_LINKS, { label: "Contact", href: CONTACT_HREF }].map((l, i) => (
             <Link
               key={l.href}
               href={l.href}

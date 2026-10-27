@@ -16,7 +16,7 @@ import { DEMO_HREF, SIGN_UP_HREF } from "@/lib/marketing/nav";
 export const metadata: Metadata = {
   title: { absolute: "Advertix — AI-Powered Ads. Amplified." },
   description:
-    "One budget, five platforms, one AI that sees all of them. Plan, launch and optimize campaigns across Meta, Google, TikTok, Snapchat and LinkedIn from one workspace.",
+    "One budget, every platform, one AI that sees all of them. Plan, launch and optimize campaigns across Meta, Google, TikTok and LinkedIn from one workspace, with Snapchat coming soon.",
 };
 
 export default function HomePage() {

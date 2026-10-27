@@ -25,8 +25,8 @@ const TOUR = [
     key: "campaigns",
     label: "Campaigns",
     head: "Every campaign, every platform",
-    body: "One grid for Meta, Google, TikTok, Snapchat and LinkedIn, with Advertix’s suggestion next to each row.",
-    points: ["Sort, columns and row height", "Pause or resume with one toggle", "Bulk actions across platforms"],
+    body: "One grid for Meta, Google, TikTok and LinkedIn, with Advertix’s suggestion next to each row.",
+    points: ["Sort, columns and row height", "Pause or resume Meta with one toggle", "Bulk pause, resume and budgets"],
   },
   {
     key: "campaign-detail",
@@ -54,7 +54,7 @@ const TOUR = [
     label: "Creatives",
     head: "Variants from what already works",
     body: "Brief a format and tone; drafts reuse the hooks that convert for each client.",
-    points: ["Fatigue caught early", "Per-platform cuts", "Detail drawer with AI read"],
+    points: ["Fatigue caught early", "A shape for every placement", "Detail drawer with AI read"],
   },
 ];
 
@@ -111,8 +111,8 @@ export function LiveTour() {
             <AccentHeading lead="Take the tour." accent="Screen by screen." accentTone="ink" />
           </div>
           <p data-reveal="up" className="m-0 max-w-[420px] flex-[1_1_300px] text-mk-ink2">
-            The Advertix interface on an example agency, Halden &amp; Pike: six clients, five platforms, a
-            month of data.
+            The Advertix interface on an example agency, Halden &amp; Pike: six clients and a month of example
+            data.
           </p>
         </div>
 
@@ -139,10 +139,10 @@ export function LiveTour() {
                 >
                   {t.label}
                   {on && (
-                    <span className="absolute bottom-1.5 left-4 right-4 h-0.5 overflow-hidden rounded-sm bg-white/25">
+                    <span className="absolute bottom-1.5 left-4 right-4 h-0.5 overflow-hidden rounded-sm bg-mk-paper/25">
                       <span
                         key={`${tab}-${running}`}
-                        className={`block h-full origin-left bg-white ${running ? "animate-mk-tab" : "scale-x-0"}`}
+                        className={`block h-full origin-left bg-mk-paper ${running ? "animate-mk-tab" : "scale-x-0"}`}
                       />
                     </span>
                   )}
@@ -178,17 +178,17 @@ export function LiveTour() {
           <div className="flex min-w-0 flex-[3_1_640px] justify-center">
             {/* Desktop: browser frame */}
             <div className="hidden w-full rounded-[22px] border border-mk-hair bg-white/60 p-2 shadow-[0_50px_100px_-50px_rgba(40,24,120,.5)] mk-md:block">
-              <div className="overflow-hidden rounded-2xl border border-mk-hair bg-white">
-                <div className="flex h-[38px] items-center gap-[7px] border-b border-mk-hair bg-[#fbfaf6] px-3.5">
+              <div className="overflow-hidden rounded-2xl border border-mk-hair bg-mk-paper2">
+                <div className="flex h-[38px] items-center gap-[7px] border-b border-mk-hair bg-mk-paper2 px-3.5">
                   {[0, 1, 2].map((d) => (
-                    <span key={d} className="h-2.5 w-2.5 rounded-full bg-[#e5e1d6]" />
+                    <span key={d} className="h-2.5 w-2.5 rounded-full bg-mk-s3" />
                   ))}
                   <span className="flex-1" />
                   <span className="rounded-[7px] bg-mk-s2 px-3 py-[3px] font-mk-mono text-xs text-mk-ink3">{url}</span>
                   <span className="flex-1" />
                   <span className="font-mk-mono text-[11px] text-mk-pos">● EXAMPLE DATA</span>
                 </div>
-                <div className="relative aspect-[16/10] w-full overflow-hidden bg-[#f6f6f9]">
+                <div className="relative aspect-[16/10] w-full overflow-hidden bg-mk-paper">
                   <Image
                     key={`d-${T.key}`}
                     src={src(T.key, "desktop")}
@@ -203,8 +203,8 @@ export function LiveTour() {
               </div>
             </div>
             {/* Mobile: phone frame */}
-            <div className="w-[min(340px,88vw)] rounded-[46px] border border-mk-hair bg-mk-ink p-2.5 shadow-[0_50px_100px_-50px_rgba(40,24,120,.5)] mk-md:hidden">
-              <div className="relative aspect-[390/800] w-full overflow-hidden rounded-[36px] bg-[#f6f6f9]">
+            <div className="w-[min(340px,88vw)] rounded-[46px] border border-mk-hair bg-mk-band p-2.5 shadow-[0_50px_100px_-50px_rgba(40,24,120,.5)] mk-md:hidden">
+              <div className="relative aspect-[390/800] w-full overflow-hidden rounded-[36px] bg-mk-paper">
                 <Image
                   key={`m-${T.key}`}
                   src={src(T.key, "mobile")}

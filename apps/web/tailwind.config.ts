@@ -87,6 +87,11 @@ const config: Config = {
           lav: "rgb(var(--mk-lav) / <alpha-value>)",
           "lav-ink": "rgb(var(--mk-lav-ink) / <alpha-value>)",
           "pos-on-dark": "rgb(var(--mk-pos-on-dark) / <alpha-value>)",
+          "pos-soft": "rgb(var(--mk-pos-soft) / <alpha-value>)",
+          "neg-soft": "rgb(var(--mk-neg-soft) / <alpha-value>)",
+          "warn-soft": "rgb(var(--mk-warn-soft) / <alpha-value>)",
+          band: "rgb(var(--mk-band) / <alpha-value>)",
+          "on-light": "rgb(var(--mk-on-light) / <alpha-value>)",
         },
       },
       fontFamily: {
