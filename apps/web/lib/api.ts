@@ -1725,6 +1725,8 @@ export function useApiClient() {
        *  to OpenAI's /images/edits (image-guided) instead of text-to-image,
        *  and we must send multipart FormData (apiFetch is JSON-only). */
       image?: File | null;
+      /** OpenAI image quality; the API defaults to low. */
+      quality?: "low" | "medium" | "high";
     }): Promise<{ url: string; hash: string; dataUrl: string }> => {
       // `dataUrl` is a base64 data URI for browser preview; `url`/`hash`
       // are the Meta /adimages handles used at publish time.
@@ -1737,6 +1739,7 @@ export function useApiClient() {
         if (params.headline) form.append("headline", params.headline);
         if (params.description) form.append("description", params.description);
         if (params.aspect) form.append("aspect", params.aspect);
+        if (params.quality) form.append("quality", params.quality);
         form.append("image", params.image);
         const res = await fetch(`${API_BASE}/api/ai/generate-image`, {
           method: "POST",

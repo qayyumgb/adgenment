@@ -3,6 +3,7 @@
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { useApiClient, type Campaign, type CampaignStatus } from "@/lib/api";
+import { useConfirm } from "@/components/app/ui";
 
 const errorText = (err: unknown) => (err instanceof Error && err.message ? err.message : "That didn't work. Try again.");
 
@@ -34,6 +35,7 @@ export const canToggle = (c: Campaign) =>
  */
 export function useCampaignMutations(onMutate: () => void) {
   const api = useApiClient();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [busy, setBusy] = useState<Record<string, true>>({});
   const mark = (id: string, on: boolean) =>
     setBusy((b) => {
@@ -76,6 +78,8 @@ export function useCampaignMutations(onMutate: () => void) {
 
   return {
     busy: (id: string) => Boolean(busy[id]),
+    /** The delete confirm; render it once where `remove` can be called. */
+    confirmDialog,
 
     toggle: async (c: Campaign) => {
       if (busy[c.id] || !canToggle(c)) return;
@@ -113,10 +117,15 @@ export function useCampaignMutations(onMutate: () => void) {
 
     remove: async (c: Campaign) => {
       // Say plainly that this reaches Meta: deleting a live campaign stops real spend.
-      const warning = isLiveOnMeta(c)
-        ? `Delete "${c.name}"?\n\nThis deletes the campaign ON META too — its ad set and ad stop delivering immediately — along with its metrics here. This cannot be undone.`
-        : `Delete "${c.name}"? This also removes its metrics and creative links. This cannot be undone.`;
-      if (!window.confirm(warning)) return;
+      const ok = await confirm({
+        title: `Delete “${c.name}”?`,
+        body: isLiveOnMeta(c)
+          ? "This deletes the campaign on Meta too: its ad sets and ads stop delivering straight away. Its results here are removed as well. This can't be undone."
+          : "This removes the campaign with its results and creative links. This can't be undone.",
+        confirmLabel: isLiveOnMeta(c) ? "Delete here and on Meta" : "Delete",
+        danger: true,
+      });
+      if (!ok) return;
       mark(c.id, true);
       try {
         await api.deleteCampaign(c.id);

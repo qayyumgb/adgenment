@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { ImageIcon, Layers, Pencil, RefreshCw } from "lucide-react";
+import { ImageIcon, Layers, MoreHorizontal, Pause, Pencil, Play, RefreshCw } from "lucide-react";
 import { useApiClient, type Campaign, type CampaignAdSet } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { fmtMoney } from "@/lib/money";
 import { CellText, DataGrid, type GridColumn } from "@/components/app/grid";
-import { Button, Card, EmptyState, IconButton, Pill, PLATFORM_META, Skeleton, Toggle, type PlatformKey } from "@/components/app/ui";
+import { Button, Card, EmptyState, IconButton, Menu, MenuItem, Pill, PLATFORM_META, Skeleton, Toggle, type PlatformKey } from "@/components/app/ui";
 import { AdSetBudgetDialog } from "./AdSetBudgetDialog";
 import { AdTile } from "./AdTile";
 import { DELIVERY_TONE, adSetRead, cpaOf, ctrOf, deliveryLabel, roasOf, type CampaignStructureState } from "./structure";
@@ -122,16 +122,31 @@ export function AdSetsGrid({ campaign: c, st, onBudget }: { campaign: Campaign; 
       defaultSort={{ id: "spend", dir: "desc" }}
       footerLabel="Total"
       loading={st.loading}
+      // Two actions (pause / resume, budget) → the ⋯ menu; a blocked one says why.
       action={{
-        width: 104,
+        width: 64,
         render: (s) => (
-          <span className="flex items-center gap-1.5">
-            <span title={s.statusBlocker ?? (s.switchOn ? "Pause on Meta" : "Resume on Meta")}>
-              <Toggle checked={s.switchOn} onChange={() => void st.toggleAdSet(s)} label={`${s.switchOn ? "Pause" : "Resume"} ${s.name}`} disabled={st.busy(s.id) || Boolean(s.statusBlocker)} />
-            </span>
-            <IconButton label={s.budgetBlocker ?? "Change daily budget"} size={32} title={s.budgetBlocker ?? "Change daily budget"} disabled={Boolean(s.budgetBlocker)} onClick={() => onBudget(s)}>
-              <Pencil size={15} />
-            </IconButton>
+          <span className="flex w-full justify-end">
+            <Menu
+              align="end"
+              width={240}
+              trigger={(p) => (
+                <IconButton {...p} label={`Actions for ${s.name}`} size={32} disabled={st.busy(s.id)}>
+                  <MoreHorizontal size={16} />
+                </IconButton>
+              )}
+            >
+              {(close) => (
+                <>
+                  <MenuItem icon={s.switchOn ? <Pause size={15} /> : <Play size={15} />} disabled={Boolean(s.statusBlocker)} hint={s.statusBlocker ?? undefined} onSelect={() => (close(), void st.toggleAdSet(s))}>
+                    {s.switchOn ? "Pause on Meta" : "Resume on Meta"}
+                  </MenuItem>
+                  <MenuItem icon={<Pencil size={15} />} disabled={Boolean(s.budgetBlocker)} hint={s.budgetBlocker ?? undefined} onSelect={() => (close(), onBudget(s))}>
+                    Change daily budget
+                  </MenuItem>
+                </>
+              )}
+            </Menu>
           </span>
         ),
       }}

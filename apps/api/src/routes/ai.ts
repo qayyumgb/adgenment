@@ -4,7 +4,7 @@ import { aiService, type ChatTurn } from "../services/ai.service";
 import { buildPlan, plannerContext, plannerStarters, plannerSystemPrompt, PLANNER_SCHEMA, type PlannerOutput } from "../services/planner.service";
 import { assertClientAccess, getAccess } from "../lib/access";
 import { ClientScopeError } from "../lib/clients";
-import { openaiImageService } from "../services/openai-image.service";
+import { openaiImageService, IMAGE_QUALITIES, type ImageQuality } from "../services/openai-image.service";
 import { metaService, type MetaTargeting } from "../services/meta.service";
 import { requireAuth } from "../middleware/auth";
 import { requireWorkspace } from "../lib/workspace";
@@ -581,7 +581,7 @@ router.post(
  * it straight to Meta's /adimages so the caller gets back a ready-to-use
  * `{ url, hash }` (the same shape /meta/upload-image returns).
  *
- * Body: `{ brief?, headline?, description? }` — the brief is the campaign
+ * Body: `{ brief?, headline?, description?, aspect?, quality? }` — the brief is the campaign
  * brief used in copy generation; headline/description are the per-card
  * text. We assemble the image prompt server-side via
  * geminiService.buildAdImagePrompt so the frontend doesn't need to know
@@ -614,12 +614,14 @@ router.post(
         });
       }
 
-      const { brief, headline, description, aspect } = (req.body ?? {}) as {
+      const { brief, headline, description, aspect, quality } = (req.body ?? {}) as {
         brief?: unknown;
         headline?: unknown;
         description?: unknown;
         aspect?: unknown;
+        quality?: unknown;
       };
+      const imageQuality: ImageQuality = IMAGE_QUALITIES.includes(quality as ImageQuality) ? (quality as ImageQuality) : "low";
       const hasAnyText =
         (typeof brief === "string" && brief.trim().length > 0) ||
         (typeof headline === "string" && headline.trim().length > 0) ||
@@ -671,7 +673,8 @@ router.post(
           normalizedAspect,
           refFile
             ? { buffer: refFile.buffer, mimeType: refFile.mimetype }
-            : undefined
+            : undefined,
+          imageQuality
         );
       } catch (err) {
         const code = err instanceof Error ? err.message : "OPENAI_API_ERROR";

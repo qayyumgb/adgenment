@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useAppRouter } from "@/hooks/useAppRouter";
 import { useAccess } from "@/components/app/team/access";
 import type { ReactNode } from "react";
-import { Check, Copy, ExternalLink, MoreHorizontal, Pause, Play, Rocket, Sparkles, Trash2, Clock } from "lucide-react";
+import { Check, Copy, ExternalLink, MoreHorizontal, Pause, Play, Rocket, RotateCcw, Sparkles, Trash2, Clock } from "lucide-react";
 import type { Campaign, Suggestion } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { fmtMoney } from "@/lib/money";
@@ -265,13 +265,28 @@ export function CampaignsGrid({
           align="end"
           width={220}
           trigger={(p) => (
-            <IconButton {...p} label={`More actions for ${r.c.name}`} size={32} disabled={mutations.busy(r.c.id)}>
+            <IconButton {...p} label={`Actions for ${r.c.name}`} size={32} disabled={mutations.busy(r.c.id) || (!!s && suggestions.busy === s.id)}>
               <MoreHorizontal size={17} />
             </IconButton>
           )}
         >
           {(close) => (
             <>
+              {s?.status === "OPEN" &&
+                (s.executable ? (
+                  <MenuItem icon={<Sparkles size={15} />} onSelect={() => (close(), void suggestions.apply(s))}>
+                    {s.actionLabel}
+                  </MenuItem>
+                ) : (
+                  <MenuItem icon={<Sparkles size={15} />} onSelect={() => (close(), router.push(s.reviewHref ?? `/campaigns/${r.c.id}`))}>
+                    Review suggestion
+                  </MenuItem>
+                ))}
+              {s && (s.status === "APPLIED" || s.status === "SNOOZED") && suggestions.canUndo(s) && (
+                <MenuItem icon={<RotateCcw size={15} />} onSelect={() => (close(), void suggestions.undo(s))}>
+                  Undo suggestion
+                </MenuItem>
+              )}
               <MenuItem icon={<ExternalLink size={15} />} onSelect={() => (close(), router.push(`/campaigns/${r.c.id}`))}>
                 Open
               </MenuItem>
@@ -309,11 +324,9 @@ export function CampaignsGrid({
     );
   };
 
+  // One action → its button; several → only the ⋯ menu (which includes Open and the suggestion).
   const actionCell = (r: CampaignRow, d: GridDisplay) => (
-    <span className="flex w-full items-center justify-between gap-1.5">
-      {primaryAction(r, d.density === "compact" ? "h-7" : "h-8")}
-      {rowMenu(r)}
-    </span>
+    <span className="flex w-full items-center justify-end">{canEdit ? rowMenu(r) : primaryAction(r, d.density === "compact" ? "h-7" : "h-8")}</span>
   );
 
   const card = (r: CampaignRow) => {
@@ -388,38 +401,41 @@ export function CampaignsGrid({
   };
 
   return (
-    <DataGrid
-      tableId="campaigns"
-      label="Campaigns"
-      rows={rows}
-      getRowId={(r) => r.c.id}
-      columns={columns}
-      defaultSort={{ id: "spend", dir: "desc" }}
-      loading={loading}
-      selectable={canEdit}
-      rowLabel={(r) => `Select ${r.c.name}`}
-      filters={filters}
-      empty={empty}
-      footerLabel={footerLabel}
-      action={{ width: 200, render: actionCell }}
-      renderCards={(rs) => rs.map(card)}
-      bulkActions={({ rows: sel, clear }) => {
-        const cs = sel.map((r) => r.c);
-        const pausable = cs.filter((c) => canToggle(c) && c.status === "ACTIVE").length;
-        const resumable = cs.filter((c) => canToggle(c) && c.status === "PAUSED").length;
-        return (
-          <>
-            <BulkButton disabled={!pausable} title={pausable ? undefined : "None of these can be paused"} onClick={() => void mutations.pauseMany(cs).then(clear)}>
-              Pause{pausable && pausable !== cs.length ? ` ${pausable}` : ""}
-            </BulkButton>
-            <BulkButton disabled={!resumable} title={resumable ? undefined : "None of these are paused"} onClick={() => void mutations.resumeMany(cs).then(clear)}>
-              Resume{resumable && resumable !== cs.length ? ` ${resumable}` : ""}
-            </BulkButton>
-            <BulkButton onClick={() => onEditBudgets(cs)}>Edit budgets</BulkButton>
-            <BulkButton onClick={() => (cs.length === 1 ? (onDuplicate(cs[0]), clear()) : void mutations.duplicateMany(cs).then(clear))}>Duplicate</BulkButton>
-          </>
-        );
-      }}
-    />
+    <>
+      {mutations.confirmDialog}
+      <DataGrid
+        tableId="campaigns"
+        label="Campaigns"
+        rows={rows}
+        getRowId={(r) => r.c.id}
+        columns={columns}
+        defaultSort={{ id: "spend", dir: "desc" }}
+        loading={loading}
+        selectable={canEdit}
+        rowLabel={(r) => `Select ${r.c.name}`}
+        filters={filters}
+        empty={empty}
+        footerLabel={footerLabel}
+        action={{ width: canEdit ? 64 : 88, render: actionCell }}
+        renderCards={(rs) => rs.map(card)}
+        bulkActions={({ rows: sel, clear }) => {
+          const cs = sel.map((r) => r.c);
+          const pausable = cs.filter((c) => canToggle(c) && c.status === "ACTIVE").length;
+          const resumable = cs.filter((c) => canToggle(c) && c.status === "PAUSED").length;
+          return (
+            <>
+              <BulkButton disabled={!pausable} title={pausable ? undefined : "None of these can be paused"} onClick={() => void mutations.pauseMany(cs).then(clear)}>
+                Pause{pausable && pausable !== cs.length ? ` ${pausable}` : ""}
+              </BulkButton>
+              <BulkButton disabled={!resumable} title={resumable ? undefined : "None of these are paused"} onClick={() => void mutations.resumeMany(cs).then(clear)}>
+                Resume{resumable && resumable !== cs.length ? ` ${resumable}` : ""}
+              </BulkButton>
+              <BulkButton onClick={() => onEditBudgets(cs)}>Edit budgets</BulkButton>
+              <BulkButton onClick={() => (cs.length === 1 ? (onDuplicate(cs[0]), clear()) : void mutations.duplicateMany(cs).then(clear))}>Duplicate</BulkButton>
+            </>
+          );
+        }}
+      />
+    </>
   );
 }

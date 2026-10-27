@@ -294,14 +294,11 @@ export default function AudiencesPage() {
                 )
               }
               action={canEdit ? {
-                width: 196,
+                width: 156,
+                // One action → its button; saved audiences have several → only the ⋯ menu.
                 render: (i) => (
                   <span className="flex items-center justify-end gap-1.5">
-                    {i.source === "library" ? (
-                      <Button variant="soft" size="sm" icon={<Rocket size={14} />} onClick={() => openInWizard(i)}>
-                        Use in campaign
-                      </Button>
-                    ) : i.canSeedLookalike ? (
+                    {i.source === "library" ? null : i.canSeedLookalike ? (
                       <Button variant="soft" size="sm" onClick={() => setDialog({ tab: "lookalike", editing: null, seedKey: i.key })}>
                         Build lookalike
                       </Button>
@@ -315,21 +312,21 @@ export default function AudiencesPage() {
                         align="end"
                         width={200}
                         trigger={(p) => (
-                          <IconButton {...p} label={`More for ${i.name}`} size={32} disabled={busy === i.key}>
+                          <IconButton {...p} label={`Actions for ${i.name}`} size={32} disabled={busy === i.key}>
                             <MoreHorizontal size={16} />
                           </IconButton>
                         )}
                       >
                         {(close) => (
                           <>
+                            <MenuItem icon={<Rocket size={15} />} onSelect={() => (close(), openInWizard(i))}>
+                              Use in campaign
+                            </MenuItem>
                             <MenuItem icon={<Pencil size={15} />} onSelect={() => (close(), setDialog({ tab: "build", editing: i, seedKey: null }))}>
                               Edit
                             </MenuItem>
                             <MenuItem icon={<Copy size={15} />} onSelect={() => (close(), void run(i.key, () => api.duplicateAudience(i.id), "Audience duplicated"))}>
                               Duplicate
-                            </MenuItem>
-                            <MenuItem icon={<Rocket size={15} />} onSelect={() => (close(), openInWizard(i))}>
-                              Use in campaign
                             </MenuItem>
                             <MenuSeparator />
                             <MenuItem icon={<Trash2 size={15} />} onSelect={() => (close(), remove(i))}>

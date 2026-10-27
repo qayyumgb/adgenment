@@ -132,9 +132,14 @@ function useGridPrefs<T>(tableId: string, columns: GridColumn<T>[], defaultSort:
   const [prefs, setPrefs] = useState<GridPrefs>({ sort: defaultSort, hidden: defaultHidden, density: defaultDensity, wrap: false, view: "table" });
 
   // Read after mount so server and client render the same first frame.
+  // Phones start in card view until someone picks a view for this table.
   useEffect(() => {
     const stored = readPrefs(key);
-    if (!stored) return;
+    const phone = window.matchMedia("(max-width: 767px)").matches;
+    if (!stored) {
+      if (phone) setPrefs((p) => ({ ...p, view: "cards" }));
+      return;
+    }
     const ids = new Set(columns.map((c) => c.id));
     const sortable = new Set(columns.filter((c) => c.sortValue).map((c) => c.id));
     setPrefs((p) => ({
@@ -147,7 +152,7 @@ function useGridPrefs<T>(tableId: string, columns: GridColumn<T>[], defaultSort:
       hidden: Array.isArray(stored.hidden) ? stored.hidden.filter((id) => ids.has(id) && id !== columns[0]?.id) : p.hidden,
       density: stored.density === "compact" || stored.density === "comfortable" ? stored.density : p.density,
       wrap: typeof stored.wrap === "boolean" ? stored.wrap : p.wrap,
-      view: stored.view === "cards" || stored.view === "table" ? stored.view : p.view,
+      view: stored.view === "cards" || stored.view === "table" ? stored.view : phone ? "cards" : p.view,
     }));
     // Only on table change; column definitions are expected to be stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -389,6 +394,7 @@ export function DataGrid<T>({
   loading = false,
   empty,
   renderCards,
+  cardView = true,
   cardMinWidth = 280,
   className,
 }: {
@@ -423,13 +429,20 @@ export function DataGrid<T>({
    * In card view Sort stays, Columns / Row height and selection don't apply.
    */
   renderCards?: (rows: T[]) => ReactNode;
+  /**
+   * Without `renderCards`, card view is built from the columns: the first
+   * column as the title, the visible others as label / value pairs, the
+   * action top right. Pass false to keep a grid table-only.
+   */
+  cardView?: boolean;
   /** Minimum card width in the responsive card grid. */
   cardMinWidth?: number;
   className?: string;
 }) {
   const { prefs, update, defaultHidden } = useGridPrefs(tableId, columns, defaultSort, defaultDensity);
   const display: GridDisplay = { density: prefs.density, wrap: prefs.wrap };
-  const cards = Boolean(renderCards) && prefs.view === "cards";
+  const canCards = Boolean(renderCards) || cardView;
+  const cards = canCards && prefs.view === "cards";
 
   const identity = columns[0];
   const rest = columns.slice(1);
@@ -533,7 +546,7 @@ export function DataGrid<T>({
           <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-4 py-3.5">
             {filters}
             <div className="ml-auto flex gap-2">
-              {renderCards && (
+              {canCards && (
                 <Segmented
                   label="View"
                   value={prefs.view}
@@ -748,7 +761,26 @@ export function DataGrid<T>({
                 <div className="rounded-card bg-surface">{empty ?? <GridEmpty title="Nothing here yet" />}</div>
               ) : (
                 <div role="list" aria-label={label} className="grid gap-4" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardMinWidth}px, 100%), 1fr))` }}>
-                  {renderCards?.(sorted)}
+                  {renderCards
+                    ? renderCards(sorted)
+                    : sorted.map((row) => (
+                        <div key={getRowId(row)} role="listitem" className="flex min-w-0 flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-card">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">{identity.render(row, display)}</div>
+                            {action && <div className="flex flex-none items-center">{action.render(row, display)}</div>}
+                          </div>
+                          {visible.length > 0 && (
+                            <dl className="grid grid-cols-2 gap-x-3 gap-y-2.5 rounded-ctl bg-surface-2 px-3 py-2.5">
+                              {visible.map((c) => (
+                                <div key={c.id} className="flex min-w-0 flex-col gap-0.5">
+                                  <dt className="truncate text-[11px] font-medium text-ink-3">{c.label}</dt>
+                                  <dd className="m-0 min-w-0 text-sm tabular-nums [&_*]:max-w-full">{c.render(row, display)}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          )}
+                        </div>
+                      ))}
                 </div>
               )}
             </div>

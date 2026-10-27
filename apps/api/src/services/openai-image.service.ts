@@ -21,14 +21,18 @@
 import sharp from "sharp";
 
 const OPENAI_BASE = "https://api.openai.com/v1";
-const MODEL = "gpt-image-1-mini";
-// Hardcoded to Low for now. Tradeoffs:
-//   - Low ($0.005, 1024²) is plenty for beta + early production ads.
-//   - Medium ($0.011) is noticeably sharper but 2.2× the price.
-//   - High ($0.052) is overkill for ad creatives where the image is
-//     decoration around copy, not the hero.
-// We'll surface a quality knob in the UI once paid customers ask for it.
-const QUALITY = "low";
+// Quality is picked per run in the Creative studio (default Low):
+//   - Low / Medium: GPT Image 1 Mini at that quality ($0.005 / $0.011 a
+//     1024² image) — cheap and quick, fine for drafts and most feed ads.
+//   - High: the full GPT Image model at high quality — better text in the
+//     image, finer detail and (with input_fidelity) a truer product from the
+//     reference photo, at many times the price and noticeably slower.
+// Override the models with OPENAI_IMAGE_MODEL / OPENAI_IMAGE_MODEL_HIGH
+// (e.g. when OpenAI ships a newer one) without a code change.
+const MODEL = () => process.env.OPENAI_IMAGE_MODEL || "gpt-image-1-mini";
+const MODEL_HIGH = () => process.env.OPENAI_IMAGE_MODEL_HIGH || "gpt-image-1";
+export type ImageQuality = "low" | "medium" | "high";
+export const IMAGE_QUALITIES: ImageQuality[] = ["low", "medium", "high"];
 
 type AspectRatio = "square" | "portrait" | "landscape";
 
@@ -190,7 +194,8 @@ class OpenAIImageService {
   async generateImage(
     prompt: string,
     aspect: AspectRatio = "square",
-    reference?: { buffer: Buffer; mimeType: string }
+    reference?: { buffer: Buffer; mimeType: string },
+    quality: ImageQuality = "low"
   ): Promise<GeneratedImage> {
     // Resolve the API key BEFORE the fetch try/catch — otherwise a
     // missing-key error gets rebranded as "OPENAI_API_ERROR" and the
@@ -201,6 +206,8 @@ class OpenAIImageService {
     }
 
     const size = sizeForAspect(aspect);
+    const high = quality === "high";
+    const model = high ? MODEL_HIGH() : MODEL();
     let response: Response;
     try {
       if (reference) {
@@ -208,13 +215,15 @@ class OpenAIImageService {
         // reference as a multipart file alongside the prompt. We let fetch
         // set the multipart boundary (don't add a content-type header).
         // NB: gpt-image-1-mini does NOT support `input_fidelity` — sending
-        // it returns a 400, so the product is guided, not pixel-perfect.
+        // it returns a 400 — so only High (full model) keeps the product
+        // close to the photo; Low / Medium are guided, not pixel-perfect.
         const form = new FormData();
-        form.append("model", MODEL);
+        form.append("model", model);
         form.append("prompt", prompt);
         form.append("n", "1");
         form.append("size", size);
-        form.append("quality", QUALITY);
+        form.append("quality", quality);
+        if (high) form.append("input_fidelity", "high");
         form.append("output_format", "png");
         form.append(
           "image",
@@ -234,11 +243,11 @@ class OpenAIImageService {
             authorization: `Bearer ${apiKey}`,
           },
           body: JSON.stringify({
-            model: MODEL,
+            model,
             prompt,
             n: 1,
             size,
-            quality: QUALITY,
+            quality,
             // gpt-image-1 family always returns base64; this field is the
             // explicit name for that behavior. Setting it makes the contract
             // obvious to anyone reading the call.

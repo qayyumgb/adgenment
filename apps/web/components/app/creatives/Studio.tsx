@@ -51,17 +51,39 @@ const PLATFORMS = [
   { value: "LINKEDIN", label: "LinkedIn" },
 ];
 const OBJECTIVES = ["Conversions", "Leads", "Traffic", "Awareness"];
-const IMAGE_COUNTS = [0, 1, 2, 4];
+// Images per run = how many image variants come back (0 = copy only, four text drafts).
+const IMAGE_COUNTS = [1, 2, 3, 4, 0];
+const COPY_ONLY_DRAFTS = 4;
+type Quality = "low" | "medium" | "high";
+// Low and Medium use GPT Image mini; High uses the full GPT Image model (API side).
+const QUALITIES: { value: Quality; label: string; hint: string }[] = [
+  { value: "low", label: "Low", hint: "Fastest and cheapest, for testing ideas" },
+  { value: "medium", label: "Medium", hint: "Sharper, about twice the cost of Low" },
+  { value: "high", label: "High", hint: "Best detail, text and product likeness; full model, much slower and costlier" },
+];
 const REF_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
 export type StudioHandle = { seedFrom: (item: CreativeBoardItem) => void };
 
 const errorText = (err: unknown) => (err instanceof Error && err.message ? err.message : "The AI service didn't answer. Try again.");
 
-function Chip({ label, value, children }: { label: string; value: string; children: (close: () => void) => React.ReactNode }) {
+/** A labelled group in the studio settings. */
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <span className="flex items-baseline gap-1.5 text-xs font-medium text-ink-2">
+        {label}
+        {hint && <span className="truncate font-normal text-ink-3">· {hint}</span>}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+function Chip({ label, value, width = 220, children }: { label: string; value: string; width?: number; children: (close: () => void) => React.ReactNode }) {
   return (
     <Menu
-      width={220}
+      width={width}
       trigger={(p) => (
         <button
           {...p}
@@ -98,6 +120,7 @@ export const Studio = forwardRef<
   const [platform, setPlatform] = useState("META");
   const [objective, setObjective] = useState("Conversions");
   const [images, setImages] = useState(2);
+  const [quality, setQuality] = useState<Quality>("low");
   const [cardImages, setCardImages] = useState(true);
   const [cardCount, setCardCount] = useState(4);
   const [refImage, setRefImage] = useState<File | null>(null);
@@ -129,6 +152,8 @@ export const Studio = forwardRef<
 
   const aspectLabel = ASPECTS.find((a) => a.value === aspect)!;
   const canGenerate = prompt.trim().length >= 10 && !running;
+  const draftCount = kind === "IMAGE" && images > 0 ? images : COPY_ONLY_DRAFTS;
+  const makesImages = (kind === "IMAGE" && images > 0) || (kind === "CAROUSEL" && cardImages);
 
   const generate = async () => {
     if (!canGenerate) return;
@@ -147,7 +172,7 @@ export const Studio = forwardRef<
     const ref = kind === "IMAGE" || kind === "CAROUSEL" ? refImage : null;
     try {
       const imageCalls = kind === "IMAGE" && images > 0
-        ? Promise.allSettled(Array.from({ length: images }, () => api.generateAdImage({ brief, aspect, image: ref })))
+        ? Promise.allSettled(Array.from({ length: images }, () => api.generateAdImage({ brief, aspect, image: ref, quality })))
         : Promise.resolve([]);
       const { copy } = await api.generateCopy({ brief, platform, objective, ...(kind === "CAROUSEL" ? { kind: "carousel" as const, cardCount } : {}) });
       const shots = (await imageCalls) as PromiseSettledResult<{ url: string; hash: string; dataUrl: string }>[];
@@ -169,7 +194,8 @@ export const Studio = forwardRef<
     const t = copy.primary_texts ?? [];
     const d = copy.descriptions ?? [];
     const c = copy.ctas ?? [];
-    const n = Math.max(1, Math.min(4, Math.max(h.length, t.length)));
+    // Image runs: one draft per image variant asked for; other kinds: up to four copy drafts.
+    const n = draftCount;
     const stamp = Date.now();
     return Array.from({ length: n }, (_, i) => {
       const image = shots.length ? shots[i % shots.length] : null;
@@ -201,7 +227,7 @@ export const Studio = forwardRef<
     const cards = copy.cards ?? [];
     let shots: ({ url: string; hash: string; dataUrl: string } | null)[] = cards.map(() => null);
     if (cardImages && cards.length) {
-      const res = await Promise.allSettled(cards.map((card) => api.generateAdImage({ brief, headline: card.headline, description: card.description, aspect, image: ref })));
+      const res = await Promise.allSettled(cards.map((card) => api.generateAdImage({ brief, headline: card.headline, description: card.description, aspect, image: ref, quality })));
       shots = res.map((r) => (r.status === "fulfilled" ? r.value : null));
       const missing = shots.filter((s) => !s).length;
       if (missing) toast.error(missing === cards.length ? "Card images didn't generate. Add them in Edit after saving." : `${missing} card image${missing === 1 ? "" : "s"} didn't generate. Add ${missing === 1 ? "it" : "them"} in Edit after saving.`, { duration: 6000 });
@@ -283,7 +309,8 @@ export const Studio = forwardRef<
         </IconButton>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-[14px] border border-line bg-surface-2 p-3.5">
+      {/* The brief: a roomy writing area with templates and a reference image under it. */}
+      <div className="flex flex-col rounded-[14px] border border-line bg-surface-2 transition-colors focus-within:border-brand focus-within:ring-[3px] focus-within:ring-brand-soft">
         <textarea
           ref={promptRef}
           value={prompt}
@@ -291,68 +318,37 @@ export const Studio = forwardRef<
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void generate();
           }}
-          rows={2}
-          placeholder="e.g. A 15-second morning-routine video for Glow Serum, opening on the founder’s line, ending on the 28-day result"
+          rows={5}
+          placeholder={"Describe the ad: the product, who it's for, the offer and the feeling.\ne.g. A 15-second morning-routine video for Glow Serum, opening on the founder’s line, ending on the 28-day result"}
           aria-label="Describe the ad"
-          className="w-full resize-none border-0 bg-transparent text-[15px] leading-relaxed text-ink outline-none placeholder:text-ink-3"
+          className="min-h-[136px] w-full resize-y border-0 bg-transparent px-4 pb-2 pt-3.5 text-[15px] leading-relaxed text-ink outline-none placeholder:text-ink-3"
         />
-        <div className="flex flex-wrap items-center gap-2">
-          <Segmented label="Kind" size="sm" value={kind} onChange={setKind} options={KINDS} />
-          {(kind === "IMAGE" || kind === "CAROUSEL") && (
-            <Segmented label="Format" size="sm" value={aspect} onChange={setAspect} options={ASPECTS.map((a) => ({ value: a.value, label: a.label }))} />
-          )}
-          {TONES.map((t) => (
-            <button
-              key={t}
-              type="button"
-              aria-pressed={tone === t}
-              onClick={() => setTone(t)}
-              className={cn(
-                "h-8 whitespace-nowrap rounded-full border px-3 text-[13px] font-medium transition-colors",
-                tone === t ? "border-brand bg-brand-soft text-brand-ink" : "border-line bg-surface text-ink-2 hover:text-ink"
-              )}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Chip label="For" value={PLATFORMS.find((p) => p.value === platform)!.label}>
-            {(close) => PLATFORMS.map((p) => <MenuItem key={p.value} selected={platform === p.value} onSelect={() => (setPlatform(p.value), close())}>{p.label}</MenuItem>)}
-          </Chip>
-          <Chip label="Goal" value={objective}>
-            {(close) => OBJECTIVES.map((o) => <MenuItem key={o} selected={objective === o} onSelect={() => (setObjective(o), close())}>{o}</MenuItem>)}
-          </Chip>
-          {kind === "IMAGE" && (
-            <Chip label="Images" value={images === 0 ? "None" : String(images)}>
-              {(close) => (
-                <>
-                  <MenuLabel>Images per run · up to 20 an hour</MenuLabel>
-                  {IMAGE_COUNTS.map((n) => <MenuItem key={n} selected={images === n} onSelect={() => (setImages(n), close())}>{n === 0 ? "Copy only" : `${n} image${n === 1 ? "" : "s"}`}</MenuItem>)}
-                </>
-              )}
-            </Chip>
-          )}
-          {kind === "CAROUSEL" && (
-            <>
-              <Chip label="Cards" value={String(cardCount)}>
-                {(close) => [2, 3, 4, 5].map((n) => <MenuItem key={n} selected={cardCount === n} onSelect={() => (setCardCount(n), close())}>{n} cards</MenuItem>)}
-              </Chip>
-              <Chip label="Card images" value={cardImages ? "Generate" : "Add later"}>
-                {(close) => (
-                  <>
-                    <MenuItem selected={cardImages} onSelect={() => (setCardImages(true), close())}>Generate one per card</MenuItem>
-                    <MenuItem selected={!cardImages} onSelect={() => (setCardImages(false), close())}>Copy only, add images later</MenuItem>
-                  </>
-                )}
-              </Chip>
-            </>
-          )}
+        <div className="flex flex-wrap items-center gap-2 border-t border-line px-3 py-2">
+          <Menu
+            width={280}
+            trigger={(p) => (
+              <button {...p} type="button" className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-surface px-3 text-[13px] font-medium text-ink-2 hover:text-ink">
+                <FileText size={14} aria-hidden="true" />
+                Templates
+              </button>
+            )}
+          >
+            {(close) => (
+              <>
+                <MenuLabel>Start from a template</MenuLabel>
+                {PROMPT_TEMPLATES.map((t) => (
+                  <MenuItem key={t.label} onSelect={() => (setPrompt(t.brief), close(), setTimeout(() => promptRef.current?.focus(), 50))}>
+                    {t.label}
+                  </MenuItem>
+                ))}
+              </>
+            )}
+          </Menu>
           {(kind === "IMAGE" || kind === "CAROUSEL") &&
             (refImage ? (
               <span className="flex h-8 items-center gap-1.5 rounded-full border border-brand bg-brand-soft pl-3 pr-1 text-[13px] font-medium text-brand-ink">
                 <ImagePlus size={14} aria-hidden="true" />
-                <span className="max-w-[140px] truncate">{refImage.name}</span>
+                <span className="max-w-[160px] truncate">{refImage.name}</span>
                 <button type="button" aria-label="Remove reference image" onClick={() => setRefImage(null)} className="flex h-6 w-6 items-center justify-center rounded-full hover:bg-surface">
                   <X size={13} />
                 </button>
@@ -376,43 +372,105 @@ export const Studio = forwardRef<
                 />
               </label>
             ))}
-          <Menu
-            width={280}
-            trigger={(p) => (
-              <button {...p} type="button" className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-surface px-3 text-[13px] font-medium text-ink-2 hover:text-ink">
-                <FileText size={14} aria-hidden="true" />
-                Templates
-              </button>
-            )}
-          >
-            {(close) => (
-              <>
-                <MenuLabel>Start from a template</MenuLabel>
-                {PROMPT_TEMPLATES.map((t) => (
-                  <MenuItem key={t.label} onSelect={() => (setPrompt(t.brief), close(), setTimeout(() => promptRef.current?.focus(), 50))}>
-                    {t.label}
-                  </MenuItem>
-                ))}
-              </>
-            )}
-          </Menu>
-          <span className="flex-1" />
-          {hook && (
-            <button
-              type="button"
-              aria-pressed={useHook}
-              onClick={() => setUseHook((v) => !v)}
-              title={`“${unquote(hook.text)}” · ${hook.roas.toFixed(2)}x ROAS`}
-              className={cn("max-w-[280px] truncate rounded-full px-2.5 py-1 text-xs", useHook ? "bg-brand-soft text-brand-ink" : "text-ink-3 line-through")}
-            >
-              Builds on <span className="font-semibold">{hook.name}</span>
-            </button>
+          {(kind === "IMAGE" || kind === "CAROUSEL") && (
+            <Chip label="Shape" value={`${aspectLabel.label} · ${aspectLabel.hint}`}>
+              {(close) => ASPECTS.map((a) => <MenuItem key={a.value} selected={aspect === a.value} hint={a.hint} onSelect={() => (setAspect(a.value), close())}>{a.label}</MenuItem>)}
+            </Chip>
           )}
-          <Button variant="primary" onClick={() => void generate()} disabled={!canGenerate} loading={running} className="bg-ink text-surface hover:bg-ink/90">
-            {running ? "Writing…" : drafts.length ? "Generate more" : kind === "CAROUSEL" ? "Generate carousel" : "Generate 4 variants"}
-          </Button>
+          {kind === "IMAGE" && (
+            <Chip label="Images" value={images === 0 ? "Copy only" : String(images)}>
+              {(close) => (
+                <>
+                  <MenuLabel>Image variants per run · up to 20 an hour</MenuLabel>
+                  {IMAGE_COUNTS.map((n) => (
+                    <MenuItem key={n} selected={images === n} onSelect={() => (setImages(n), close())}>
+                      {n === 0 ? `Copy only (${COPY_ONLY_DRAFTS} text drafts)` : `${n} variant${n === 1 ? "" : "s"}`}
+                    </MenuItem>
+                  ))}
+                </>
+              )}
+            </Chip>
+          )}
+          {makesImages && (
+            <Chip label="Quality" value={QUALITIES.find((q) => q.value === quality)!.label} width={300}>
+              {(close) => (
+                <>
+                  <MenuLabel>Image quality</MenuLabel>
+                  {QUALITIES.map((q) => (
+                    <MenuItem key={q.value} selected={quality === q.value} hint={q.hint} onSelect={() => (setQuality(q.value), close())}>
+                      {q.label}
+                    </MenuItem>
+                  ))}
+                </>
+              )}
+            </Chip>
+          )}
+          <span className="ml-auto text-xs text-ink-3">
+            {prompt.trim().length > 0 && prompt.trim().length < 10 ? "A few more words, please (10 characters minimum)." : "Ctrl + Enter to generate"}
+          </span>
         </div>
-        {prompt.trim().length > 0 && prompt.trim().length < 10 && <span className="text-xs text-ink-3">A few more words, please (10 characters minimum).</span>}
+      </div>
+
+      {/* Settings, grouped and labelled. */}
+      <div className="grid gap-x-6 gap-y-4 min-[720px]:grid-cols-2 min-[1180px]:grid-cols-3">
+        <Field label="Type">
+          <Segmented label="Type" size="sm" value={kind} onChange={setKind} options={KINDS} />
+        </Field>
+        <Field label="Tone">
+          <div className="flex flex-wrap gap-1.5">
+            {TONES.map((t) => (
+              <button
+                key={t}
+                type="button"
+                aria-pressed={tone === t}
+                onClick={() => setTone(t)}
+                className={cn(
+                  "h-8 whitespace-nowrap rounded-full border px-3 text-[13px] font-medium transition-colors",
+                  tone === t ? "border-brand bg-brand-soft text-brand-ink" : "border-line bg-surface text-ink-2 hover:text-ink"
+                )}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="Platform and goal">
+          <div className="flex flex-wrap gap-1.5">
+            <Chip label="For" value={PLATFORMS.find((p) => p.value === platform)!.label}>
+              {(close) => PLATFORMS.map((p) => <MenuItem key={p.value} selected={platform === p.value} onSelect={() => (setPlatform(p.value), close())}>{p.label}</MenuItem>)}
+            </Chip>
+            <Chip label="Goal" value={objective}>
+              {(close) => OBJECTIVES.map((o) => <MenuItem key={o} selected={objective === o} onSelect={() => (setObjective(o), close())}>{o}</MenuItem>)}
+            </Chip>
+          </div>
+        </Field>
+        {kind === "CAROUSEL" && (
+          <>
+            <Field label="Cards">
+              <Segmented label="Cards" size="sm" value={cardCount} onChange={setCardCount} options={[2, 3, 4, 5].map((n) => ({ value: n, label: String(n) }))} />
+            </Field>
+            <Field label="Card images">
+              <Segmented label="Card images" size="sm" value={cardImages ? "on" : "off"} onChange={(v) => setCardImages(v === "on")} options={[{ value: "on", label: "Generate" }, { value: "off", label: "Add later" }]} />
+            </Field>
+          </>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-4">
+        {hook && (
+          <button
+            type="button"
+            aria-pressed={useHook}
+            onClick={() => setUseHook((v) => !v)}
+            title={`“${unquote(hook.text)}” · ${hook.roas.toFixed(2)}x ROAS`}
+            className={cn("mr-auto max-w-full truncate rounded-full px-2.5 py-1 text-xs", useHook ? "bg-brand-soft text-brand-ink" : "text-ink-3 line-through")}
+          >
+            Builds on <span className="font-semibold">{hook.name}</span>
+          </button>
+        )}
+        <Button variant="primary" icon={<Sparkles size={16} />} onClick={() => void generate()} disabled={!canGenerate} loading={running}>
+          {running ? "Generating…" : drafts.length ? "Generate more" : "Generate creative"}
+        </Button>
       </div>
 
       {error && (
@@ -423,7 +481,7 @@ export const Studio = forwardRef<
 
       {running && (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
-          {Array.from({ length: kind === "CAROUSEL" ? 1 : 4 }).map((_, i) => (
+          {Array.from({ length: kind === "CAROUSEL" ? 1 : draftCount }).map((_, i) => (
             <Skeleton key={i} className="aspect-[4/5] rounded-xl" />
           ))}
         </div>
