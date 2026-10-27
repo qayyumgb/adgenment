@@ -6,6 +6,8 @@
  * require both `Authorization: Bearer ...` and a `LinkedIn-Version` header.
  */
 
+import { createOAuthState } from "../lib/oauth-state";
+
 const LINKEDIN_BASE = "https://api.linkedin.com/v2";
 const LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization";
 const LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
@@ -82,7 +84,7 @@ class LinkedInAdsService {
       client_id: this.clientId,
       redirect_uri: this.redirectUri,
       scope: SCOPES.join(" "),
-      state: userId,
+      state: createOAuthState(userId, "LINKEDIN"),
     });
     return `${LINKEDIN_AUTH_URL}?${params.toString()}`;
   }

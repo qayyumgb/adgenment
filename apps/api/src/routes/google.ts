@@ -6,6 +6,7 @@ import { getUserWorkspace, requireWorkspace } from "../lib/workspace";
 import { googleService } from "../services/google.service";
 import { syncService } from "../services/sync.service";
 import { stageConnection } from "../services/connections.service";
+import { verifyOAuthState } from "../lib/oauth-state";
 
 const router = Router();
 
@@ -23,10 +24,6 @@ router.get(
   requireAuth,
   (req: Request, res: Response, next: NextFunction) => {
     try {
-      // SECURITY TODO: same as Meta — replace `state = dbUserId` with a
-      // short-lived random nonce persisted server-side and validated on
-      // callback, so an attacker can't forge state to attach a Google
-      // account to someone else's workspace.
       const url = googleService.getOAuthUrl(req.dbUserId!);
       res.json({ url });
     } catch (err) {
@@ -51,11 +48,13 @@ router.get("/callback", async (req: Request, res: Response) => {
     if (typeof code !== "string" || !code) {
       return res.redirect(failureUrl);
     }
-    if (typeof state !== "string" || !state.trim()) {
+    // Signed, unexpired, unused and for this platform (lib/oauth-state);
+    // a forged or replayed state never reaches a workspace.
+    const userId = verifyOAuthState(state, "GOOGLE");
+    if (!userId) {
       return res.redirect(failureUrl);
     }
-
-    const user = await prisma.user.findUnique({ where: { id: state } });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return res.redirect(failureUrl);
     }

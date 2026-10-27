@@ -10,6 +10,8 @@
  * `refreshAccessToken` when it gets a 401.
  */
 
+import { createOAuthState } from "../lib/oauth-state";
+
 const ADS_API_BASE = "https://googleads.googleapis.com/v17";
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -94,7 +96,7 @@ class GoogleAdsService {
       access_type: "offline",
       prompt: "consent",
       include_granted_scopes: "true",
-      state: userId,
+      state: createOAuthState(userId, "GOOGLE"),
     });
     return `${OAUTH_AUTH_URL}?${params.toString()}`;
   }

@@ -6,6 +6,7 @@
  */
 
 import { encryptToken, decryptToken } from "../lib/crypto";
+import { createOAuthState } from "../lib/oauth-state";
 
 const GRAPH_BASE = "https://graph.facebook.com/v19.0";
 const FB_DIALOG = "https://www.facebook.com/v19.0/dialog/oauth";
@@ -404,7 +405,7 @@ class MetaAdsService {
       client_id: this.appId,
       redirect_uri: this.redirectUri,
       scope: SCOPES.join(","),
-      state: userId,
+      state: createOAuthState(userId, "META"),
       response_type: "code",
     });
     return `${FB_DIALOG}?${params.toString()}`;

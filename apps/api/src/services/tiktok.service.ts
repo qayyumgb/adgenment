@@ -6,6 +6,8 @@
  * arrays passed as query parameters (URL-encoded JSON strings).
  */
 
+import { createOAuthState } from "../lib/oauth-state";
+
 const TIKTOK_BASE = "https://business-api.tiktok.com/open_api/v1.3";
 const TIKTOK_TOKEN_URL =
   "https://business-api.tiktok.com/open_api/v2/oauth2/access_token";
@@ -74,7 +76,7 @@ class TikTokAdsService {
     const params = new URLSearchParams({
       app_id: this.appId,
       redirect_uri: this.redirectUri,
-      state: userId,
+      state: createOAuthState(userId, "TIKTOK"),
       scope: SCOPES.join(","),
       response_type: "code",
     });

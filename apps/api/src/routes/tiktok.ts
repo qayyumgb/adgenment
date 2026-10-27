@@ -6,6 +6,7 @@ import { getUserWorkspace, requireWorkspace } from "../lib/workspace";
 import { tiktokService } from "../services/tiktok.service";
 import { syncService } from "../services/sync.service";
 import { stageConnection } from "../services/connections.service";
+import { verifyOAuthState } from "../lib/oauth-state";
 
 const router = Router();
 
@@ -38,11 +39,13 @@ router.get("/callback", async (req: Request, res: Response) => {
     if (typeof code !== "string" || !code) {
       return res.redirect(failureUrl);
     }
-    if (typeof state !== "string" || !state.trim()) {
+    // Signed, unexpired, unused and for this platform (lib/oauth-state);
+    // a forged or replayed state never reaches a workspace.
+    const userId = verifyOAuthState(state, "TIKTOK");
+    if (!userId) {
       return res.redirect(failureUrl);
     }
-
-    const user = await prisma.user.findUnique({ where: { id: state } });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return res.redirect(failureUrl);
 
     const workspace = await getUserWorkspace(user.id);

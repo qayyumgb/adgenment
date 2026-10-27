@@ -9,6 +9,7 @@ import { healthForAdAccount, type MetaHealthReport } from "../services/meta-heal
 import { syncService } from "../services/sync.service";
 import { isMetaError, friendlyMetaError } from "../lib/meta-errors";
 import { stageConnection } from "../services/connections.service";
+import { verifyOAuthState } from "../lib/oauth-state";
 
 const router = Router();
 
@@ -43,10 +44,6 @@ router.get(
   requireAuth,
   (req: Request, res: Response, next: NextFunction) => {
     try {
-      // SECURITY TODO: replace `state = dbUserId` with a short-lived random nonce
-      // persisted server-side and validated in the callback. Today an attacker
-      // could craft an OAuth URL with `state = <victimUserId>` and trick the
-      // victim into adding their Meta account to the victim's workspace.
       const url = metaService.getOAuthUrl(req.dbUserId!);
       res.json({ url });
     } catch (err) {
@@ -73,12 +70,13 @@ router.get("/callback", async (req: Request, res: Response) => {
     if (typeof code !== "string" || !code) {
       return res.redirect(failureUrl);
     }
-    if (typeof state !== "string" || !state.trim()) {
+    // Signed, unexpired, unused and for this platform (lib/oauth-state);
+    // a forged or replayed state never reaches a workspace.
+    const userId = verifyOAuthState(state, "META");
+    if (!userId) {
       return res.redirect(failureUrl);
     }
-
-    // Validate state → must be a real user in our DB.
-    const user = await prisma.user.findUnique({ where: { id: state } });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return res.redirect(failureUrl);
     }

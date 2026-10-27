@@ -485,6 +485,25 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-27 — OAuth state nonce (security)
+
+- **The old state:** the connect flows for Meta, Google, TikTok and LinkedIn sent the bare user id as OAuth `state`, and the callback trusted it. That let someone craft a callback for another user.
+- **The new state:** `state` is now signed (HMAC; key derived from `ENCRYPTION_KEY`, so there's no new env var), expires after 2 hours, can be used once, and is tied to one platform (`lib/oauth-state.ts`). Callbacks reject anything else.
+- **Unchanged:** redirect URIs, scopes, app settings and the screens. Nothing changes for Meta App Review.
+- **At deploy:** a connect left half-finished must be started again.
+
+### 2026-10-27 — Fixes after A15
+
+- **Grids:**
+  - Action columns show one button when a row has one action, otherwise only the ⋯ menu (Campaigns, Audiences, Ad sets).
+  - Every grid has a table / card switch: cards are built from the columns when a page has no custom ones. Phones start in card view.
+- **Creative studio:**
+  - Larger writing area, with Shape, Images and Quality dropdowns next to Templates and Reference image.
+  - "Generate creative" makes as many variants as Images says.
+  - Quality: Low / Medium use `gpt-image-1-mini`; High uses `gpt-image-1` (with `input_fidelity` for reference photos). Optional env: `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_MODEL_HIGH`.
+- **In-app confirms:** every browser `confirm()` is replaced with an in-app dialog (`useConfirm`). Cancelling an invite now asks first, and Esc closes only the topmost overlay.
+- **Invite link:** after sign-in it waits for the session, which fixes "Missing authorization header".
+
 ### 2026-10-26 — Dashboard redesign A15 (Dialogs + QA)
 
 Details: [docs/DASHBOARD_REDESIGN_PLAN.md § 11](docs/DASHBOARD_REDESIGN_PLAN.md#11-progress).
