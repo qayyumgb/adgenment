@@ -481,6 +481,29 @@ class SyncService {
   }
 
   /**
+   * Campaigns published from Advertix keep their budget on their one ad set
+   * ("<name> — Ad Set"). Ones published before we stored that ad set's id
+   * showed a budget of 0 and couldn't change it: link them here. Linked
+   * campaigns show the ad set's budget, so Ads Manager edits show up too.
+   */
+  private async linkPublishedAdSets(campaignIds: string[]) {
+    const campaigns = await prisma.campaign.findMany({
+      where: { id: { in: campaignIds } },
+      select: { id: true, name: true, budget: true, budgetType: true, externalAdSetId: true, adSets: { where: { status: { not: "ENDED" } }, select: { externalId: true, name: true, dailyBudget: true, lifetimeBudget: true } } },
+    });
+    for (const c of campaigns) {
+      const s = c.externalAdSetId ? c.adSets.find((x) => x.externalId === c.externalAdSetId) : c.adSets.length === 1 && Number(c.budget) === 0 && c.adSets[0].name === `${c.name} — Ad Set` ? c.adSets[0] : undefined;
+      if (!s) continue;
+      const daily = Number(s.dailyBudget ?? 0);
+      const lifetime = Number(s.lifetimeBudget ?? 0);
+      const [budget, budgetType] = daily > 0 ? [s.dailyBudget!, "DAILY" as const] : lifetime > 0 ? [s.lifetimeBudget!, "LIFETIME" as const] : [null, null];
+      if (!budget) continue;
+      if (c.externalAdSetId && Number(c.budget) === Number(budget) && c.budgetType === budgetType) continue;
+      await prisma.campaign.update({ where: { id: c.id }, data: { externalAdSetId: s.externalId, budget, budgetType } });
+    }
+  }
+
+  /**
    * Ad sets, ads and (when `datePreset` is set) ad-level daily results for
    * the campaigns in `idMap` (Meta campaign id → our id). With
    * `onlyCampaign`, only that campaign's objects are fetched.
@@ -520,6 +543,7 @@ class SyncService {
       });
       adSetMap[s.id] = row.id;
     }
+    await this.linkPublishedAdSets(ourCampaignIds);
 
     // Ads.
     const metaAds = await metaService.getAds(token, accountId, onlyCampaign);

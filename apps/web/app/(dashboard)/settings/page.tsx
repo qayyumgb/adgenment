@@ -84,8 +84,8 @@ export default function SettingsPage() {
 
   const workspaceName = me.data?.workspace?.name ?? "Workspace";
   const current = TABS.find((t) => t.id === tab)!;
-  // Notifications are personal; General is owner-only (read-only for others, so no save button).
-  const editable = tab === "notifications" || (tab === "general" && access.can("workspace"));
+  // Notifications are personal; General and AI & automation (approval rules) are owner-only (read-only for others, so no save button).
+  const editable = tab === "notifications" || ((tab === "general" || tab === "ai") && access.can("workspace"));
 
   return (
     <>

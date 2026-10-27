@@ -498,6 +498,8 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
   - the `APPROVALS` email event.
 - **Routes:** `GET /approvals`, `GET /approvals/summary`, `GET/PUT /approvals/settings`, `POST /approvals/:id/approve | reject | cancel`.
 - **Hardening:** `getAccess` returns null when there's no signed-in user. Before, it matched any member.
+- **Older Advertix campaigns:** some were published before the ad set id was stored, so they showed a budget of 0 that couldn't be changed. Sync now links them to their ad set when there is exactly one, named "<campaign> — Ad Set", with no campaign-level budget. The ad set's budget becomes the campaign's. Linked campaigns also follow ad set budget edits made in Ads Manager.
+  - A budget change that can't be applied is no longer sent for approval; it's refused straight away.
 - **Deploy:** schema change. Run `prisma db push` on production before the API deploy.
 
 ### 2026-10-27 — C3 Command palette (⌘K)

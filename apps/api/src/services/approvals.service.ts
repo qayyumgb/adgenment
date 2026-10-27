@@ -146,6 +146,9 @@ async function evaluate(workspaceId: string, method: string, path: string, body:
   if (!spendFields.length) return null;
   const from = Number(c.budget);
   const to = body.budget !== undefined ? Number(body.budget) : from;
+  // Published before we tracked the ad set: the route refuses budget changes
+  // for everyone, so let it say so now rather than after an owner approves.
+  if (to !== from && !c.externalAdSetId) return null;
   const parts = [
     body.budget !== undefined && to !== from ? `change the budget from ${money(from, cur)} to ${money(to, cur)}` : null,
     status && status !== c.status ? (status === "PAUSED" ? "pause it" : status === "ACTIVE" ? "resume it" : `set it to ${status.toLowerCase()}`) : null,
