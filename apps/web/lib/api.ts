@@ -150,6 +150,22 @@ export interface ReportScheduleInfo {
   weekStartsOn: number;
   emailConfigured: boolean;
 }
+/* Getting-started checklist (C11) */
+export type SetupStepId = "connect" | "clients" | "budget" | "ai" | "team" | "share" | "briefing";
+export interface SetupChecklist {
+  /** The client the steps are for (null = the whole workspace). */
+  client: { id: string; name: string } | null;
+  steps: { id: SetupStepId; title: string; body: string; done: boolean; skipped: boolean; optional: boolean; href: string; cta: string }[];
+  complete: number;
+  total: number;
+  /** All clients (agencies): each client's own progress. */
+  clients: { id: string; name: string; complete: number; total: number }[];
+  dismissed: boolean;
+  /** Keep the sidebar link (until hidden from the page). */
+  show: boolean;
+  /** Every step done or skipped. */
+  done: boolean;
+}
 export interface PortalReport {
   agency: string;
   client: string;
@@ -179,12 +195,52 @@ export class ApprovalPendingError extends ApiError {
   }
 }
 
+/* AI credits (C11) */
+export interface CreditStatus {
+  plan: PlanType;
+  used: number;
+  /** null = unlimited. */
+  limit: number | null;
+  remaining: number | null;
+  share: number | null;
+  warn: boolean;
+  exhausted: boolean;
+  periodStart: string;
+  resetsAt: string;
+  byFeature: { feature: string; label: string; credits: number }[];
+  enforced: boolean;
+  /** TRIAL credits cover the whole trial (they don't reset monthly). */
+  billingState?: "TRIAL" | "ACTIVE" | "PAST_DUE" | "EXPIRED";
+}
+/** The message an out-of-credits call fails with; the upgrade dialog already explains it. */
+export const CREDITS_EXHAUSTED_MESSAGE = "Out of AI credits.";
+/** Fired with `{ detail: { message, credits } }` when an AI action is refused for credits. */
+export const CREDITS_EXHAUSTED_EVENT = "advertix:credits-exhausted";
+/** Fired after an AI action succeeds; the credit meter refetches. */
+export const CREDITS_CHANGED_EVENT = "advertix:credits-changed";
+const AI_ACTION = /^\/(ai\/(?!planner\/context|health)|insights\/generate|suggestions\/refresh|budget-optimizer\/analyze)/;
+
+export class CreditsExhaustedError extends ApiError {
+  constructor(readonly reason: string) {
+    super(CREDITS_EXHAUSTED_MESSAGE, { status: 402 });
+    this.name = "CreditsExhaustedError";
+  }
+}
+
+/** 402 out of credits → open the upgrade dialog and fail the call quietly. */
+function throwIfOutOfCredits(status: number, body: { code?: string; error?: string; credits?: unknown } | null) {
+  if (status !== 402 || body?.code !== "CREDITS_EXHAUSTED") return;
+  window.dispatchEvent(new CustomEvent(CREDITS_EXHAUSTED_EVENT, { detail: { message: body.error, credits: body.credits } }));
+  throw new CreditsExhaustedError(body.error ?? CREDITS_EXHAUSTED_MESSAGE);
+}
+
 // Callers show `err.message` with toast.error; the API client already showed
-// a calmer notice for a held change, so don't stack a red error on top of it.
+// a calmer notice for a held change (or the out-of-credits dialog), so don't
+// stack a red error on top of it.
 if (typeof window !== "undefined" && !(toast.error as { __approvals?: boolean }).__approvals) {
   const original = toast.error;
   const patched = ((message: Parameters<typeof toast.error>[0], opts?: Parameters<typeof toast.error>[1]) =>
-    message === APPROVAL_PENDING_MESSAGE ? "" : original(message, opts)) as typeof toast.error & { __approvals?: boolean };
+    message === APPROVAL_PENDING_MESSAGE || message === CREDITS_EXHAUSTED_MESSAGE ? "" : original(message, opts)) as typeof toast.error & { __approvals?: boolean };
   patched.__approvals = true;
   toast.error = patched;
 }
@@ -203,7 +259,25 @@ export type Platform =
   | "PINTEREST"
   | "X";
 
-export type PlanType = "FREE" | "STARTER" | "PRO" | "ENTERPRISE";
+/** FREE = no paid plan (on the trial, or it ended); STARTER = Team, PRO = Agency. */
+export type PlanType = "FREE" | "FOUNDER" | "STARTER" | "PRO" | "ENTERPRISE";
+
+/* Billing (C11) */
+export type PaidTier = "FOUNDER" | "TEAM" | "AGENCY";
+export type BillingInterval = "month" | "year";
+export interface BillingStatus {
+  /** Billing works on this server (STRIPE_SECRET_KEY). */
+  configured: boolean;
+  state: "TRIAL" | "ACTIVE" | "PAST_DUE" | "EXPIRED";
+  tier: PaidTier | "ENTERPRISE" | null;
+  interval: BillingInterval | null;
+  trialEndsAt: string | null;
+  trialDaysLeft: number;
+  renewsAt: string | null;
+  cancelAtPeriodEnd: boolean;
+  hasCustomer: boolean;
+  limits: { clients: number | null; seats: number | null; credits: number | null };
+}
 /** Team roles (B6). The API reads legacy ADMIN / EDITOR / VIEWER rows as MEDIA_BUYER / ANALYST. */
 export type WorkspaceRole = "OWNER" | "MEDIA_BUYER" | "ANALYST" | "CLIENT_VIEWER";
 export type Capability = "view" | "export" | "edit" | "connect" | "clients" | "team" | "workspace";
@@ -1122,6 +1196,7 @@ export interface BillingUsage {
   adAccounts: number;
   seats: { used: number; limit: number | null; clientViewersFree: boolean; plan: PlanType };
   spendThisMonth: { currency: string; amount: number }[];
+  credits: CreditStatus;
 }
 
 export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "APPROVALS" | "SAFETY" | "MORNING_BRIEFING" | "WEEKLY_SUMMARY";
@@ -1399,12 +1474,14 @@ export function useApiClient() {
         const err = await res
           .json()
           .catch(() => ({ error: `Request failed (${res.status})` }));
+        throwIfOutOfCredits(res.status, err);
         throw new ApiError(err.error ?? `HTTP ${res.status}`, {
           status: res.status,
           detail: typeof err.detail === "string" ? err.detail : undefined,
           step: typeof err.step === "string" ? err.step : undefined,
         });
       }
+      if ((options.method ?? "GET") !== "GET" && AI_ACTION.test(path)) window.dispatchEvent(new Event(CREDITS_CHANGED_EVENT));
       if (res.status === 204) return undefined as T;
       if (res.status === 202) {
         // A Media buyer's change held for an owner (C1): say so once, and
@@ -1617,6 +1694,17 @@ export function useApiClient() {
       ),
     getWorkspace: () => apiFetch<WorkspaceResponse>("/auth/workspace"),
     getBilling: () => apiFetch<BillingUsage>("/workspace/billing"),
+    getSetup: (clientId?: string | null) => apiFetch<SetupChecklist>(`/workspace/setup${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`),
+    getCredits: () => apiFetch<CreditStatus>("/workspace/credits"),
+    getBillingStatus: () => apiFetch<BillingStatus>("/billing/status"),
+    /** First plan: returns Stripe Checkout's URL. */
+    startCheckout: (tier: PaidTier, interval: BillingInterval) => apiFetch<{ url: string }>("/billing/checkout", { method: "POST", body: JSON.stringify({ tier, interval }) }),
+    /** Switch the existing subscription (prorated). */
+    changePlan: (tier: PaidTier, interval: BillingInterval) => apiFetch<BillingStatus>("/billing/change", { method: "POST", body: JSON.stringify({ tier, interval }) }),
+    /** Stripe's billing portal (invoices, card, cancel). */
+    openBillingPortal: () => apiFetch<{ url: string }>("/billing/portal", { method: "POST" }),
+    skipSetupStep: (step: SetupStepId, skip = true, clientId?: string | null) => apiFetch<SetupChecklist>("/workspace/setup/skip", { method: "POST", body: JSON.stringify({ step, skip, clientId }) }),
+    dismissSetup: (dismissed = true, clientId?: string | null) => apiFetch<SetupChecklist>("/workspace/setup/dismiss", { method: "POST", body: JSON.stringify({ dismissed, clientId }) }),
     deleteWorkspace: (confirmName: string) =>
       apiFetch<{ deleted: boolean; accountDeleted: boolean; loginError: string | null }>("/workspace", { method: "DELETE", body: JSON.stringify({ confirmName }) }),
     getMyNotifications: () => apiFetch<MyNotifications>("/auth/notifications"),
@@ -1967,8 +2055,10 @@ export function useApiClient() {
           const err = await res
             .json()
             .catch(() => ({ error: `Image generation failed (${res.status})` }));
+          throwIfOutOfCredits(res.status, err);
           throw new Error(err.error ?? `HTTP ${res.status}`);
         }
+        window.dispatchEvent(new Event(CREDITS_CHANGED_EVENT));
         return res.json();
       }
       const { image: _omit, ...jsonParams } = params;

@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import type { Invite, WorkspaceRole } from "@prisma/client";
 import { prisma } from "../lib/prisma";
-import { ROLE_LABEL, clientViewersFree, normalizeRole, seatLimit, type Access, type Role } from "../lib/access";
+import { ROLE_LABEL, normalizeRole, type Access, type Role } from "../lib/access";
+import { workspaceEntitlement } from "../lib/plans";
 
 /**
  * Team (plan B6): members with role and client access, invites (stored,
@@ -27,8 +28,8 @@ export class TeamError extends Error {
 export const inviteUrl = (token: string) => `${FRONTEND_URL}/invite/${token}`;
 const isOpen = (i: Pick<Invite, "status" | "expiresAt">) => i.status === "PENDING" && i.expiresAt.getTime() > Date.now();
 
-/** Does this role use a paid seat on this plan? (Agency / Enterprise include client viewers.) */
-const usesSeat = (role: WorkspaceRole | Role, plan: Access["plan"]) => !(normalizeRole(role as WorkspaceRole) === "CLIENT_VIEWER" && clientViewersFree(plan));
+/** Does this role use a paid seat? (Agency, Enterprise and the trial include client viewers.) */
+const usesSeat = (role: WorkspaceRole | Role, viewersFree: boolean) => !(normalizeRole(role as WorkspaceRole) === "CLIENT_VIEWER" && viewersFree);
 
 async function validClientIds(workspaceId: string, ids: unknown): Promise<string[]> {
   if (!Array.isArray(ids)) return [];
@@ -43,14 +44,17 @@ function checkRoleAccess(role: Role, clientIds: string[]) {
   if (role === "CLIENT_VIEWER" && clientIds.length === 0) throw new TeamError(400, "Pick at least one client for a client viewer.");
 }
 
-export async function seats(workspaceId: string, plan: Access["plan"]) {
+/** Seats used and allowed, from the plan, trial or ended trial (lib/plans). */
+export async function seats(workspaceId: string, _plan?: Access["plan"]) {
+  const ent = await workspaceEntitlement(workspaceId);
+  const free = ent.limits.clientViewersFree;
   const [members, invites] = await Promise.all([
     prisma.workspaceMember.findMany({ where: { workspaceId }, select: { role: true } }),
     prisma.invite.findMany({ where: { workspaceId, status: "PENDING", expiresAt: { gt: new Date() } }, select: { role: true } }),
   ]);
-  const used = [...members, ...invites].filter((m) => usesSeat(m.role, plan)).length;
-  const limit = seatLimit(plan);
-  return { used, limit: Number.isFinite(limit) ? limit : null, clientViewersFree: clientViewersFree(plan), plan };
+  const used = [...members, ...invites].filter((m) => usesSeat(m.role, free)).length;
+  const limit = ent.limits.seats;
+  return { used, limit: Number.isFinite(limit) ? limit : null, clientViewersFree: free, plan: ent.ws.plan };
 }
 
 export async function listTeam(access: Access, userId: string) {
@@ -170,7 +174,7 @@ export async function createInvites(access: Access, userId: string, body: { emai
       continue;
     }
     const existing = await prisma.invite.findFirst({ where: { workspaceId: access.workspaceId, email, status: "PENDING" } });
-    const counts = usesSeat(role, access.plan) && !(existing && isOpen(existing) && usesSeat(existing.role, access.plan));
+    const counts = usesSeat(role, seat.clientViewersFree) && !(existing && isOpen(existing) && usesSeat(existing.role, seat.clientViewersFree));
     if (counts && seat.limit !== null && used >= seat.limit) {
       results.push({ email, ok: false, error: `No seats left on your plan (${used} of ${seat.limit} used).` });
       continue;
@@ -209,8 +213,8 @@ export async function updateMember(access: Access, userId: string, memberId: str
   if (!INVITABLE.includes(role)) throw new TeamError(400, "Role must be Media buyer, Analyst or Client viewer.");
   const clientIds = body.clientIds === undefined ? target.clientAccess.map((c) => c.clientId) : await validClientIds(access.workspaceId, body.clientIds);
   checkRoleAccess(role, clientIds);
-  if (!usesSeat(current, access.plan) && usesSeat(role, access.plan)) {
-    const s = await seats(access.workspaceId, access.plan);
+  const s = await seats(access.workspaceId);
+  if (!usesSeat(current, s.clientViewersFree) && usesSeat(role, s.clientViewersFree)) {
     if (s.limit !== null && s.used >= s.limit) throw new TeamError(409, `No seats left on your plan (${s.used} of ${s.limit} used). Client viewers are free; other roles use a seat.`);
   }
   await prisma.$transaction([

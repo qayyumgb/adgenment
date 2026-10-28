@@ -5,6 +5,7 @@ import { requireWorkspace } from "../lib/workspace";
 import { parseClientScope } from "../lib/clients";
 import { insightsService } from "../services/insights.service";
 import { suggestionsService, UNDO_WINDOW_MS } from "../services/suggestions.service";
+import { CREDIT_COST, chargeCredits, requireCredits } from "../services/credits.service";
 
 /**
  * Suggestions (plan B2). Apply runs the action on the ad platform and records
@@ -71,8 +72,10 @@ router.post("/refresh", async (req: Request, res: Response, next: NextFunction) 
   try {
     const workspace = await requireWorkspace(req.dbUserId!);
     let generated = false;
+    if (await insightsService.refreshDue(workspace.id)) await requireCredits(workspace.id, CREDIT_COST.insights);
     try {
       generated = (await insightsService.refreshInsights(workspace.id)).generated;
+      if (generated) await chargeCredits(workspace.id, req.dbUserId!, "insights", CREDIT_COST.insights).catch((e) => console.error("[credits]", e));
     } catch (err) {
       const code = err instanceof Error ? err.message : "AI_API_ERROR";
       return res.status(code === "AI_PARSE_ERROR" ? 502 : 503).json({ error: "The check didn’t finish. Try again in a moment." });

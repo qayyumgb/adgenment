@@ -82,6 +82,8 @@ const APP_ONLY_PREFIXES = [
   "/connect", // /connect/done — popup callback page
   "/invite", // /invite/<token> — team invites (B6)
   "/portal", // /portal/<token> — client portal links (C4)
+  "/setup", // getting started (C11)
+  "/activity",
   "/sign-in",
   "/sign-up",
 ];

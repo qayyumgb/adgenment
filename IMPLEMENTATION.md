@@ -485,6 +485,91 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-28 — Get started page + trial sized like Team
+
+- **Get started is its own page (`/setup`).** It's off the Overview, which shows the Welcome card again when there are no ad accounts.
+  - **Sidebar:** a "Get started" link for owners with a progress badge ("6/7"), until everything is done or it's hidden ("Hide from sidebar" on the page). The page stays in ⌘K.
+  - **Per client:** pick a client in the switcher and the client's own steps follow that client (its ad accounts, monthly budget, report links), and "Add your clients" drops out. Team, AI check and briefing stay workspace-wide.
+- **All clients (agencies):** the client steps (connect, budget, share) count every client and only tick when all have done them, for example "1 of 2 clients done · still to do: Lumen". **Your clients** lists each client's own progress (3/6) with Open, which switches to that client. One-client workspaces are unchanged.
+- **The sidebar link stays until hidden** from the page, showing progress or a ✓. It used to vanish when everything was done.
+- **Fix:** "Run your first AI check" now ticks once a check has run, even if it found nothing to suggest. Before, it needed a suggestion.
+- **Fix:** the "Next:" line no longer lowercases "AI".
+- **The trial = Team limits:** 5 clients and 5 seats (client viewers use a seat, as on Team), enforced. It keeps 100 AI credits, which now cover **the whole 14-day trial** rather than resetting on the 1st. The trial's spend line shows Team's $100k.
+- **Billing:** the trial shows "Free trial · 14 days left" (no duplicate badge).
+- **Pricing FAQ** now says "Team limits".
+- `/setup` and `/activity` are now app-only routes (the apex domain redirects to `app.`).
+- **Command palette:** adds Get started and Settings · Clients.
+
+### 2026-10-28 — C11 (part 3): Stripe billing + trial
+
+- **Plans:** Founder $22, Team $79, Agency $199 a month; yearly = 10 months. Enterprise is set by hand.
+- **14-day trial, no card,** for new workspaces. Existing workspaces get 14 days from their first request after the deploy.
+  - **During the trial:** Agency limits with 100 AI credits.
+  - **After it, with no plan:** AI stops (0 credits) and nothing new can be added. Data stays and syncing continues.
+- **Entitlements in one place** (`lib/plans.ts`): clients, seats, AI credits and client-viewer seats for each plan, the trial, an ended trial and past due. A plan set by hand with no Stripe subscription stays active.
+- **Stripe** (`services/billing.service.ts`, SDK 19):
+  - **Products and prices** are created on first use (lookup keys `advertix_<tier>_<month|year>`). A changed price on the pricing page is replaced automatically.
+  - **Checkout** for the first plan. During the trial the subscription starts with a Stripe trial ending on the same day, so there's no charge before it.
+  - **In-app plan switch** (prorated).
+  - **Billing portal** (invoices, card, details, cancel at period end).
+  - **Webhook** (`POST /api/billing/webhook`, raw body, signature-checked) syncs the plan, status, interval, period and cancel-at-end. A payment failure emails owners.
+- **Credits** follow the subscription's billing period.
+- **Client limit** on adding clients: a 402 with an upgrade message.
+- **Trial emails** to owners: 3 days before the end and when it has ended.
+- **Web:**
+  - Settings › Billing has the plan and its state, Monthly/Yearly, plan cards with Choose / Switch, Manage billing (portal) and usage.
+  - Coming back from Checkout, it polls until the webhook has landed.
+  - A banner under the top bar shows the trial ending (owners, hideable), the trial ended (everyone) or a failed payment (owners).
+- **Pricing page:**
+  - "Free during beta / 30% off" is replaced by "14-day free trial, no card".
+  - The features that now exist are no longer "coming soon": approvals, auto-apply and safety rules, the client portal, scheduled reports.
+  - AI credits are added to the comparison table.
+- **Deploy:**
+  - Schema change: the `PlanType.FOUNDER` value and the Workspace billing fields (no unique constraints, so `db push` needs no data-loss flag).
+  - New dependency: `stripe`.
+  - Railway needs `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` (from a Dashboard webhook pointing at `/api/billing/webhook`).
+
+### 2026-10-28 — C11 (part 2): AI credits
+
+- **Per workspace per billing period, with no rollover:**
+  - Founder (and current Free workspaces): 100;
+  - Team: 400;
+  - Agency and Enterprise: unlimited.
+- **Period:** the calendar month in the workspace time zone until Stripe sets a subscription period.
+- **Costs:**
+  - 1 credit each: AI Planner plan or refine, Ask about a campaign, creative copy, audience suggestions, an AI check (only when it actually runs, past the 1-hour gate), a budget analysis;
+  - AI images by quality: low 1, medium 2, high 5.
+- **How it's enforced:** checked before the AI runs, charged only on success. Going over gets `402 CREDITS_EXHAUSTED` with what's left. Usage is logged in `AiUsage` with a per-feature breakdown.
+- **Warnings:** owners are emailed once at 80% and once at 100% each period (new `USAGE` alert). The app shows an "⚠️" notice once at 80% per period.
+- **UI:**
+  - **sidebar meter** "342 / 400": amber at 80%, red at 100% with "Upgrade";
+  - **Settings › Billing** card with the bar, the reset date and what used the credits;
+  - **out-of-credits dialog** on any page, with "See plans" for owners and "ask an owner" for others;
+  - the pricing page lists each plan's credits.
+- **Off switch:** `AI_CREDITS_ENFORCED=false` turns the hard stop off. Usage is still counted.
+- **Schema change:** the `AiUsage` model. Run `prisma db push` on production.
+
+### 2026-10-28 — C11 (part 1): Getting-started checklist + new prices
+
+- **"Get Advertix set up"** on the Overview (owners only), with 7 steps that tick off from real data:
+  1. connect and sync an ad account;
+  2. add clients, with every account assigned (optional);
+  3. set a monthly budget;
+  4. run the first AI check;
+  5. invite the team;
+  6. share a report;
+  7. the morning briefing (optional).
+- **On the card:**
+  - a progress ring;
+  - the next step is open with its button; on phones only that step's buttons show, and the others are title links;
+  - optional steps have Skip and Undo skip;
+  - collapse is remembered on the device;
+  - dismiss (✕) asks first.
+- It hides once everything is done or skipped. The "Welcome" card is hidden while the checklist covers "Connect an ad account".
+- **Routes:** `GET /workspace/setup`, `POST /workspace/setup/skip`, `POST /workspace/setup/dismiss` (owners).
+- **Schema change:** `Workspace.setupDismissedAt`, `Workspace.setupSkipped`. Run `prisma db push` on production.
+- **Prices (pricing page, Billing tab):** Founder $22, Team $79, Agency $199 a month; Enterprise custom. Limits unchanged.
+
 ### 2026-10-28 — Clients management
 
 - **Settings › Clients (owners):**

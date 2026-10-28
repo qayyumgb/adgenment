@@ -50,7 +50,7 @@ export function ReleaseBoard() {
           eyebrow="ROADMAP"
           lead="What we’re building"
           accent="next."
-          lede="In the order we’re building it. The beta is free, and what our first users ask for moves up the list."
+          lede="In the order we’re building it. What our users ask for moves up the list."
         />
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))] gap-[clamp(20px,3vw,32px)]">
           {ROAD.map((col) => (

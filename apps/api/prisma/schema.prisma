@@ -18,8 +18,11 @@ enum Platform {
   X
 }
 
+/// Billing (C11): FREE = no paid plan (on the trial, or the trial ended); FOUNDER / STARTER (Team) /
+/// PRO (Agency) come from the Stripe subscription; ENTERPRISE is set by hand.
 enum PlanType {
   FREE
+  FOUNDER
   STARTER
   PRO
   ENTERPRISE
@@ -127,6 +130,21 @@ model Workspace {
   autoApplyMaxPct Int     @default(15)
   /// C13/C14: stops every automatic change (safety rules, auto-apply) until switched back on.
   automationPaused Boolean @default(false)
+  /// C11: the getting-started checklist on the Overview (hidden once dismissed or all done).
+  setupDismissedAt DateTime?
+  /// C11: optional checklist steps an owner chose to skip ("clients", "briefing").
+  setupSkipped     String[] @default([])
+  /// C11 billing: the 14-day trial (no card) ends here; set when the workspace is created.
+  trialEndsAt          DateTime?
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  /// Stripe subscription status: trialing | active | past_due | canceled | unpaid | incomplete …
+  subscriptionStatus   String?
+  /// month | year
+  planInterval         String?
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean   @default(false)
   ownerId      String
   plan         PlanType @default(FREE)
   createdAt    DateTime @default(now())
@@ -160,9 +178,12 @@ model Workspace {
   approvals             ApprovalRequest[]
   alerts                Alert[]
   clientShares          ClientShare[]
+  aiUsage               AiUsage[]
   reportSchedules       ReportSchedule[]
 
   @@index([ownerId])
+  @@index([stripeCustomerId])
+  @@index([stripeSubscriptionId])
 }
 
 /// An agency's client (a brand the workspace runs ads for). Ad accounts are
@@ -1014,4 +1035,20 @@ model ReportSchedule {
   client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId])
+}
+
+/// C11: one row per AI action that used credits (plans: Founder 100, Team 400
+/// a billing period; Agency / Enterprise unlimited). Summed per period; no rollover.
+model AiUsage {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String?
+  /// plan | ask | copy | audience | insights | budget | image
+  feature     String
+  credits     Int
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
 }

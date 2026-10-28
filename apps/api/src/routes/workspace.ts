@@ -3,9 +3,11 @@ import { Prisma } from "@prisma/client";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
-import { getAccess, type Access } from "../lib/access";
+import { assertClientAccess, getAccess, type Access } from "../lib/access";
 import { createInvites, listTeam, removeMember, resendInvite, revokeInvite, seats, updateMember } from "../services/team.service";
 import { createClerkClient } from "@clerk/backend";
+import { dismissSetup, setupChecklist, skipSetupStep } from "../services/setup.service";
+import { creditStatus } from "../services/credits.service";
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -184,6 +186,7 @@ router.get("/billing", async (req: Request, res: Response, next: NextFunction) =
       adAccounts,
       seats: seatInfo,
       spendThisMonth: [...byCurrency.entries()].map(([currency, amount]) => ({ currency, amount: Math.round(amount * 100) / 100 })).sort((a, b) => b.amount - a.amount),
+      credits: await creditStatus(workspace.id),
     });
   } catch (err) {
     next(err);
@@ -224,6 +227,54 @@ router.delete("/", async (req: Request, res: Response, next: NextFunction) => {
       }
     }
     res.json({ deleted: true, accountDeleted, loginError });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** The client the checklist is for (?clientId= or body.clientId), checked against the member's access. */
+function setupClient(a: Access, raw: unknown) {
+  const id = typeof raw === "string" && raw ? raw : null;
+  if (id) assertClientAccess(a, id);
+  return id;
+}
+
+/** GET /workspace/setup?clientId= — the getting-started checklist (C11), for one client or the workspace. */
+router.get("/setup", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const a = await access(req);
+    res.json(await setupChecklist(a.workspaceId, req.dbUserId!, setupClient(a, req.query.clientId)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /workspace/setup/skip { step, skip } — skip an optional step (owners). */
+router.post("/setup/skip", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const a = await access(req);
+    await skipSetupStep(a.workspaceId, req.body?.step, req.body?.skip !== false);
+    res.json(await setupChecklist(a.workspaceId, req.dbUserId!, setupClient(a, req.body?.clientId)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /workspace/setup/dismiss { dismissed } — hide (or bring back) the checklist (owners). */
+router.post("/setup/dismiss", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const a = await access(req);
+    await dismissSetup(a.workspaceId, req.body?.dismissed !== false);
+    res.json(await setupChecklist(a.workspaceId, req.dbUserId!, setupClient(a, req.body?.clientId)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /workspace/credits — AI credits used this period (the meter). */
+router.get("/credits", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await creditStatus((await access(req)).workspaceId));
   } catch (err) {
     next(err);
   }

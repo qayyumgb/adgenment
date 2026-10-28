@@ -285,6 +285,12 @@ class InsightsService {
     return { insights: await this.generateInsights(workspaceId), generated: true };
   }
 
+  /** Would a refresh run the AI now (past the 1-hour gate)? Credits are only needed then. */
+  async refreshDue(workspaceId: string): Promise<boolean> {
+    const last = (await this.lastGeneratedAt(workspaceId))?.getTime() ?? 0;
+    return Date.now() - last >= REFRESH_GATE_MS;
+  }
+
   async lastGeneratedAt(workspaceId: string): Promise<Date | null> {
     const ws = await prisma.workspace.findUnique({
       where: { id: workspaceId },

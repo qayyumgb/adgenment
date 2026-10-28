@@ -19,6 +19,7 @@ import { startApprovalScheduler } from "./services/approvals.service";
 import { startSafetyScheduler } from "./services/safety.service";
 import { startAlertsScheduler } from "./services/alerts.service";
 import { startReportScheduler } from "./services/reports.service";
+import { handleWebhook } from "./services/billing.service";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -66,6 +67,19 @@ app.use(
     credentials: true,
   })
 );
+
+// Stripe webhooks (C11) need the raw body to check the signature, so this
+// route comes before the JSON parser. Stripe authenticates it, not Clerk.
+app.post("/api/billing/webhook", express.raw({ type: "application/json", limit: "1mb" }), async (req: Request, res: Response) => {
+  try {
+    res.json(await handleWebhook(req.body as Buffer, req.headers["stripe-signature"] as string | undefined));
+  } catch (err) {
+    const e = err as Error & { status?: number };
+    console.error("[billing] webhook:", e.message);
+    // 4xx tells Stripe the event is bad (no retry); 5xx makes it retry.
+    res.status(e.status ?? 500).json({ error: e.message });
+  }
+});
 
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));

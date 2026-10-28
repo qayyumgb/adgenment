@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { requireAuth } from "../middleware/auth";
 import { requireWorkspace } from "../lib/workspace";
 import { insightsService } from "../services/insights.service";
+import { CREDIT_COST, chargeCredits, requireCredits } from "../services/credits.service";
 
 const router = Router();
 router.use(requireAuth);
@@ -50,6 +51,7 @@ router.post("/generate", async (req: Request, res: Response, next: NextFunction)
         error: `Rate limit reached — ${GEN_PER_HOUR} generations per hour. Try again in ${rate.resetSeconds}s.`,
       });
     }
+    if (await insightsService.refreshDue(workspace.id)) await requireCredits(workspace.id, CREDIT_COST.insights);
     let result;
     try {
       result = await insightsService.refreshInsights(workspace.id);
@@ -60,7 +62,10 @@ router.post("/generate", async (req: Request, res: Response, next: NextFunction)
       }
       return res.status(503).json({ error: "AI service is temporarily unavailable. Try again." });
     }
-    if (result.generated) recordGen(workspace.id);
+    if (result.generated) {
+      recordGen(workspace.id);
+      await chargeCredits(workspace.id, req.dbUserId!, "insights", CREDIT_COST.insights).catch((e) => console.error("[credits]", e));
+    }
     const lastGeneratedAt = await insightsService.lastGeneratedAt(workspace.id);
     res.json({
       insights: result.insights,

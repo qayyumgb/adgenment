@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
+import { trialEnd } from "../lib/plans";
 import { getUserWorkspace } from "../lib/workspace";
 import { getAccess } from "../lib/access";
 import { pendingInviteFor } from "../services/team.service";
@@ -115,7 +116,7 @@ router.post(
         return res.status(400).json({ error: "name is required" });
       }
       const workspace = await prisma.workspace.create({
-        data: { name: name.trim(), ownerId: userId, plan: "FREE" },
+        data: { name: name.trim(), ownerId: userId, plan: "FREE", trialEndsAt: trialEnd() },
       });
       await prisma.workspaceMember.create({
         data: { workspaceId: workspace.id, userId, role: "OWNER" },

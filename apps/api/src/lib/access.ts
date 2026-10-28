@@ -106,6 +106,8 @@ export function capabilityFor(method: string, path: string): Capability | null {
     if (read) return "view";
     return /^\/workspace\/(invites|members)/.test(path) || path === "/workspace/invite" ? "team" : "workspace";
   }
+  // Billing (C11): everyone sees the plan; owners choose and manage it.
+  if (path.startsWith("/billing")) return read ? "view" : "workspace";
   // Client portal (C4): the public report needs no role; managing links is an edit.
   if (path.startsWith("/portal")) return null;
   if (path.startsWith("/shares") || path.startsWith("/reports")) return read ? "view" : "edit";
@@ -201,9 +203,4 @@ export async function roleGuard(req: Request, res: Response, next: NextFunction)
   });
 }
 
-/** Seats per plan (pricing page): Founder 2, Team 5, Agency 10, Enterprise unlimited. */
-export function seatLimit(plan: PlanType): number {
-  return plan === "FREE" ? 2 : plan === "STARTER" ? 5 : plan === "PRO" ? 10 : Infinity;
-}
-/** Agency and Enterprise include free client-viewer seats. */
-export const clientViewersFree = (plan: PlanType) => plan === "PRO" || plan === "ENTERPRISE";
+/* Seats and the other plan limits: lib/plans.ts (entitlement). */

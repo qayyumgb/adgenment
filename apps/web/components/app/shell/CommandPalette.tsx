@@ -11,7 +11,7 @@ import { useEscape, useFocusTrap, useScrollLock } from "@/components/app/ui/over
 import { useTheme } from "@/components/app/theme/ThemeProvider";
 import { useAccess } from "@/components/app/team/access";
 import { useClientScope } from "./ClientContext";
-import { ACCOUNT_NAV, WORKSPACE_NAV } from "./nav";
+import { ACCOUNT_NAV, SETUP_NAV, WORKSPACE_NAV } from "./nav";
 
 /**
  * ⌘K command palette (plan C3): jump to any page, client or campaign, or run
@@ -27,10 +27,11 @@ type Item = { id: string; group: string; label: string; sub?: string; icon: Reac
 
 const SETTINGS_TABS = [
   { tab: "general", label: "Settings · General", keywords: "workspace profile delete time zone" },
+  { tab: "clients", label: "Settings · Clients", keywords: "brands add client rename delete" },
   { tab: "team", label: "Settings · Team", keywords: "members invite roles seats" },
-  { tab: "ai", label: "Settings · AI & automation", keywords: "autonomy autopilot" },
+  { tab: "ai", label: "Settings · AI & automation", keywords: "autonomy autopilot approvals safety auto-apply" },
   { tab: "notifications", label: "Settings · Notifications", keywords: "alerts email" },
-  { tab: "billing", label: "Settings · Billing", keywords: "plan usage" },
+  { tab: "billing", label: "Settings · Billing", keywords: "plan usage subscription invoice card upgrade credits trial" },
 ];
 
 /** Higher is better; 0 = no match. Every word of the query must appear. */
@@ -110,7 +111,7 @@ export function CommandPalette() {
       },
     ];
     const pages: Item[] = [
-      ...[...WORKSPACE_NAV, ...ACCOUNT_NAV].map((n) => {
+      ...[...WORKSPACE_NAV, ...ACCOUNT_NAV, SETUP_NAV].map((n) => {
         const Icon = n.icon;
         return { id: `p-${n.href}`, group: "Pages", label: n.label, icon: <Icon size={16} />, run: go(n.href) };
       }),

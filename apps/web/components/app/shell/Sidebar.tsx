@@ -13,9 +13,11 @@ import { ConnectDialog } from "@/components/app/connections/ConnectDialog";
 import { PlatformBadge, type PlatformKey } from "@/components/app/ui";
 import { useClientScope } from "./ClientContext";
 import { ClientSwitcherMenu } from "./ClientSwitcher";
-import { ACCOUNT_NAV, WORKSPACE_NAV, isActive, type NavItem } from "./nav";
+import { ACCOUNT_NAV, SETUP_NAV, WORKSPACE_NAV, isActive, type NavItem } from "./nav";
+import { useSetupChecklist } from "@/components/app/setup/SetupSteps";
 import { ROLE_LABEL } from "@/components/app/team/access";
 import { useApprovalSummary } from "@/components/app/approvals/useApprovals";
+import { CreditMeter } from "@/components/app/credits/Credits";
 
 /**
  * Sidebar content (guide §3.1): logo, client switcher, workspace nav,
@@ -27,7 +29,7 @@ const BOX_PLATFORMS: PlatformKey[] = ["META", "GOOGLE", "TIKTOK", "SNAPCHAT", "L
 // Platforms without a connector yet are always "coming soon" (plan decision 8).
 const COMING_SOON = new Set<PlatformKey>(["SNAPCHAT"]);
 
-function NavLink({ item, count, alert, onNavigate }: { item: NavItem; count?: number; alert?: boolean; onNavigate?: () => void }) {
+function NavLink({ item, count, alert, onNavigate }: { item: NavItem; count?: number | string; alert?: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
   const { scoped } = useClientScope();
   const active = isActive(pathname, item);
@@ -158,6 +160,17 @@ function UserRow() {
   );
 }
 
+/** "Get started" (C11) with its progress (✓ once done), for owners until hidden from the page. */
+function GetStartedLink({ onNavigate }: { onNavigate?: () => void }) {
+  const { data: s } = useSetupChecklist();
+  if (!s?.show) return null;
+  return (
+    <nav aria-label="Getting started" className="-mb-2.5 flex flex-col">
+      <NavLink item={SETUP_NAV} count={s.done ? "✓" : `${s.complete}/${s.total}`} onNavigate={onNavigate} />
+    </nav>
+  );
+}
+
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { clientId } = useClientScope();
   const campaigns = useApi((api) => api.getCampaigns({ limit: 1, clientId: clientId ?? undefined, includeLatestMetrics: "false" }), [clientId], {
@@ -176,6 +189,8 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </Link>
 
       <ClientSwitcherMenu variant="card" />
+
+      <GetStartedLink onNavigate={onNavigate} />
 
       <nav aria-label="Workspace" className="flex flex-col gap-0.5">
         <div className="px-2.5 pb-1.5 text-xs text-ink-3">Workspace</div>
@@ -201,6 +216,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       <div className="flex-1" />
+      <CreditMeter onNavigate={onNavigate} />
       <AdAccountsBox onNavigate={onNavigate} />
       <UserRow />
     </div>

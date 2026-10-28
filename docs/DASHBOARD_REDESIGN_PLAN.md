@@ -198,10 +198,11 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C8 | **Snapchat connector** — or keep it "coming soon" everywhere | — | M |
 | C9 | **F3 Experiments** — tests with significance, scale the winner | B4, C1 | XL |
 | C10 | **Job queue** — BullMQ + Redis replaces the in-process `setInterval`; multi-platform sync, alerts, reports, scheduled budgets / launches | Adds a Redis service on Railway (≈ $1–3 / month extra) | M |
-| C11 | Stripe billing, Shopify / GA4 revenue truth, activation checklist | — | L each (checklist S) |
+| C11 (part) | Stripe billing ✅, activation checklist ✅, AI credits ✅; **Shopify / GA4 revenue truth** still to do | — | L (Shopify / GA4) |
 | C12 ✅ | **Morning briefing email** — daily, in the workspace time zone: top 3 decisions across clients (numbers + one-click link) and anything applied overnight. Opt-in per person in Settings › Notifications | A14 notifications, B2 | S |
 | C13 ✅ | **Guarded auto-apply** — per client "Suggest only" / "Auto-apply small changes" (Settings › AI). Only executable Meta budget suggestions, under a daily limit (default 15% of the campaign's budget), one move per campaign per day, logged as applied automatically with 7-day undo; workspace "Pause all automation" switch. Runs after each sync | B2, B3, A14 | M |
 | C14 ✅ | **Safety rules** (opt-in per client) — pixel stopped firing → pause affected Meta campaigns until it fires again; monthly cap run-out → lower daily budgets inside the guardrail. Each action emailed with Undo | C13, Meta health, `computePacing` | M |
+| C15 | **Feature gating by plan** — **priority: medium** (decided 2026-10-28: every feature stays open on every plan for now; to discuss before enforcing). The pricing table promises a split: approvals from Team; auto-apply, safety rules, client portal links and scheduled reports from Agency (clients, seats, AI credits and free client-viewer seats on Agency+ are already enforced). Enforce it with `lib/plans.ts` entitlements (API checks + locked states with "Upgrade" in the UI), grandfather existing workspaces, and keep the pricing table and the app in step | C11 billing | M |
 
 ---
 
@@ -274,6 +275,45 @@ Not blocking the start, but needed before the named phase:
 10. Currency: the mockups hard-code `$`. We keep each account's currency (`lib/money.ts`), with mixed-currency totals shown in the workspace's default currency.
 
 ---
+
+## 10a. Testing backlog
+
+Features built and covered by automated tests, but not yet tested end to end by hand. Tick one off once it has been tested locally and on production.
+
+- [ ] **Get started (`/setup`, C11)**, flagged 2026-10-28 as not fully tested. Test with a fresh workspace and with an existing one:
+  - **Each step ticks off when it's done for real:**
+    - connect plus the first sync finishing (not just connecting);
+    - two clients with every account assigned;
+    - a monthly budget;
+    - an AI check that finds nothing, and one that finds suggestions;
+    - a pending invite, and an accepted one;
+    - a portal link, and a scheduled report;
+    - the briefing turned on.
+  - **Per client:** switch between All clients and each client. Counts, titles ("… for Lumen") and buttons follow the client, "Add your clients" disappears, and the sidebar badge matches the page.
+  - **All clients:** a client step ticks only when every client has done it ("1 of 2 clients done · still to do: …"). "Your clients" shows each client's own progress, and Open switches to it.
+  - **Skip / Undo skip** for the optional steps; required steps can't be skipped.
+  - **Hide from sidebar / Show in sidebar;** the ✓ badge once everything is done; the page still reachable from ⌘K.
+  - **Roles:** owners see the page and the link; media buyers, analysts and client viewers see "Set up by the workspace owner" and no link. A limited member can't open the page for a client they can't see.
+  - **Phones:** only the next step's buttons; the other titles are links; no sideways scroll; dark mode.
+- [ ] **Stripe billing and the trial (C11)**, in the sandbox:
+  - Checkout with the 4242 card during the trial (no charge until the trial ends), and after it;
+  - switching plans (prorated);
+  - Manage billing: invoices, card, cancel at period end;
+  - the webhook syncing the plan;
+  - a failed payment (Stripe test card `4000 0000 0000 0341`);
+  - trial-ending and trial-ended emails and banners;
+  - an ended trial blocking AI and new clients;
+  - the 5-client / 5-seat trial limits.
+- [ ] **AI credits (C11):**
+  - the meter going up after each AI action (images 1 / 2 / 5);
+  - the 80% notice and email;
+  - the out-of-credits dialog at 100% (owner vs non-owner);
+  - the trial's 100 credits covering the whole trial;
+  - `AI_CREDITS_ENFORCED=false`.
+- [ ] **On production after the deploy** (pending since 2026-10-27):
+  - the morning briefing (C12);
+  - auto-apply (C13);
+  - safety rules (C14). They only act on real conditions (a silent pixel, a client overspending), so watch Activity and the "Automatic changes" emails for the first week.
 
 ## 11. Progress
 

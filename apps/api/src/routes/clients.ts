@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { requireWorkspace } from "../lib/workspace";
 import { clientMark, ensureClients } from "../lib/clients";
 import { getAccess } from "../lib/access";
+import { workspaceEntitlement } from "../lib/plans";
 
 /**
  * Agency clients — /api/clients (docs/DASHBOARD_REDESIGN_PLAN.md, B1).
@@ -116,6 +117,15 @@ router.post("/", async (req: Request, res: Response, next: NextFunction) => {
 
     await ensureClients(workspace.id);
     if (await nameTaken(workspace.id, name)) return res.status(409).json({ error: `There's already a client called “${name}”.` });
+    // Plan limit (C11): Founder 1, Team 5, Agency 10 (the trial counts as Agency).
+    const ent = await workspaceEntitlement(workspace.id);
+    const count = await prisma.client.count({ where: { workspaceId: workspace.id } });
+    if (count >= ent.limits.clients) {
+      return res.status(402).json({
+        code: "PLAN_LIMIT",
+        error: ent.state === "EXPIRED" ? "Your free trial has ended. Choose a plan to add clients." : `Your plan includes ${ent.limits.clients} client${ent.limits.clients === 1 ? "" : "s"}. Upgrade in Settings › Billing to add more.`,
+      });
+    }
     const created = await prisma.client.create({
       data: {
         workspaceId: workspace.id,

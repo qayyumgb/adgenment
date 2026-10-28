@@ -1,6 +1,7 @@
 import {
   BarChart3,
   ClipboardCheck,
+  Rocket,
   Image as ImageIcon,
   LayoutDashboard,
   Megaphone,
@@ -40,6 +41,9 @@ export const WORKSPACE_NAV: NavItem[] = [
   { label: "Budgets", href: "/budgets", icon: Wallet, match: ["/budget-optimizer"] },
   { label: "AI Planner", href: "/ai-planner", icon: Sparkles, brandIcon: true },
 ];
+
+/** Getting started (C11): shown above the nav for owners until it's hidden from the page. */
+export const SETUP_NAV: NavItem = { label: "Get started", href: "/setup", icon: Rocket };
 
 export const ACCOUNT_NAV: NavItem[] = [
   { label: "Activity", href: "/activity", icon: ClipboardCheck, count: "approvals" },

@@ -34,7 +34,7 @@ export function OverviewSuggestions() {
   };
 
   return (
-    <Card padded={false} className="flex flex-col gap-3 px-5 pb-2 pt-5">
+    <Card padded={false} id="suggestions" className="flex scroll-mt-24 flex-col gap-3 px-5 pb-2 pt-5">
       <div className="flex items-center gap-2.5">
         <AiMark size={32} />
         <span className="flex flex-1 flex-col leading-tight">

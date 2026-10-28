@@ -19,13 +19,14 @@ const DAY = 86_400_000;
 const FRONTEND_URL = () => process.env.FRONTEND_URL ?? process.env.WEB_ORIGIN ?? "http://localhost:3000";
 const PLATFORM_NAME: Record<string, string> = { META: "Meta", GOOGLE: "Google Ads", TIKTOK: "TikTok", LINKEDIN: "LinkedIn" };
 
-export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "WEEKLY_SUMMARY" | "APPROVALS" | "SAFETY" | "MORNING_BRIEFING";
+export type NotificationEvent = "ACCESS" | "SYNC_FAILED" | "PACING" | "WEEKLY_SUMMARY" | "APPROVALS" | "SAFETY" | "MORNING_BRIEFING" | "USAGE";
 
 export const EVENTS: { id: NotificationEvent; label: string; sub: string; roles: Role[] }[] = [
   { id: "ACCESS", label: "Ad platform access", sub: "A connected account's access expires within 7 days, or has expired", roles: ["OWNER", "MEDIA_BUYER"] },
   { id: "SYNC_FAILED", label: "Sync failures", sub: "An ad account couldn't sync its spend and results", roles: ["OWNER", "MEDIA_BUYER"] },
   { id: "PACING", label: "Budget pacing", sub: "A client will run out early or underspend this month", roles: ["OWNER", "MEDIA_BUYER", "ANALYST"] },
   { id: "APPROVALS", label: "Approvals", sub: "A change is waiting for an owner, or a change you asked for was approved or rejected", roles: ["OWNER", "MEDIA_BUYER"] },
+  { id: "USAGE", label: "AI credits", sub: "Your workspace has used 80% or all of its AI credits this month", roles: ["OWNER"] },
   { id: "SAFETY", label: "Automatic changes", sub: "A safety rule or auto-apply changed a campaign on its own (with Undo)", roles: ["OWNER", "MEDIA_BUYER"] },
   { id: "MORNING_BRIEFING", label: "Morning briefing", sub: "Every morning at 08:00: the top decisions for your clients, what changed in the last 24 hours and yesterday's spend", roles: ["OWNER", "MEDIA_BUYER", "ANALYST"] },
   { id: "WEEKLY_SUMMARY", label: "Weekly summary", sub: "Spend and results per client, on the first day of your week at 09:00", roles: ["OWNER", "MEDIA_BUYER", "ANALYST", "CLIENT_VIEWER"] },
@@ -33,7 +34,7 @@ export const EVENTS: { id: NotificationEvent; label: string; sub: string; roles:
 
 /** Who gets what unless they change it. The morning briefing (C12) is opt-in. */
 const DEFAULT_ON: Record<Role, NotificationEvent[]> = {
-  OWNER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY", "APPROVALS", "SAFETY"],
+  OWNER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY", "APPROVALS", "SAFETY", "USAGE"],
   MEDIA_BUYER: ["ACCESS", "SYNC_FAILED", "PACING", "WEEKLY_SUMMARY", "APPROVALS", "SAFETY"],
   ANALYST: ["WEEKLY_SUMMARY"],
   CLIENT_VIEWER: ["WEEKLY_SUMMARY"],

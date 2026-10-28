@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { requireAuth } from "../middleware/auth";
 import { requireWorkspace } from "../lib/workspace";
 import { budgetOptimizerService } from "../services/budget-optimizer.service";
+import { CREDIT_COST, chargeCredits, requireCredits } from "../services/credits.service";
 
 const router = Router();
 router.use(requireAuth);
@@ -44,9 +45,11 @@ router.post("/analyze", async (req: Request, res: Response, next: NextFunction) 
       });
     }
 
+    await requireCredits(workspace.id, CREDIT_COST.budget);
     let analysis;
     try {
       analysis = await budgetOptimizerService.analyzeAndOptimize(workspace.id);
+      await chargeCredits(workspace.id, req.dbUserId!, "budget", CREDIT_COST.budget).catch((e) => console.error("[credits]", e));
     } catch (err) {
       const code = err instanceof Error ? err.message : "AI_API_ERROR";
       if (code === "NO_CAMPAIGNS") {

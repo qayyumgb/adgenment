@@ -1,9 +1,11 @@
 /**
  * Marketing pricing — single source for the Pricing page and every other
- * page that quotes a price (e.g. "Agency plan · $499/mo" on /agencies).
+ * page that quotes a price (e.g. "Agency plan · $199/mo" on /agencies).
  *
- * TODO(copy): tiers, limits and the beta offer are proposals from the
- * mockup; confirm before launch (docs/MARKETING_REDESIGN_PLAN.md § 2, item 8).
+ * Prices confirmed 2026-10-28: Founder $22, Team $79, Agency $199,
+ * Enterprise custom. Stripe billing (C11) charges these.
+ * Every plan starts with a 14-day free trial (no card; Team limits, 100 AI
+ * credits). Limits mirror the API's lib/plans.ts.
  */
 
 export type Plan = {
@@ -23,10 +25,11 @@ export const PLANS: Plan[] = [
   {
     name: "Founder",
     for: "One brand, run by you",
-    monthly: 79,
+    monthly: 22,
     limits: "1 BRAND · $25K/MO · 2 SEATS",
     items: [
       "Meta, Google, TikTok and LinkedIn",
+      "100 AI credits a month",
       "AI Planner and decision feed",
       "Budget allocator and pacing",
       "Creative studio",
@@ -39,12 +42,13 @@ export const PLANS: Plan[] = [
   {
     name: "Team",
     for: "In-house growth teams",
-    monthly: 199,
+    monthly: 79,
     limits: "5 BRANDS · $100K/MO · 5 SEATS",
     items: [
       "Everything in Founder",
+      "400 AI credits a month",
       "Roles for your team",
-      "Approvals and guardrails · coming soon",
+      "Approvals for big budget changes",
       "Smart hours scheduling · coming soon",
       "Experiments · coming soon",
       "Slack alerts · coming soon",
@@ -55,15 +59,16 @@ export const PLANS: Plan[] = [
   {
     name: "Agency",
     for: "Agencies with many clients",
-    monthly: 499,
+    monthly: 199,
     limits: "10 CLIENTS · $250K/MO · 10 SEATS",
     items: [
       "Everything in Team",
+      "Unlimited AI credits",
       "Free client viewer seats",
       "Priority support",
-      "Per-client autonomy · coming soon",
-      "White-label client portal · coming soon",
-      "Scheduled client reports · coming soon",
+      "Auto-apply and safety rules per client",
+      "Client portal links",
+      "Scheduled client reports with PDF",
     ],
     spendLimit: 250_000,
     clientLimit: 10,

@@ -5,6 +5,8 @@ import { accountStatus } from "./connections.service";
 import { computePacing } from "./pacing.service";
 import { changeLog } from "./change-log.service";
 import { localParts } from "./notifications.service";
+import { trialReminders } from "./billing.service";
+import { emailConfigured } from "../lib/email";
 
 /**
  * Alerts inbox (plan C2). An engine turns what Advertix already stores into
@@ -347,6 +349,8 @@ async function tick() {
     for (const w of workspaces) {
       try {
         await refreshAlerts(w.id);
+        // Trial ending / ended emails (C11), once each.
+        if (emailConfigured()) await trialReminders(w.id);
       } catch (err) {
         console.error("[alerts] workspace", w.id, err instanceof Error ? err.message : err);
       }

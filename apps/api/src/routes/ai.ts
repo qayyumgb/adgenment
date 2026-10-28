@@ -5,6 +5,7 @@ import { buildPlan, plannerContext, plannerStarters, plannerSystemPrompt, PLANNE
 import { assertClientAccess, getAccess } from "../lib/access";
 import { ClientScopeError } from "../lib/clients";
 import { openaiImageService, IMAGE_QUALITIES, type ImageQuality } from "../services/openai-image.service";
+import { CREDIT_COST, chargeCredits, imageCost, requireCredits } from "../services/credits.service";
 import { metaService, type MetaTargeting } from "../services/meta.service";
 import { requireAuth } from "../middleware/auth";
 import { requireWorkspace } from "../lib/workspace";
@@ -151,6 +152,7 @@ router.post("/plan-campaign", requireAuth, async (req: Request, res: Response, n
     const context = await plannerContext(workspace.id, clientId);
     if (!context.client) return res.status(400).json({ error: "Add a client with a connected ad account first." });
 
+    await requireCredits(workspace.id, CREDIT_COST.plan);
     const slot = takePlanSlot(workspace.id);
     if (!slot.ok) {
       return res.status(429).json({ error: `That's ${PLANS_PER_HOUR} plans this hour for this workspace. Try again in ${Math.ceil((slot.resetSeconds ?? 60) / 60)} min.` });
@@ -167,6 +169,7 @@ router.post("/plan-campaign", requireAuth, async (req: Request, res: Response, n
     try {
       const { json } = await aiService.planner(plannerSystemPrompt(context), messages, PLANNER_SCHEMA);
       out = JSON.parse(json) as PlannerOutput;
+      await chargeCredits(workspace.id, req.dbUserId!, "plan", CREDIT_COST.plan).catch((e) => console.error("[credits]", e));
     } catch (err) {
       const code = err instanceof Error ? err.message : "AI_API_ERROR";
       if (code === "AI_REFUSAL") return res.status(422).json({ error: "Advertix can't plan that request. Try describing the campaign differently." });
@@ -310,11 +313,13 @@ router.post("/campaigns/:id/ask", requireAuth, async (req: Request, res: Respons
       notAvailableYet: ["ad set / ad breakdown", "audience breakdown", "creative performance", "placement breakdown"],
     });
 
+    await requireCredits(workspace.id, CREDIT_COST.ask);
     try {
       const { answer } = await aiService.askAboutCampaign(context, [
         ...parseAskHistory(req.body?.history),
         { role: "user", content: question },
       ]);
+      await chargeCredits(workspace.id, req.dbUserId!, "ask", CREDIT_COST.ask).catch((e) => console.error("[credits]", e));
       res.json({ answer, basedOn: { days: 30, daysWithData: daily.length } });
     } catch {
       res.status(503).json({ error: "Couldn't get an answer right now. Try again in a moment." });
@@ -358,6 +363,15 @@ router.post("/generate-copy", requireAuth, async (req: Request, res: Response) =
     }
   }
 
+  let workspaceId: string;
+  try {
+    workspaceId = (await requireWorkspace(req.dbUserId!)).id;
+    await requireCredits(workspaceId, CREDIT_COST.copy);
+  } catch (err) {
+    const e = err as Error & { status?: number; code?: string; credits?: unknown };
+    return res.status(e.status ?? 500).json({ error: e.message, ...(e.code ? { code: e.code, credits: e.credits } : {}) });
+  }
+
   try {
     const { json, tokensUsed } = isCarousel
       ? await aiService.generateCarouselCopy(
@@ -368,6 +382,7 @@ router.post("/generate-copy", requireAuth, async (req: Request, res: Response) =
         )
       : await aiService.generateCreativeCopy(brief, platform, objective);
     const copy = JSON.parse(json);
+    await chargeCredits(workspaceId, req.dbUserId!, "copy", CREDIT_COST.copy).catch((e) => console.error("[credits]", e));
     return res.json({ success: true, copy, tokensUsed });
   } catch (err) {
     const code = err instanceof Error ? err.message : "AI_API_ERROR";
@@ -465,11 +480,13 @@ router.post(
         interests?: unknown;
         rationale?: unknown;
       };
+      await requireCredits(workspace.id, CREDIT_COST.audience);
       try {
         const { json } = await aiService.generateAudienceTargeting(
           description.trim()
         );
         proposal = JSON.parse(json);
+        await chargeCredits(workspace.id, req.dbUserId!, "audience", CREDIT_COST.audience).catch((e) => console.error("[credits]", e));
       } catch (err) {
         const code = err instanceof Error ? err.message : "AI_API_ERROR";
         if (code === "AI_PARSE_ERROR") {
@@ -667,6 +684,7 @@ router.post(
       });
 
       let generated;
+      await requireCredits(workspace.id, imageCost(imageQuality));
       try {
         generated = await openaiImageService.generateImage(
           prompt,
@@ -676,6 +694,7 @@ router.post(
             : undefined,
           imageQuality
         );
+        await chargeCredits(workspace.id, req.dbUserId!, "image", imageCost(imageQuality)).catch((e) => console.error("[credits]", e));
       } catch (err) {
         const code = err instanceof Error ? err.message : "OPENAI_API_ERROR";
         if (code === "OPENAI_NO_KEY") {

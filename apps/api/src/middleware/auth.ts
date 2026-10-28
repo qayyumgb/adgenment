@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import { prisma } from "../lib/prisma";
+import { trialEnd } from "../lib/plans";
 
 const clerk = createClerkClient({
   secretKey: process.env.CLERK_SECRET_KEY,
@@ -54,7 +55,7 @@ async function loadUserFromToken(token: string) {
       ? `${displayName.split(" ")[0]}'s Workspace`
       : "My Workspace";
     const workspace = await prisma.workspace.create({
-      data: { name: workspaceName, ownerId: user.id, plan: "FREE" },
+      data: { name: workspaceName, ownerId: user.id, plan: "FREE", trialEndsAt: trialEnd() },
     });
     await prisma.workspaceMember.create({
       data: { workspaceId: workspace.id, userId: user.id, role: "OWNER" },

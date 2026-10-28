@@ -62,6 +62,11 @@ export function errorHandler(
     });
   }
 
+  // Out of AI credits (C11): the web shows an upgrade prompt for this code.
+  if (err.code === "CREDITS_EXHAUSTED") {
+    return res.status(402).json({ error: err.message, code: err.code, credits: (err as { credits?: unknown }).credits });
+  }
+
   const status = err.status ?? err.statusCode ?? 500;
   res.status(status).json({
     error: err.message ?? "Internal server error",

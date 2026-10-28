@@ -10,7 +10,7 @@ import { PLANS } from "@/lib/marketing/pricing";
 export const metadata: Metadata = {
   title: "Pricing",
   description:
-    "Flat monthly plans for founders, teams and agencies — not a cut of your ad spend. Free during beta, 30% off for beta workspaces after.",
+    "Flat monthly plans for founders, teams and agencies — not a cut of your ad spend. Start with a 14-day free trial, no card needed.",
 };
 
 const Y = "✓";
@@ -23,6 +23,7 @@ const COMPARE: { t: string; rows: { l: string; c: string[] }[] }[] = [
       { l: "Managed spend / month", c: ["$25k", "$100k", "$250k", "Unlimited"] },
       { l: "Team seats", c: ["2", "5", "10", "Unlimited"] },
       { l: "Client viewer seats", c: [N, N, "Free", "Free"] },
+      { l: "AI credits / month", c: ["100", "400", "Unlimited", "Unlimited"] },
     ],
   },
   {
@@ -32,15 +33,16 @@ const COMPARE: { t: string; rows: { l: string; c: string[] }[] }[] = [
       { l: "Budget allocator", c: [Y, Y, Y, Y] },
       { l: "Smart hours · coming soon", c: [N, Y, Y, Y] },
       { l: "Experiments · coming soon", c: [N, Y, Y, Y] },
-      { l: "Per-client autonomy · coming soon", c: [N, N, Y, Y] },
+      { l: "Auto-apply and safety rules", c: [N, N, Y, Y] },
     ],
   },
   {
     t: "CONTROL & REPORTING",
     rows: [
       { l: "History and 7-day undo", c: [Y, Y, Y, Y] },
-      { l: "Approvals and guardrails · coming soon", c: [N, Y, Y, Y] },
-      { l: "White-label portal · coming soon", c: [N, N, Y, Y] },
+      { l: "Approvals for big budget changes", c: [N, Y, Y, Y] },
+      { l: "Client portal links", c: [N, N, Y, Y] },
+      { l: "Scheduled client reports (PDF)", c: [N, N, Y, Y] },
       { l: "CSV and Excel export", c: [Y, Y, Y, Y] },
     ],
   },
@@ -52,8 +54,8 @@ const FAQS = [
     a: "Total spend across connected ad accounts in a calendar month. Going over never stops your ads; we suggest the next plan and you can stay put for a month.",
   },
   {
-    q: "Is it really free during beta?",
-    a: "Yes, every feature. We give 30 days’ notice before billing starts, and beta workspaces keep 30% off for their first year.",
+    q: "How does the free trial work?",
+    a: "You get 14 days with Team limits (5 clients, 5 seats) and 100 AI credits, no card needed. Pick a plan any time; if you pick one during the trial, you're only charged when the trial ends. If you don't, your data stays and syncing continues, but the AI and automation pause until you choose a plan.",
   },
   {
     q: "Do you take a percentage of spend?",
@@ -152,7 +154,7 @@ export default function PricingPage() {
       </section>
 
       <div className="pt-[clamp(12px,3vw,24px)]">
-        <CtaBand lead="Free while in beta." accent="30% off after.">
+        <CtaBand lead="Try it free for 14 days." accent="No card needed.">
           <PillButton href={SIGN_UP_HREF} variant="white" className="px-[26px]">
             Start free
           </PillButton>
