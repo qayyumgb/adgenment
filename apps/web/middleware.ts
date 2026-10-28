@@ -84,6 +84,7 @@ const APP_ONLY_PREFIXES = [
   "/portal", // /portal/<token> — client portal links (C4)
   "/setup", // getting started (C11)
   "/activity",
+  "/calendar", // flight calendar (C5)
   "/sign-in",
   "/sign-up",
 ];

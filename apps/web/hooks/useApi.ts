@@ -22,6 +22,8 @@ export type UseApiOptions = {
    * Without a key the hook behaves as before (fetch per mount).
    */
   key?: string;
+  /** Keyed only: keep showing the last data while new deps load (paging through dates). */
+  keepPrevious?: boolean;
 };
 
 /**
@@ -52,7 +54,7 @@ export function useApi<T>(
   const swr = useSWR<T>(
     keyed ? [options.key, ...deps] : null,
     () => fetcherRef.current(api),
-    { revalidateOnFocus: false, dedupingInterval: 5_000, shouldRetryOnError: false }
+    { revalidateOnFocus: false, dedupingInterval: 5_000, shouldRetryOnError: false, keepPreviousData: options.keepPrevious ?? false }
   );
 
   // ── Uncached path (original behaviour) ───────────────────────────────

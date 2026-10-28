@@ -27,6 +27,7 @@ import alertsRouter from "./alerts";
 import { publicPortalRouter, sharesRouter } from "./portal";
 import reportsRouter from "./reports";
 import billingRouter from "./billing";
+import calendarRouter from "./calendar";
 import { roleGuard } from "../lib/access";
 import { approvalGate, registerApprovalReplay } from "../services/approvals.service";
 
@@ -65,6 +66,7 @@ router.use("/alerts", alertsRouter);
 router.use("/shares", sharesRouter);
 router.use("/reports", reportsRouter);
 router.use("/billing", billingRouter);
+router.use("/calendar", calendarRouter);
 // Public (C4): the client portal; the token in the link is the only key.
 router.use("/portal", publicPortalRouter);
 

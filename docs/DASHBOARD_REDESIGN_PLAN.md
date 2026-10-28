@@ -192,17 +192,20 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C2 ✅ | **F1 Alerts inbox** — header bell panel; anomaly engine (CPA spikes, pacing, tracking silence), health checks for all platforms, grouped per campaign, one-click fixes | B1, B3, job queue (C10), notification channels | L |
 | C3 ✅ | **F5 Command palette (⌘K)** — clients, campaigns, actions; "Ask Advertix" needs `/ai/chat` (not yet) | B1 | S |
 | C4 ✅ | **F4 Client portal + D5 Scheduled reports** — share links (token, toggles), public read-only view, weekly PDF + email | B1, PDF rendering service | L |
-| C5 | **F7 Flight calendar** — every client's launches and end dates on one timeline, overlap warnings, holiday markers | B1, SCHEDULED status | M |
+| C5 ✅ | **F7 Flight calendar** — `/calendar`: every client's launches and end dates on one timeline, overlap warnings, holiday markers | B1, SCHEDULED status | M |
 | C6 | **F8 Schedule step** in the wizard (end date, smart-hours toggle, auto-pause rules) — auto-pause triggers later | C1, C2 engine | M (+L for triggers) |
 | C7 | **F6 Smart-hours heatmap** — hourly metrics sync, eligibility gate (14 days + 300 conversions), platform writers | C1, hourly sync, Google / TikTok write parity | L |
 | C8 | **Snapchat connector** — or keep it "coming soon" everywhere | — | M |
 | C9 | **F3 Experiments** — tests with significance, scale the winner | B4, C1 | XL |
 | C10 | **Job queue** — BullMQ + Redis replaces the in-process `setInterval`; multi-platform sync, alerts, reports, scheduled budgets / launches | Adds a Redis service on Railway (≈ $1–3 / month extra) | M |
-| C11 (part) | Stripe billing ✅, activation checklist ✅, AI credits ✅; **Shopify / GA4 revenue truth** still to do | — | L (Shopify / GA4) |
+| C11 (part) | Stripe billing ✅, activation checklist ✅, AI credits ✅. Shopify / GA4 moved to C18 (last in the series) | — | — |
 | C12 ✅ | **Morning briefing email** — daily, in the workspace time zone: top 3 decisions across clients (numbers + one-click link) and anything applied overnight. Opt-in per person in Settings › Notifications | A14 notifications, B2 | S |
 | C13 ✅ | **Guarded auto-apply** — per client "Suggest only" / "Auto-apply small changes" (Settings › AI). Only executable Meta budget suggestions, under a daily limit (default 15% of the campaign's budget), one move per campaign per day, logged as applied automatically with 7-day undo; workspace "Pause all automation" switch. Runs after each sync | B2, B3, A14 | M |
 | C14 ✅ | **Safety rules** (opt-in per client) — pixel stopped firing → pause affected Meta campaigns until it fires again; monthly cap run-out → lower daily budgets inside the guardrail. Each action emailed with Undo | C13, Meta health, `computePacing` | M |
 | C15 | **Feature gating by plan** — **priority: medium** (decided 2026-10-28: every feature stays open on every plan for now; to discuss before enforcing). The pricing table promises a split: approvals from Team; auto-apply, safety rules, client portal links and scheduled reports from Agency (clients, seats, AI credits and free client-viewer seats on Agency+ are already enforced). Enforce it with `lib/plans.ts` entitlements (API checks + locked states with "Upgrade" in the UI), grandfather existing workspaces, and keep the pricing table and the app in step | C11 billing | M |
+| C16 | **Graph API version upgrade** — **priority: high, right after Meta App Review approval** (don't touch the Meta integration during review). `meta.service.ts` calls `v19.0` (Jan 2024; Meta supports a version ~2 years, then silently upgrades calls). Move to the current version, check deprecations in the changelog, then re-test publish, sync, ad sets / ads, budgets, pixels, audiences, image / video upload | App Review | S–M |
+| C17 | **Meta Ads MCP server** — **priority: low, after launch.** Not a replacement for the Graph API integration (deterministic syncs and writes stay direct). Candidates: "Ask Advertix" chat (read-only breakdowns we don't sync), pixel / CAPI signal diagnostics for C14 and C2, and A/B tests + lift studies for C9. Verify Meta's docs before planning | C16, /ai/chat | M |
+| C18 | **Shopify / GA4 revenue truth** — **last in this series** (decided 2026-10-28). Order: 1) Shopify via a store access key (custom app, no review): real revenue, refunds, blended ROAS per client across Overview, Analytics, Budgets, portal and reports; submit Google verification and Shopify protected-customer-data access while building. 2) GA4 on the existing Google sign-in (+ analytics.readonly): any website, per-campaign attribution via UTMs, "platform claims vs GA4". 3) Shopify public app (one-click connect) once Shopify approves. APIs are free; cost is review time and ~3–4 weeks of build | Google / Shopify reviews | L |
 
 ---
 
@@ -280,6 +283,13 @@ Not blocking the start, but needed before the named phase:
 
 Features built and covered by automated tests, but not yet tested end to end by hand. Tick one off once it has been tested locally and on production.
 
+- [ ] **Flight calendar (`/calendar`, C5)**, built 2026-10-28, not yet looked at in the browser:
+  - **Timeline:** a row per client; bars at the right dates for live, scheduled, draft, paused and ended campaigns; open-ended bars fade out; the Today line; 5 weeks / 3 months / 6 months; ‹ › and Today.
+  - **Key dates:** Black Friday and Cyber Monday in orange; the Key dates menu hides retail, seasonal and cultural dates and remembers the choice.
+  - **Worth a look:** two live campaigns with the same objective on one ad account show an overlap; a draft or scheduled campaign starting in Black Friday week shows the launch warning. Clicking a name selects the bar.
+  - **Selected panel:** dates, budget, account; Open campaign keeps the client.
+  - **Client switcher:** All clients shows every client's row, one client only theirs; a limited member sees only their clients.
+  - **Phones:** opens on List (week by week); the timeline scrolls sideways inside its card only; dark mode.
 - [ ] **Get started (`/setup`, C11)**, flagged 2026-10-28 as not fully tested. Test with a fresh workspace and with an existing one:
   - **Each step ticks off when it's done for real:**
     - connect plus the first sync finishing (not just connecting);
@@ -1015,3 +1025,30 @@ C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the 
     - the email (sender, Reply-To, PDF, link, hidden numbers);
     - test sends, permissions, off.
   - **The PDF** was rendered and reviewed.
+
+### C5 — Flight calendar ✅ (2026-10-28)
+
+- **Calendar** (`/calendar`, in the sidebar after Campaigns and in ⌘K) follows the client switcher. It's read-only, so everyone who can see campaigns can see it.
+- **Timeline:**
+  - a row per client (plus "Unassigned accounts"); campaigns that don't overlap share a line;
+  - one bar per campaign, from its start to its end: **Live** (brand), **Scheduled** (brand-mid: active, start in the future), **Draft** (dashed, only with a start date), **Paused** (with a pause mark), **Ended**;
+  - no end date: the bar fades out to the right; bars cut by the window edge lose their rounded corner;
+  - week lines, weekend shading at 5 weeks, the **Today** line, and key-date lines with labels (dates close together share one, "Black Friday +1");
+  - **zoom** 5 weeks / 3 months / 6 months; ‹ › move 2 / 6 / 12 weeks; **Today** jumps back. Earlier data stays on screen while the next window loads.
+- **List view** (the default on phones): what starts and ends each week, plus the key dates, with "This week" highlighted.
+- **Selecting a bar** shows its dates and length, phase, client, platform, ad account, objective and budget, with **Open campaign** (or Open draft).
+- **Worth a look** (above the calendar; flagged bars get an orange ring):
+  - **Overlap:** live or scheduled campaigns on the **same ad account with the same objective, running at once**. They bid in the same auctions, so the platform delivers mostly one. The note is stronger when they use the same saved audience.
+  - **Launches into Black Friday week:** a draft or scheduled campaign starting from 3 days before Thanksgiving to Cyber Monday. It would spend its learning days at the most expensive time, so the note suggests starting a week or two earlier. It disappears once the campaign has started.
+  - **Not built:** the mockup's warning when *different* clients run on the same platform in the same week. Separate clients don't bid against each other, so it would flag something that isn't a problem.
+- **Key dates** (`lib/key-dates.ts`), switchable as Retail / Seasonal / Cultural (remembered per browser):
+  - computed for any year: New Year, Valentine's, Mothering Sunday (UK), Easter, Mother's Day (US), Father's Day, Halloween, Singles' Day, Thanksgiving (US), Black Friday, Cyber Monday (both marked as the peak), Christmas, Boxing Day, New Year's Eve;
+  - from a table for 2025–2028: Lunar New Year, Ramadan begins, Eid al-Fitr and Eid al-Adha (marked approximate) and Diwali. **Add a row to `LUNAR` each year**; years without one leave those dates out rather than guess.
+- **Dates on the calendar:**
+  - campaigns with no start date use when they were published or created (shown as such);
+  - ended campaigns with no end date (archived on the platform) end on their last day with spend, and ones that never spent are left out;
+  - drafts with no start date aren't shown: a note counts them, with a link to Campaigns;
+  - up to 1,000 campaigns per window, with a note past that.
+- **API:** `GET /calendar?from=YYYY-MM-DD&to=YYYY-MM-DD&clientId=` (at most 400 days), in `services/calendar.service.ts`. It returns the campaigns, overlaps, peak launches, key dates and the count of undated drafts. **No schema change.**
+- **Shared:** `useApi` has a `keepPrevious` option (SWR `keepPreviousData`).
+- **Checks:** API test with 7 groups: key dates for 2026 and 2027 (Easter, Thanksgiving, Black Friday, Mother's Day, across the year end, no guessed lunar years); the window; phases and what's left out; overlaps; peak launches; client scope and shared audience; permissions. Typecheck and lint clean. **Not yet seen in the browser** (the dev server was off).

@@ -76,6 +76,58 @@ export interface SafetySettings {
   clients: { id: string; name: string; pixel: boolean; cap: boolean; autoApply: boolean; askFirst: boolean; hasMonthlyBudget: boolean }[];
 }
 
+/* Flight calendar (C5) */
+export type FlightPhase = "live" | "scheduled" | "paused" | "draft" | "ended";
+export interface Flight {
+  id: string;
+  name: string;
+  platform: Platform;
+  status: CampaignStatus;
+  phase: FlightPhase;
+  objective: string;
+  budget: number;
+  budgetType: "DAILY" | "LIFETIME";
+  currency: string;
+  clientId: string | null;
+  adAccountId: string;
+  adAccountName: string;
+  start: string;
+  /** Null = runs until it's stopped. */
+  end: string | null;
+  startEstimated: boolean;
+  endEstimated: boolean;
+  audienceId: string | null;
+}
+export interface FlightOverlap {
+  clientId: string | null;
+  platform: Platform;
+  objective: string;
+  adAccountName: string;
+  campaignIds: string[];
+  from: string;
+  to: string | null;
+  sameAudience: boolean;
+}
+export interface KeyDate {
+  date: string;
+  name: string;
+  group: "retail" | "seasonal" | "cultural";
+  approx?: boolean;
+  peak?: boolean;
+}
+export interface FlightCalendar {
+  from: string;
+  to: string;
+  now: string;
+  clients: { id: string; name: string }[];
+  flights: Flight[];
+  overlaps: FlightOverlap[];
+  peakLaunches: { campaignId: string; keyDate: string; from: string; to: string }[];
+  keyDates: KeyDate[];
+  undatedDrafts: number;
+  truncated: boolean;
+}
+
 /* Alerts inbox (C2) */
 export type AlertSeverity = "CRITICAL" | "WARNING" | "INFO";
 export type AlertAction =
@@ -1546,6 +1598,8 @@ export function useApiClient() {
     /* Alerts inbox (C2) */
     getAlerts: (state: "open" | "resolved" = "open", refresh = false) => apiFetch<{ alerts: AppAlert[]; refreshedAt: string }>(`/alerts?state=${state}${refresh ? "&refresh=1" : ""}`),
     getAlertSummary: () => apiFetch<AlertSummary>("/alerts/summary"),
+    getCalendar: (from: string, to: string, clientId?: string | null) =>
+      apiFetch<FlightCalendar>(`/calendar?from=${from}&to=${to}${clientId ? `&clientId=${encodeURIComponent(clientId)}` : ""}`),
     markAlertsSeen: () => apiFetch<{ ok: boolean }>("/alerts/seen", { method: "POST" }),
     dismissAlert: (id: string) => apiFetch<{ ok: boolean }>(`/alerts/${id}/dismiss`, { method: "POST" }),
 

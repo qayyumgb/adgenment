@@ -485,6 +485,14 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-28 — C5 Flight calendar
+
+- **New page: Calendar (`/calendar`).** Every client's campaigns on one timeline, following the client switcher. Live, scheduled, draft, paused and ended campaigns each have their own bar style, alongside today and the key dates. Zoom is 5 weeks, 3 months or 6 months. On phones it opens as a week-by-week list.
+- **Worth a look:** two live campaigns on one ad account with the same objective at the same time (they bid against each other), and drafts or scheduled campaigns launching into Black Friday week.
+- **Key dates:** retail, seasonal and cultural dates, each group switchable. Eid and Ramadan are marked approximate; the lunar table covers 2025–2028 in `apps/api/src/lib/key-dates.ts`.
+- **API:** `GET /calendar?from=&to=&clientId=` (`routes/calendar.ts`, `services/calendar.service.ts`). No schema change.
+- `useApi` gains `keepPrevious`; `/calendar` is an app-only route; Calendar added to the sidebar and ⌘K.
+
 ### 2026-10-28 — Get started page + trial sized like Team
 
 - **Get started is its own page (`/setup`).** It's off the Overview, which shows the Welcome card again when there are no ad accounts.
