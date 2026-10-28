@@ -1567,7 +1567,8 @@ export function useApiClient() {
       apiFetch<Client>("/clients", { method: "POST", body: JSON.stringify(data) }),
     updateClient: (id: string, data: ClientInput) =>
       apiFetch<Client>(`/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-    deleteClient: (id: string) => apiFetch<void>(`/clients/${id}`, { method: "DELETE" }),
+    /** Everything the client had (ad accounts, history, team access…) moves to `moveTo`. */
+    deleteClient: (id: string, moveTo: string) => apiFetch<void>(`/clients/${id}?moveTo=${encodeURIComponent(moveTo)}`, { method: "DELETE" }),
 
     /* Budgets */
     /* Budgets allocator (A11) */

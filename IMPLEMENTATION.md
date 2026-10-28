@@ -485,6 +485,25 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-28 — Clients management
+
+- **Settings › Clients (owners):**
+  - a list of clients (table / cards) with ad accounts, campaigns and monthly budget;
+  - **Add client** in the page header;
+  - Edit (name, initials, industry, monthly budget, currency);
+  - **Delete**, which moves everything to another client: ad accounts and campaigns, creatives, audiences, plans, suggestions, history, alerts, approvals and team access. A limited teammate stays limited. The client's portal link and report stop.
+  - A banner flags ad accounts that aren't assigned to a client.
+- **Client switcher:**
+  - owners get "Add client" and "Manage clients" even with one client;
+  - the menu stays as wide as the sidebar;
+  - "All clients" has its own icon (it no longer shares initials with a client named after the workspace);
+  - each client shows "N accounts · N campaigns".
+- **API:**
+  - duplicate client names (case-insensitive) → 409;
+  - the currency must be a 3-letter code;
+  - `DELETE /clients/:id?moveTo=` is required. Before, deleting left accounts unassigned and cleared limited teammates' access, which meant "all clients".
+- No schema change.
+
 ### 2026-10-28 — C4b Scheduled client reports
 
 - **Schedule report** (Analytics) now works: per client, weekly or monthly at 09:00 workspace time, to up to 10 recipients.

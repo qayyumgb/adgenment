@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
-import { History } from "lucide-react";
+import { History, Plus } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useAppRouter } from "@/hooks/useAppRouter";
 import { cn } from "@/lib/cn";
@@ -11,6 +11,7 @@ import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
 import { Button, useConfirm } from "@/components/app/ui";
 import { useAccess } from "@/components/app/team/access";
 import { TeamPanel } from "@/components/app/team/TeamPanel";
+import { ClientsTab } from "@/components/app/clients/ClientsTab";
 import { GeneralTab } from "@/components/app/settings/GeneralTab";
 import { AiTab } from "@/components/app/settings/AiTab";
 import { NotificationsTab } from "@/components/app/settings/NotificationsTab";
@@ -25,9 +26,10 @@ import type { SettingsSaver } from "@/components/app/settings/types";
  * usage). Integrations moved to Connections (A13). `?tab=` opens a tab.
  */
 
-type Tab = "general" | "team" | "ai" | "notifications" | "billing";
+type Tab = "general" | "clients" | "team" | "ai" | "notifications" | "billing";
 const TABS: { id: Tab; label: string; summary: string }[] = [
   { id: "general", label: "General", summary: "Agency profile, reporting defaults and your login" },
+  { id: "clients", label: "Clients", summary: "The brands you run ads for; each one's data stays separate" },
   { id: "team", label: "Team", summary: "Roles control what each person can change and which clients they see" },
   { id: "ai", label: "AI & automation", summary: "Decide what Advertix can change without asking" },
   { id: "notifications", label: "Notifications", summary: "Where and when Advertix tells you things" },
@@ -49,6 +51,7 @@ export default function SettingsPage() {
   const [saver, setSaver] = useState<SettingsSaver | null>(null);
   const [saving, setSaving] = useState(false);
   const [audit, setAudit] = useState(false);
+  const [addingClient, setAddingClient] = useState(false);
   const { confirm, dialog: confirmDialog } = useConfirm();
   // "Saved" only right after a save, until the next edit or tab change.
   const [justSaved, setJustSaved] = useState(false);
@@ -98,6 +101,11 @@ export default function SettingsPage() {
             <Button variant="secondary" icon={<History size={16} />} onClick={() => setAudit(true)}>
               Audit log
             </Button>
+            {tab === "clients" && access.can("clients") && (
+              <Button variant="primary" icon={<Plus size={16} />} onClick={() => setAddingClient(true)}>
+                Add client
+              </Button>
+            )}
             {editable && (
               <span title={saver?.reason ?? undefined}>
                 <Button variant="primary" loading={saving} disabled={!saver || !saver.dirty || saver.disabled} onClick={() => void save()}>
@@ -129,6 +137,7 @@ export default function SettingsPage() {
       />
       <PageBody className="max-w-[1180px] gap-5">
         {tab === "general" && <GeneralTab setSaver={stableSetSaver} />}
+        {tab === "clients" && <ClientsTab adding={addingClient} onAddingChange={setAddingClient} />}
         {tab === "team" && <TeamPanel />}
         {tab === "ai" && <AiTab setSaver={stableSetSaver} />}
         {tab === "notifications" && <NotificationsTab setSaver={stableSetSaver} />}
