@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRef, useState, useEffect } from "react";
 import { UserButton } from "@clerk/nextjs";
-import { Bell, CircleHelp, Menu as MenuIcon, Moon, MoreHorizontal, Search, ShieldCheck, Sparkles, Sun } from "lucide-react";
+import { CircleHelp, Menu as MenuIcon, Moon, MoreHorizontal, Search, ShieldCheck, Sparkles, Sun } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
 import { IconButton } from "@/components/app/ui";
@@ -16,6 +16,7 @@ import { SidebarContent } from "./Sidebar";
 import { MOBILE_TABS, isActive } from "./nav";
 import { openCommandPalette } from "./CommandPalette";
 import { ROLE_LABEL } from "@/components/app/team/access";
+import { AlertsButton } from "@/components/app/alerts/AlertsInbox";
 
 const HELP_HREF = "mailto:support@advertix.io";
 
@@ -24,15 +25,6 @@ function ThemeButton({ size = 36 }: { size?: 36 | 38 }) {
   return (
     <IconButton label={resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"} size={size} onClick={toggle}>
       {resolved === "dark" ? <Moon size={18} /> : <Sun size={18} />}
-    </IconButton>
-  );
-}
-
-/** No alerts backend yet (Track C, F1): visibly disabled with the reason. */
-function AlertsButton({ size = 36 }: { size?: 36 | 38 }) {
-  return (
-    <IconButton label="Alerts inbox — coming soon" size={size} disabled aria-disabled="true">
-      <Bell size={18} />
     </IconButton>
   );
 }

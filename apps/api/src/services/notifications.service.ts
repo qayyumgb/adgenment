@@ -95,7 +95,7 @@ type Item = AlertItem;
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
 /** Local date / weekday / hour in a time zone (falls back to UTC). */
-function localParts(now: Date, tz: string | null) {
+export function localParts(now: Date, tz: string | null) {
   try {
     const f = new Intl.DateTimeFormat("en-CA", { timeZone: tz || "UTC", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23", weekday: "short" });
     const p = Object.fromEntries(f.formatToParts(now).map((x) => [x.type, x.value]));

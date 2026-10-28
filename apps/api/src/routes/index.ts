@@ -23,6 +23,7 @@ import invitesRouter from "./invites";
 import connectionsRouter from "./connections";
 import approvalsRouter from "./approvals";
 import automationRouter from "./automation";
+import alertsRouter from "./alerts";
 import { roleGuard } from "../lib/access";
 import { approvalGate, registerApprovalReplay } from "../services/approvals.service";
 
@@ -57,6 +58,7 @@ router.use("/change-log", changeLogRouter);
 router.use("/invites", invitesRouter);
 router.use("/approvals", approvalsRouter);
 router.use("/automation", automationRouter);
+router.use("/alerts", alertsRouter);
 
 // Approving replays the held request through this same router.
 registerApprovalReplay(router);

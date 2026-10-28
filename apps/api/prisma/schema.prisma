@@ -158,6 +158,7 @@ model Workspace {
   changeLogs            ChangeLog[]
   invites               Invite[]
   approvals             ApprovalRequest[]
+  alerts                Alert[]
 
   @@index([ownerId])
 }
@@ -253,6 +254,8 @@ model WorkspaceMember {
   createdAt     DateTime      @default(now())
   /// Email alert choices per event (Settings › Notifications, A14): { [event]: boolean }. Null = role defaults.
   notifications Json?
+  /// C2: when this member last opened the alerts inbox (unread = first seen after this).
+  alertsSeenAt  DateTime?
 
   workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -912,4 +915,41 @@ model ApprovalRequest {
   decidedBy   User?     @relation("ApprovalDecider", fields: [decidedById], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, status, createdAt])
+}
+
+enum AlertSeverity {
+  CRITICAL
+  WARNING
+  INFO
+}
+
+/// C2 alerts inbox: one row per condition (dedupeKey). Open while the condition
+/// holds (lastSeenAt), resolved when it clears; it reopens if it comes back.
+model Alert {
+  id            String        @id @default(cuid())
+  workspaceId   String
+  clientId      String?
+  campaignId    String?
+  adAccountId   String?
+  /// ACCESS | ACCOUNT | SYNC_FAILED | PACING | CPA_SPIKE | TRACKING | AUTOMATION
+  kind          String
+  severity      AlertSeverity
+  /// Same condition = same row ("cpa:<campaignId>:<date>").
+  dedupeKey     String
+  title         String
+  detail        String        @db.Text
+  /// What the inbox groups it under (campaign, ad account or client name).
+  groupLabel    String
+  /// One-click fixes: [{ type: "link" | "sync" | "pause" | "undo", label, href?, adAccountId?, campaignId?, changeId? }]
+  actions       Json?
+  firstSeenAt   DateTime      @default(now())
+  lastSeenAt    DateTime      @default(now())
+  resolvedAt    DateTime?
+  dismissedAt   DateTime?
+  dismissedById String?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, dedupeKey])
+  @@index([workspaceId, resolvedAt])
 }

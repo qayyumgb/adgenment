@@ -76,6 +76,36 @@ export interface SafetySettings {
   clients: { id: string; name: string; pixel: boolean; cap: boolean; autoApply: boolean; askFirst: boolean; hasMonthlyBudget: boolean }[];
 }
 
+/* Alerts inbox (C2) */
+export type AlertSeverity = "CRITICAL" | "WARNING" | "INFO";
+export type AlertAction =
+  | { type: "link"; label: string; href: string }
+  | { type: "sync"; label: string; adAccountId: string }
+  | { type: "pause"; label: string; campaignId: string }
+  | { type: "undo"; label: string; changeId: string };
+export interface AppAlert {
+  id: string;
+  /** ACCESS | ACCOUNT | SYNC_FAILED | PACING | CPA_SPIKE | TRACKING | AUTOMATION */
+  kind: string;
+  severity: AlertSeverity;
+  title: string;
+  detail: string;
+  groupLabel: string;
+  clientId: string | null;
+  campaignId: string | null;
+  adAccountId: string | null;
+  actions: AlertAction[];
+  firstSeenAt: string;
+  resolvedAt: string | null;
+  dismissedAt: string | null;
+  unread: boolean;
+}
+export interface AlertSummary {
+  open: number;
+  unread: number;
+  critical: number;
+}
+
 /** The message a held change fails with; the API client already showed a notice for it. */
 export const APPROVAL_PENDING_MESSAGE = "Sent to an owner for approval.";
 /** Fired when approvals change (one was requested here); badges refetch. */
@@ -1356,6 +1386,12 @@ export function useApiClient() {
         `/change-log${buildQuery({ campaignId: params.campaignId, clientId: params.clientId ?? undefined, limit: params.limit, before: params.before })}`
       ),
     undoChange: (id: string) => apiFetch<{ ok: boolean }>(`/change-log/${id}/undo`, { method: "POST" }),
+
+    /* Alerts inbox (C2) */
+    getAlerts: (state: "open" | "resolved" = "open", refresh = false) => apiFetch<{ alerts: AppAlert[]; refreshedAt: string }>(`/alerts?state=${state}${refresh ? "&refresh=1" : ""}`),
+    getAlertSummary: () => apiFetch<AlertSummary>("/alerts/summary"),
+    markAlertsSeen: () => apiFetch<{ ok: boolean }>("/alerts/seen", { method: "POST" }),
+    dismissAlert: (id: string) => apiFetch<{ ok: boolean }>(`/alerts/${id}/dismiss`, { method: "POST" }),
 
     /* Approvals (C1) */
     getApprovals: (status: "pending" | "decided" | "all" = "pending") => apiFetch<{ approvals: Approval[] }>(`/approvals?status=${status}`),

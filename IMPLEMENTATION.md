@@ -485,6 +485,20 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-28 — C2 Alerts inbox
+
+- **The header bell works.** Its badge counts new alerts and turns red when one is critical. The panel groups alerts by campaign, account or client, with one-click fixes: Reconnect, Sync now, Pause, Undo, Open Budgets or Connections.
+- **Engine:** hourly, and when the inbox opens, from stored data only. It covers:
+  - expired or expiring access;
+  - blocked accounts and pixel issues;
+  - failed syncs;
+  - pacing;
+  - CPA spikes;
+  - tracking silence (spend with no conversions after a normal week);
+  - automatic changes from the last 24 hours.
+- Alerts resolve on their own when the problem clears, reopen if it returns, and can be dismissed. Each member sees their own clients.
+- **Schema change:** the `Alert` model and `WorkspaceMember.alertsSeenAt`. Run `prisma db push` on production before the API deploy.
+
 ### 2026-10-27 — C13 Guarded auto-apply
 
 - **Per client** "Auto-apply small changes" (Settings › AI & automation › Automation): open Meta budget suggestions that move a daily budget by at most 15% (adjustable, 1–30%) apply on their own, one move per campaign per day.

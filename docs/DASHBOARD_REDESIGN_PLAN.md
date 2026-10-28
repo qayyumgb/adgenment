@@ -189,7 +189,7 @@ Ordered by value and dependencies (Feature Proposals + review):
 | # | Feature | Depends on | Size |
 |---|---|---|---|
 | C1 ✅ | **F2 Approvals & history** — `/activity`: waiting-for-approval queue above the guardrail or for ask-first clients, history with Undo | B3, B6 | M |
-| C2 | **F1 Alerts inbox** — header bell panel; anomaly engine (CPA spikes, pacing, tracking silence), health checks for all platforms, grouped per campaign, one-click fixes | B1, B3, job queue (C10), notification channels | L |
+| C2 ✅ | **F1 Alerts inbox** — header bell panel; anomaly engine (CPA spikes, pacing, tracking silence), health checks for all platforms, grouped per campaign, one-click fixes | B1, B3, job queue (C10), notification channels | L |
 | C3 ✅ | **F5 Command palette (⌘K)** — clients, campaigns, actions; "Ask Advertix" needs `/ai/chat` (not yet) | B1 | S |
 | C4 | **F4 Client portal + D5 Scheduled reports** — share links (token, toggles), public read-only view, weekly PDF + email | B1, PDF rendering service | L |
 | C5 | **F7 Flight calendar** — every client's launches and end dates on one timeline, overlap warnings, holiday markers | B1, SCHEDULED status | M |
@@ -875,3 +875,35 @@ Not blocking the start, but needed before the named phase:
   - an undo isn't repeated;
   - no raises while the cap rule holds;
   - Pause all, the limit and Suggest only.
+
+### C2 — Alerts inbox ✅ (2026-10-28)
+
+- **The bell:**
+  - The header bell (desktop and mobile) is live.
+  - Its badge counts alerts that are new since you last opened the inbox. It turns red when any open alert is critical, and refreshes on every page change and every 5 minutes.
+  - Opening the inbox marks everything as seen.
+- **The panel:**
+  - **Open / Resolved tabs:** Resolved holds alerts that cleared or were dismissed in the last 7 days.
+  - **Grouping:** alerts are grouped by campaign, ad account or client, most severe first.
+  - **Each alert** shows a title, the numbers, how long it has been open, and one-click fixes: Reconnect, **Sync now**, **Pause** (after a confirm; for a Media buyer it goes through C1 approvals) and **Undo**, plus links to Budgets, Connections, a campaign or the Automation settings.
+  - **Dismiss** applies to the whole workspace (edit role); the alert comes back if the problem clears and returns.
+  - After a fix the engine recomputes straight away.
+- **Engine** (`services/alerts.service.ts`): reads stored data only, with no platform calls. One row per condition (`dedupeKey`): it stays open while the condition holds, resolves when it clears, and reopens as a new episode. It runs hourly (`ALERTS_INBOX_ENABLED=false` turns that off), and also when the inbox opens if the last run was more than 10 minutes ago. Resolved alerts are deleted after 30 days. Kinds:
+  - **Access:** expired (critical) or expiring.
+  - **Account:** blocked (critical) or a pixel issue, from the same `accountStatus` as Connections.
+  - **Sync failed:** within 24 hours.
+  - **Pacing:** over (warning) or under (info) the monthly budget, from the 5th. Includes "Turn on the cap rule" when it's off.
+  - **CPA spike:** yesterday's cost per conversion is at least 1.5× the 7 days before, with at least 10 conversions in that week and meaningful spend; or the campaign spent at least 2× its usual CPA with no conversions.
+  - **Tracking silence** (critical): an account spent at least half its usual amount yesterday with no conversions, after at least 14 conversions in the week before. Includes "Turn on the pixel rule"; that account's campaigns get no separate CPA alerts.
+  - **Automation:** auto-apply and safety-rule changes from the last 24 hours, with Undo, until undone.
+  - "Yesterday" is in the workspace time zone.
+- **Who sees what:** members see the alerts for their clients. Alerts without a client (unassigned accounts) only go to members who see every client. Reading needs view; dismissing needs edit.
+- **Email alerts** (A14) are unchanged; the inbox is the in-app view.
+- **Routes:** `GET /alerts?state=open|resolved&refresh=1`, `GET /alerts/summary`, `POST /alerts/seen`, `POST /alerts/:id/dismiss`.
+- **Schema:** the `Alert` model, the `AlertSeverity` enum and `WorkspaceMember.alertsSeenAt`. **Production needs `prisma db push`.**
+- **Not yet:** platform health checks beyond Meta (Google, TikTok and LinkedIn are covered by access and sync failures); grouping across clients for portfolio views; Slack and in-app push.
+- **Test:** 4 scenario groups:
+  - every kind, with its fixes and the severity order;
+  - deduplication, resolve, reopen and dismiss;
+  - per-member scope and unread;
+  - undo dropping out, and permissions.
