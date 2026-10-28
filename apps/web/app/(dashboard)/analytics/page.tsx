@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarClock, ChevronDown, Download } from "lucide-react";
+import { CalendarClock, ChevronDown, Download, Share2 } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import type { Platform } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
@@ -10,6 +10,8 @@ import { useClientScope } from "@/components/app/shell/ClientContext";
 import { Button, ButtonLink, EmptyState, KpiCard, Menu, MenuItem, PlatformBadge, Segmented, PLATFORM_META, type PlatformKey } from "@/components/app/ui";
 import { dayLabel } from "@/components/app/campaign/metrics";
 import { ExportDialog } from "@/components/app/export/ExportDialog";
+import { ShareDialog } from "@/components/app/portal/ShareDialog";
+import { ScheduleDialog } from "@/components/app/portal/ScheduleDialog";
 import { analyticsExport } from "@/components/app/analytics/export";
 import { TrendChart, type TrendPoint } from "@/components/app/analytics/TrendChart";
 import { SharePanel, type ShareEntry } from "@/components/app/analytics/SharePanel";
@@ -62,6 +64,8 @@ export default function AnalyticsPage() {
   const [shareBy, setShareBy] = useState<"platform" | "client">("platform");
   const [by, setBy] = useState<BreakdownBy>("platform");
   const [exportOpen, setExportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const accounts = useApi((c) => c.getAdAccounts(), [], { key: "ad-accounts" });
   const overview = useApi((c) => c.getAnalyticsOverview(range, undefined, clientId), [range, clientId], { key: "analytics-overview" });
@@ -175,8 +179,10 @@ export default function AnalyticsPage() {
             <Button variant="secondary" icon={<Download size={16} />} onClick={() => setExportOpen(true)} disabled={rowsLoading || rows.length === 0} title="Download the breakdown below as CSV or Excel">
               Export
             </Button>
-            {/* TODO(Track C): scheduled email reports (D5). */}
-            <Button variant="secondary" icon={<CalendarClock size={16} />} disabled title="Scheduled reports are coming soon">
+            <Button variant="secondary" icon={<Share2 size={16} />} onClick={() => setShareOpen(true)} title="A read-only link for your client, no login needed">
+              Share report
+            </Button>
+            <Button variant="secondary" icon={<CalendarClock size={16} />} onClick={() => setScheduleOpen(true)} title="Email your client their numbers every week or month">
               Schedule report
             </Button>
           </>
@@ -289,6 +295,8 @@ export default function AnalyticsPage() {
           {...exportData}
         />
       )}
+      <ShareDialog open={shareOpen} onClose={() => setShareOpen(false)} />
+      <ScheduleDialog open={scheduleOpen} onClose={() => setScheduleOpen(false)} onShare={() => (setScheduleOpen(false), setShareOpen(true))} />
     </>
   );
 }

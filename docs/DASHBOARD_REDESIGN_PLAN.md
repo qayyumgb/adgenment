@@ -191,7 +191,7 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C1 ✅ | **F2 Approvals & history** — `/activity`: waiting-for-approval queue above the guardrail or for ask-first clients, history with Undo | B3, B6 | M |
 | C2 ✅ | **F1 Alerts inbox** — header bell panel; anomaly engine (CPA spikes, pacing, tracking silence), health checks for all platforms, grouped per campaign, one-click fixes | B1, B3, job queue (C10), notification channels | L |
 | C3 ✅ | **F5 Command palette (⌘K)** — clients, campaigns, actions; "Ask Advertix" needs `/ai/chat` (not yet) | B1 | S |
-| C4 | **F4 Client portal + D5 Scheduled reports** — share links (token, toggles), public read-only view, weekly PDF + email | B1, PDF rendering service | L |
+| C4 ✅ | **F4 Client portal + D5 Scheduled reports** — share links (token, toggles), public read-only view, weekly PDF + email | B1, PDF rendering service | L |
 | C5 | **F7 Flight calendar** — every client's launches and end dates on one timeline, overlap warnings, holiday markers | B1, SCHEDULED status | M |
 | C6 | **F8 Schedule step** in the wizard (end date, smart-hours toggle, auto-pause rules) — auto-pause triggers later | C1, C2 engine | M (+L for triggers) |
 | C7 | **F6 Smart-hours heatmap** — hourly metrics sync, eligibility gate (14 days + 300 conversions), platform writers | C1, hourly sync, Google / TikTok write parity | L |
@@ -907,3 +907,71 @@ Not blocking the start, but needed before the named phase:
   - deduplication, resolve, reopen and dismiss;
   - per-member scope and unread;
   - undo dropping out, and permissions.
+
+### C4a — Client portal ✅ (2026-10-28)
+
+C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the scheduled weekly email with a PDF (next).
+
+- **Share report** (Analytics header) opens a dialog for the client in scope; with "All clients", you pick one.
+  - **One live link per client.** **New link** stops the old one; **Turn off link** stops it.
+  - **Expiry:** never, 30 days or 90 days.
+  - **What it shows:** switches for **Spend** (with cost per result and this month's budget), **Revenue** (with ROAS when spend is shown too) and the **Campaign list**. Changes apply to the live link straight away. Results, clicks and CTR are always shown.
+  - **Visits:** the dialog shows how many times the link was opened, and when.
+  - **Who:** creating and changing links needs edit and access to that client; everyone can see the link.
+- **The portal** (`/portal/<token>`, public, no login, `noindex`, no-referrer):
+  - shows the agency and client names;
+  - 7 / 30 / 90 days compared with the period before;
+  - KPI cards, the month's budget bar, a day-by-day chart (spend, revenue, results or clicks) and a campaign table, which becomes cards on phones;
+  - when the data was last synced, and a "Powered by Advertix" footer;
+  - light and dark mode.
+
+  A link that is revoked, expired or made up gets the same "This link doesn't work any more" page.
+- **Security:**
+  - **The token:** 32 random bytes, looked up by sha256 and kept AES-encrypted (`encryptToken`) so the link can be copied again; never stored in clear.
+  - **Hidden numbers aren't sent:** the API leaves them out of the response, not just off the page.
+  - **Responses:** `Cache-Control: no-store` and `X-Robots-Tag: noindex`.
+  - **Rate limit:** 120 requests per 15 minutes per IP on `/api/portal`.
+  - **Scope:** only that client's ad accounts are read.
+- **Routes:** `GET /portal/:token?days=` (public); `GET /shares?clientId=`, `POST /shares`, `PATCH /shares/:id`, `DELETE /shares/:id`.
+- **Schema:** `ClientShare`. **Production needs `prisma db push`.**
+- **Checks:**
+  - **API test:** 4 groups — the full report and the client boundary; toggles really remove data; new, expired and revoked links all 404; scope and permissions.
+  - **Screenshots** at 1280 and 390, light and dark, with spend hidden, and for a revoked link: no page errors, no horizontal overflow.
+
+### C4b — Scheduled client reports ✅ (2026-10-28)
+
+- **Schedule report** (Analytics header, next to Share report), one schedule per client:
+  - **Recipients:** chips; type or paste, separated by Enter, comma or space; checked and de-duplicated; up to 10.
+  - **When:** **Weekly** (the workspace's first day of the week, covering the 7 days before) or **Monthly** (the 1st, covering the calendar month before), at **09:00 workspace time**.
+  - **What's in it:** the same Spend / Revenue / Campaigns switches as the portal, plus **Attach a PDF**.
+  - **Status line:** "Next report Mon 2 Nov, 09:00 (Asia/Karachi) · last sent …", or the last error.
+  - **Send me a test** sends the report exactly as set in the form, to you only, marked "[Test]".
+  - **Stop sending** keeps the settings. Closing with unsaved changes asks first.
+  - If the client has no share link yet, a link opens Share report.
+- **The email:**
+  - **Sender and replies:** from "<agency> via Advertix" on the verified address (`ALERTS_FROM`); Reply-To is the person who set it up.
+  - **Subject:** "<client>: Week of 19–25 Oct 2026" or "<client>: October 2026".
+  - **Body:** the headline numbers with their change, coloured by whether it's good (spend stays neutral); this month's budget (weekly reports only); the top 5 campaigns; "View the live report" when the client has a share link.
+  - **Quiet periods** say "No ad activity in this period."
+- **The PDF** (pdfkit, Geist fonts bundled in `apps/api/assets/fonts` under the OFL, about 20 KB):
+  - header and period;
+  - KPI cards, four a row, with big numbers shrunk to fit;
+  - the budget bar;
+  - a campaign table: up to 30 rows, long names cut with "…", the header repeated on new pages;
+  - a footer on every page.
+- **Same numbers everywhere:** `clientReport()` in `portal.service.ts` now backs both the portal and the reports. Hidden numbers are left out of the data.
+- **Sending:**
+  - an hourly job, sending only with `RESEND_API_KEY` (`SCHEDULED_REPORTS_ENABLED=false` turns it off);
+  - due from 09:00 on its day, local time;
+  - the period is claimed first (`lastPeriod`), so it goes out once even if two runs overlap;
+  - errors are kept in `lastError` and shown in the dialog.
+- **Permissions:** viewing a schedule needs view; saving and test sends need edit and access to the client.
+- **Deploy:** new dependency `pdfkit` (plus `@types/pdfkit`). The Dockerfile now copies `apps/api/assets`. **Schema:** `ReportSchedule`. **Production needs `prisma db push`.**
+- **Checks:**
+  - **API test:** 5 groups:
+    - periods;
+    - validation;
+    - timing, local 09:00, once per period;
+    - the email (sender, Reply-To, PDF, link, hidden numbers);
+    - test sends, permissions, off.
+  - **The PDF** was rendered and reviewed.

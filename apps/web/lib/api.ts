@@ -106,6 +106,66 @@ export interface AlertSummary {
   critical: number;
 }
 
+/* Client portal (C4) */
+export interface ClientShare {
+  id: string;
+  clientId: string;
+  url: string;
+  showSpend: boolean;
+  showRevenue: boolean;
+  showCampaigns: boolean;
+  createdAt: string;
+  expiresAt: string | null;
+  lastViewedAt: string | null;
+  viewCount: number;
+}
+/** Numbers a portal link shows; spend / revenue fields are absent when the link hides them. */
+export interface PortalKpis {
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  conversions: number;
+  spend?: number;
+  cpa?: number | null;
+  revenue?: number;
+  roas?: number | null;
+}
+/* Scheduled client reports (C4b) */
+export type ReportFrequency = "WEEKLY" | "MONTHLY";
+export interface ReportScheduleInput {
+  clientId: string;
+  frequency: ReportFrequency;
+  recipients: string[];
+  showSpend: boolean;
+  showRevenue: boolean;
+  showCampaigns: boolean;
+  attachPdf: boolean;
+  active: boolean;
+}
+export interface ReportScheduleInfo {
+  schedule: (Omit<ReportScheduleInput, "clientId"> & { id: string; lastSentAt: string | null; lastError: string | null; nextDate: string | null }) | null;
+  hasShareLink: boolean;
+  timezone: string;
+  /** 0 = Sunday, 1 = Monday. */
+  weekStartsOn: number;
+  emailConfigured: boolean;
+}
+export interface PortalReport {
+  agency: string;
+  client: string;
+  currency: string | null;
+  days: 7 | 30 | 90;
+  from: string;
+  to: string;
+  shows: { spend: boolean; revenue: boolean; campaigns: boolean };
+  kpis: PortalKpis;
+  previous: PortalKpis;
+  series: { date: string; conversions: number; clicks: number; spend?: number; revenue?: number }[];
+  campaigns: (PortalKpis & { name: string; platform: string; status: string })[] | null;
+  pacing: { month: string; monthlyBudget: number; spent: number; projected: number; status: string } | null;
+  updatedAt: string | null;
+}
+
 /** The message a held change fails with; the API client already showed a notice for it. */
 export const APPROVAL_PENDING_MESSAGE = "Sent to an owner for approval.";
 /** Fired when approvals change (one was requested here); badges refetch. */
@@ -1296,6 +1356,14 @@ export interface SuccessResponse {
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
+/** The public client portal (C4): no login, the token in the link is the key. */
+export async function fetchPortal(token: string, days: number): Promise<PortalReport> {
+  const res = await fetch(`${API_BASE}/api/portal/${encodeURIComponent(token)}?days=${days}`, { cache: "no-store" });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(body?.error ?? "This report couldn't load. Try again in a moment.", { status: res.status });
+  return body as PortalReport;
+}
+
 function buildQuery(params?: Record<string, string | number | undefined>) {
   if (!params) return "";
   const usp = new URLSearchParams();
@@ -1386,6 +1454,17 @@ export function useApiClient() {
         `/change-log${buildQuery({ campaignId: params.campaignId, clientId: params.clientId ?? undefined, limit: params.limit, before: params.before })}`
       ),
     undoChange: (id: string) => apiFetch<{ ok: boolean }>(`/change-log/${id}/undo`, { method: "POST" }),
+
+    /* Client portal links (C4) */
+    getShare: (clientId: string) => apiFetch<{ share: ClientShare | null }>(`/shares?clientId=${encodeURIComponent(clientId)}`),
+    createShare: (data: { clientId: string; showSpend?: boolean; showRevenue?: boolean; showCampaigns?: boolean; expiresInDays?: number | null }) =>
+      apiFetch<{ share: ClientShare }>("/shares", { method: "POST", body: JSON.stringify(data) }),
+    updateShare: (id: string, data: { showSpend?: boolean; showRevenue?: boolean; showCampaigns?: boolean }) =>
+      apiFetch<{ share: ClientShare }>(`/shares/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    revokeShare: (id: string) => apiFetch<{ ok: boolean }>(`/shares/${id}`, { method: "DELETE" }),
+    getReportSchedule: (clientId: string) => apiFetch<ReportScheduleInfo>(`/reports/schedule?clientId=${encodeURIComponent(clientId)}`),
+    saveReportSchedule: (data: ReportScheduleInput) => apiFetch<ReportScheduleInfo>("/reports/schedule", { method: "PUT", body: JSON.stringify(data) }),
+    sendTestReport: (data: ReportScheduleInput) => apiFetch<{ sentTo: string }>("/reports/schedule/test", { method: "POST", body: JSON.stringify(data) }),
 
     /* Alerts inbox (C2) */
     getAlerts: (state: "open" | "resolved" = "open", refresh = false) => apiFetch<{ alerts: AppAlert[]; refreshedAt: string }>(`/alerts?state=${state}${refresh ? "&refresh=1" : ""}`),

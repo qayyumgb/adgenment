@@ -19,14 +19,30 @@ export function emailLayout(opts: { heading: string; body: string; cta?: { label
 </div>`;
 }
 
-export async function sendEmail(to: string, subject: string, html: string): Promise<{ ok: boolean; error: string | null }> {
+export type EmailExtras = {
+  /** Shown as "<name> via Advertix" on our verified address (client reports, C4b). */
+  fromName?: string;
+  replyTo?: string;
+  attachments?: { filename: string; content: Buffer }[];
+};
+
+export async function sendEmail(to: string | string[], subject: string, html: string, extras: EmailExtras = {}): Promise<{ ok: boolean; error: string | null }> {
   const key = process.env.RESEND_API_KEY;
   if (!key) return { ok: false, error: "Email isn't set up on the server (RESEND_API_KEY)." };
+  const address = /<([^>]+)>/.exec(FROM())?.[1] ?? FROM();
+  const name = extras.fromName?.replace(/[<>"\r\n]/g, "").trim().slice(0, 60);
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ from: FROM(), to: [to], subject, html }),
+      body: JSON.stringify({
+        from: name ? `${name} via Advertix <${address}>` : FROM(),
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html,
+        ...(extras.replyTo ? { reply_to: extras.replyTo } : {}),
+        ...(extras.attachments?.length ? { attachments: extras.attachments.map((a) => ({ filename: a.filename, content: a.content.toString("base64") })) } : {}),
+      }),
     });
     if (!res.ok) return { ok: false, error: `Resend answered ${res.status}: ${(await res.text()).slice(0, 200)}` };
     return { ok: true, error: null };

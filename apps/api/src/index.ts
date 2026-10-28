@@ -6,7 +6,7 @@ import express, {
 } from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import router from "./routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { prisma } from "./lib/prisma";
@@ -18,6 +18,7 @@ import { startNotificationScheduler } from "./services/notifications.service";
 import { startApprovalScheduler } from "./services/approvals.service";
 import { startSafetyScheduler } from "./services/safety.service";
 import { startAlertsScheduler } from "./services/alerts.service";
+import { startReportScheduler } from "./services/reports.service";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -97,12 +98,41 @@ app.get("/health", (_req: Request, res: Response) => {
 // A typical /campaigns visit costs ~9 requests; clicking around for a minute
 // can easily hit 50+. 2000 / 15min (~2 req/sec sustained) leaves plenty of
 // headroom while still rate-limiting abusive clients.
+//
+// Counted per signed-in user, not per IP: an agency's whole team usually
+// shares one office IP and would otherwise lock each other out. The user id
+// is read from the session token unverified (it only picks the bucket;
+// requireAuth verifies it), so a per-IP ceiling below stops anyone from
+// dodging the limit by inventing tokens.
+const tokenSubject = (req: express.Request): string | null => {
+  const h = req.headers.authorization;
+  if (!h?.startsWith("Bearer ")) return null;
+  const part = h.slice(7).split(".")[1];
+  if (!part) return null;
+  try {
+    const sub = JSON.parse(Buffer.from(part, "base64url").toString("utf8")).sub;
+    return typeof sub === "string" && sub.length < 100 ? sub : null;
+  } catch {
+    return null;
+  }
+};
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 2000,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => {
+    const sub = tokenSubject(req);
+    return sub ? `user:${sub}` : `ip:${ipKeyGenerator(req.ip ?? "")}`;
+  },
   message: { error: "Too many requests. Please slow down." },
+});
+const ipCeiling = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10000,
+  standardHeaders: false,
+  legacyHeaders: false,
+  message: { error: "Too many requests from this network. Try again in a few minutes." },
 });
 
 // Stricter limit for AI endpoints — actual Claude calls are expensive in
@@ -116,8 +146,20 @@ const aiLimiter = rateLimit({
   message: { error: "AI rate limit exceeded. Try again later." },
 });
 
+// Client portal links (C4) are public: a tighter limit makes guessing tokens
+// pointless (they are 32 random bytes anyway) and caps scraping.
+const portalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Try again in a few minutes." },
+});
+
+app.use("/api", ipCeiling);
 app.use("/api", globalLimiter);
 app.use("/api/ai", aiLimiter);
+app.use("/api/portal", portalLimiter);
 app.use("/api", router);
 
 app.use(errorHandler);
@@ -145,6 +187,8 @@ async function startServer() {
     startSafetyScheduler();
     // Alerts inbox (C2): recomputed hourly from stored data.
     startAlertsScheduler();
+    // Scheduled client reports (C4b): 09:00 workspace time, weekly or monthly.
+    startReportScheduler();
 
     // Graceful shutdown — Railway sends SIGTERM during redeploy
     const shutdown = (signal: string) => {

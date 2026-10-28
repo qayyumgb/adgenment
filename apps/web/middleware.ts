@@ -38,6 +38,8 @@ const isPublicRoute = createRouteMatcher([
   "/api/contact",
   "/sitemap.xml",
   "/robots.txt",
+  // Client portal (C4): read-only report links, no login; the token is the key.
+  "/portal(.*)",
   // Dev-only UI kit (/dev/ui). The page itself 404s in production.
   ...(process.env.NODE_ENV !== "production" ? ["/dev(.*)"] : []),
 ]);
@@ -79,6 +81,7 @@ const APP_ONLY_PREFIXES = [
   "/onboarding",
   "/connect", // /connect/done — popup callback page
   "/invite", // /invite/<token> — team invites (B6)
+  "/portal", // /portal/<token> — client portal links (C4)
   "/sign-in",
   "/sign-up",
 ];

@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { usePathname } from "next/navigation";
 import { useSWRConfig } from "swr";
 import { useApi } from "@/hooks/useApi";
+import { useRefreshOnNavigate } from "@/hooks/useRefreshOnNavigate";
 import { APPROVALS_CHANGED_EVENT } from "@/lib/api";
 
 /**
@@ -13,11 +13,9 @@ import { APPROVALS_CHANGED_EVENT } from "@/lib/api";
  */
 export function useApprovalSummary() {
   const summary = useApi((c) => c.getApprovalSummary(), [], { key: "approval-summary" });
-  const pathname = usePathname();
   const { refetch } = summary;
-  useEffect(() => {
-    void refetch();
-  }, [pathname, refetch]);
+  // Shown in several places at once: one refresh per page change, at most every 20 s.
+  useRefreshOnNavigate("approval-summary", refetch);
   useEffect(() => {
     const on = () => void refetch();
     window.addEventListener(APPROVALS_CHANGED_EVENT, on);

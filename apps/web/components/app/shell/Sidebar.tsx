@@ -7,6 +7,7 @@ import { useState, useEffect } from "react";
 import { useUser } from "@clerk/nextjs";
 import { Plus } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
+import { useRefreshOnNavigate } from "@/hooks/useRefreshOnNavigate";
 import { cn } from "@/lib/cn";
 import { ConnectDialog } from "@/components/app/connections/ConnectDialog";
 import { PlatformBadge, type PlatformKey } from "@/components/app/ui";
@@ -162,14 +163,10 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const campaigns = useApi((api) => api.getCampaigns({ limit: 1, clientId: clientId ?? undefined, includeLatestMetrics: "false" }), [clientId], {
     key: "campaign-count",
   });
-  // The sidebar stays mounted across pages, so recount on every page change
+  // The sidebar stays mounted across pages, so recount on page changes
   // (campaigns are added by syncs, connects and the wizard elsewhere).
-  const pathname = usePathname();
   const approvals = useApprovalSummary();
-  const { refetch: recount } = campaigns;
-  useEffect(() => {
-    void recount();
-  }, [pathname, recount]);
+  useRefreshOnNavigate("campaign-count", campaigns.refetch);
 
   return (
     <div className="flex h-full flex-col gap-[22px] px-4 py-[22px]">

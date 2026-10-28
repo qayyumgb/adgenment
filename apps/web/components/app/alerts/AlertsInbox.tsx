@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { AlertOctagon, AlertTriangle, Bell, CheckCircle2, Info, X } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
+import { useRefreshOnNavigate } from "@/hooks/useRefreshOnNavigate";
 import { useApiClient, type AlertAction, type AlertSeverity, type AppAlert } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { timeAgo } from "@/lib/time";
@@ -200,12 +201,10 @@ function Inbox({ open, onClose, onChanged }: { open: boolean; onClose: () => voi
 /** The header bell: unread badge (red when something is critical) and the inbox. */
 export function AlertsButton({ size = 36 }: { size?: 36 | 38 }) {
   const [open, setOpen] = useState(false);
-  const pathname = usePathname();
   const summary = useApi((c) => c.getAlertSummary(), [], { key: "alert-summary" });
   const { refetch } = summary;
-  useEffect(() => {
-    void refetch();
-  }, [pathname, refetch]);
+  // Desktop and mobile bars both render the bell: one refresh per page change.
+  useRefreshOnNavigate("alert-summary", refetch);
   useEffect(() => {
     const t = setInterval(() => void refetch(), 5 * 60_000);
     return () => clearInterval(t);

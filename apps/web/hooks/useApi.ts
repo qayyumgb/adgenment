@@ -81,9 +81,14 @@ export function useApi<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
+  // `swr` is a new object every render; its bound `mutate` is stable per key.
+  // Depending on `swr` made `refetch` change each render, so callers that
+  // refetch in an effect looped whenever a request failed (each error
+  // re-rendered → new refetch → effect → request → error …).
+  const { mutate } = swr;
   const swrRefetch = useCallback(async () => {
-    await swr.mutate();
-  }, [swr]);
+    await mutate();
+  }, [mutate]);
 
   if (keyed) {
     return {

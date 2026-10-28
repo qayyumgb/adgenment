@@ -37,6 +37,8 @@ ENV NODE_ENV=production
 COPY --from=builder /app/apps/api/dist ./dist
 COPY --from=builder /app/apps/api/package.json ./package.json
 COPY --from=builder /app/apps/api/prisma ./prisma
+# Fonts for the PDF reports (C4b); read at runtime from ../../assets relative to dist/services.
+COPY --from=builder /app/apps/api/assets ./assets
 COPY --from=builder /app/node_modules ./node_modules
 EXPOSE 4000
 # Use 0.0.0.0 by default â€” node 20 + helmet honor whatever Express binds to,

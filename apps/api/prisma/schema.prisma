@@ -159,6 +159,8 @@ model Workspace {
   invites               Invite[]
   approvals             ApprovalRequest[]
   alerts                Alert[]
+  clientShares          ClientShare[]
+  reportSchedules       ReportSchedule[]
 
   @@index([ownerId])
 }
@@ -201,6 +203,8 @@ model Client {
   plans        Plan[]
   memberAccess MemberClientAccess[]
   approvals    ApprovalRequest[]
+  shares       ClientShare[]
+  reportSchedule ReportSchedule?
 
   @@index([workspaceId])
 }
@@ -952,4 +956,62 @@ model Alert {
 
   @@unique([workspaceId, dedupeKey])
   @@index([workspaceId, resolvedAt])
+}
+
+/// C4: a client's read-only portal link (no login). One active link per client;
+/// regenerating revokes the old one.
+model ClientShare {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  clientId      String
+  /// sha256 of the token in the link (lookup). The token itself is kept
+  /// encrypted so the link can be copied again.
+  tokenHash     String    @unique
+  tokenEnc      String
+  /// What the client sees: spend (with CPA and budget pacing), revenue (with ROAS), the campaign list.
+  showSpend     Boolean   @default(true)
+  showRevenue   Boolean   @default(true)
+  showCampaigns Boolean   @default(true)
+  createdById   String
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  lastViewedAt  DateTime?
+  viewCount     Int       @default(0)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+}
+
+/// C4b: a client's scheduled email report (one per client), sent at 09:00
+/// workspace time: WEEKLY on the workspace's first day of the week (the 7
+/// days before), MONTHLY on the 1st (the month before).
+model ReportSchedule {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  clientId      String    @unique
+  /// WEEKLY | MONTHLY
+  frequency     String    @default("WEEKLY")
+  recipients    String[]
+  showSpend     Boolean   @default(true)
+  showRevenue   Boolean   @default(true)
+  showCampaigns Boolean   @default(true)
+  attachPdf     Boolean   @default(true)
+  active        Boolean   @default(true)
+  /// Replies go to whoever set it up.
+  replyTo       String?
+  createdById   String
+  /// The period last sent ("2026-10-26" weekly, "2026-10" monthly): once per period.
+  lastPeriod    String?
+  lastSentAt    DateTime?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
 }

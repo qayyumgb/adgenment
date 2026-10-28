@@ -106,6 +106,9 @@ export function capabilityFor(method: string, path: string): Capability | null {
     if (read) return "view";
     return /^\/workspace\/(invites|members)/.test(path) || path === "/workspace/invite" ? "team" : "workspace";
   }
+  // Client portal (C4): the public report needs no role; managing links is an edit.
+  if (path.startsWith("/portal")) return null;
+  if (path.startsWith("/shares") || path.startsWith("/reports")) return read ? "view" : "edit";
   // Alerts inbox (C2): everyone reads and marks seen; dismissing is an edit.
   if (path.startsWith("/alerts")) return read || path === "/alerts/seen" ? "view" : "edit";
   // Safety rules and automation settings (C14): everyone sees them; owners change them.

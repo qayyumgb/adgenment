@@ -485,6 +485,32 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-28 — C4b Scheduled client reports
+
+- **Schedule report** (Analytics) now works: per client, weekly or monthly at 09:00 workspace time, to up to 10 recipients.
+  - The email has the headline numbers, the top campaigns, an optional PDF and the live report link.
+  - It comes from "<agency> via Advertix", and replies go to the person who set it up.
+  - "Send me a test" sends it to you only.
+- It uses the same numbers and the same hide-spend / revenue / campaigns switches as the portal.
+- **Deploy:**
+  - adds `pdfkit`, so run `npm install` and commit `package-lock.json`;
+  - the Dockerfile copies `apps/api/assets` (fonts);
+  - schema change: `ReportSchedule`. Run `prisma db push` on production before the API deploy.
+
+### 2026-10-28 — Fix: request loop and rate limits
+
+- **`useApi` refetch is stable.** It depended on the SWR result object, which is new every render. Components that refetch in an effect (sidebar campaign count, approvals badge, alerts bell) looped whenever a request failed: error → render → new refetch → effect → request. That flooded the API into 429s and left pages stuck loading. It now uses SWR's bound `mutate`.
+- **`useRefreshOnNavigate`:** shared counts refresh once per page change per key, however many components show them, and at most every 20 s.
+- **Rate limit per user, not per IP:** an agency's team behind one office IP no longer shares 2,000 requests per 15 minutes. A 10,000 per IP ceiling backs it up. Requests without a session are still limited per IP (IPv6-safe).
+
+### 2026-10-28 — C4a Client portal
+
+- **Share report** (Analytics): a read-only link per client that opens without a login (`/portal/<token>`).
+  - **What it shows:** KPIs vs the previous period, the month's budget, a daily chart and campaigns, for 7, 30 or 90 days.
+  - **Your controls:** whether spend, revenue and the campaign list are shown (hidden numbers aren't sent at all), the expiry, New link and Turn off. The dialog also shows the visit count.
+- **Security:** the token is stored hashed and encrypted; the public route has its own rate limit.
+- **Schema change:** the `ClientShare` model. Run `prisma db push` on production before the API deploy.
+
 ### 2026-10-28 — C2 Alerts inbox
 
 - **The header bell works.** Its badge counts new alerts and turns red when one is critical. The panel groups alerts by campaign, account or client, with one-click fixes: Reconnect, Sync now, Pause, Undo, Open Budgets or Connections.

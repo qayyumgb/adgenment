@@ -24,6 +24,8 @@ import connectionsRouter from "./connections";
 import approvalsRouter from "./approvals";
 import automationRouter from "./automation";
 import alertsRouter from "./alerts";
+import { publicPortalRouter, sharesRouter } from "./portal";
+import reportsRouter from "./reports";
 import { roleGuard } from "../lib/access";
 import { approvalGate, registerApprovalReplay } from "../services/approvals.service";
 
@@ -59,6 +61,10 @@ router.use("/invites", invitesRouter);
 router.use("/approvals", approvalsRouter);
 router.use("/automation", automationRouter);
 router.use("/alerts", alertsRouter);
+router.use("/shares", sharesRouter);
+router.use("/reports", reportsRouter);
+// Public (C4): the client portal; the token in the link is the only key.
+router.use("/portal", publicPortalRouter);
 
 // Approving replays the held request through this same router.
 registerApprovalReplay(router);
