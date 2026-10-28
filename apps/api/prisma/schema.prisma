@@ -393,6 +393,14 @@ model Campaign {
   /// The saved AI plan (and its version) this draft was created from (A12).
   planId             String?
   planVersion        Int?
+  /// Auto-pause (C6), Meta only. Checked hourly with the safety rules; each
+  /// pause is a RULE change-log entry with 7-day Undo.
+  /// Pause once lifetime spend reaches this (account currency). Null = off.
+  spendCap           Decimal?  @db.Decimal(12, 2)
+  /// Days to stay paused, in the workspace time zone: [{ from, to, label? }] (YYYY-MM-DD).
+  blackouts          Json?
+  /// Pause while the account's pixel is silent, resume when it fires (the C14 rule, for this campaign).
+  pauseOnTrackingLoss Boolean  @default(false)
 
   workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   adAccount   AdAccount         @relation(fields: [adAccountId], references: [id], onDelete: Cascade)

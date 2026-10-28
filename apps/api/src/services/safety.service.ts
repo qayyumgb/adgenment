@@ -6,6 +6,7 @@ import { budgetBlocker, setDailyBudget, setStatus, statusBlocker, type CampaignW
 import { computePacing } from "./pacing.service";
 import { notifyMembers } from "./notifications.service";
 import { suggestionsService, type SetBudgetPayload } from "./suggestions.service";
+import { autoPauseWorkspaceWhere, runAutoPause } from "./auto-pause.service";
 
 /**
  * Safety rules (plan C14), opt-in per client in Settings › AI & automation:
@@ -37,8 +38,8 @@ export const PIXEL_SILENT_MS = 24 * HOUR;
 const CAP_FROM_DAY = 5;
 const CONVERSION_GOALS = new Set(["OFFSITE_CONVERSIONS", "VALUE"]);
 
-type Rule = "PIXEL" | "CAP";
-type Done = { clientId: string; line: string; key: string };
+export type Rule = "PIXEL" | "CAP" | "SPEND_CAP" | "BLACKOUT";
+export type Done = { clientId: string | null; line: string; key: string };
 
 const money = (n: number, c: string | null) => {
   try {
@@ -49,7 +50,7 @@ const money = (n: number, c: string | null) => {
 };
 
 /** Rule entries for these campaigns in this episode, newest first. */
-async function ruleEntries(campaignIds: string[], rule: Rule, episode: string) {
+export async function ruleEntries(campaignIds: string[], rule: Rule, episode: string) {
   if (!campaignIds.length) return [];
   const rows = await prisma.changeLog.findMany({ where: { campaignId: { in: campaignIds }, actorType: "RULE" }, orderBy: { createdAt: "desc" } });
   return rows.filter((r) => {
@@ -60,10 +61,17 @@ async function ruleEntries(campaignIds: string[], rule: Rule, episode: string) {
 
 /* ── Pixel ───────────────────────────────────────────────────────────────── */
 
-async function pixelRule(workspaceId: string, clientId: string, now: Date): Promise<Done[]> {
-  const accounts = await prisma.adAccount.findMany({ where: { workspaceId, clientId, platform: "META", isActive: true, archivedAt: null } });
+/**
+ * The pixel rule for a client's conversion campaigns, or (`only`) for just the
+ * campaigns that turned on "Pause if tracking stops" (C6) whatever their goal.
+ */
+export async function pixelRule(workspaceId: string, clientId: string | null, now: Date, only?: Set<string>): Promise<Done[]> {
+  const accounts = only
+    ? await prisma.adAccount.findMany({ where: { workspaceId, platform: "META", isActive: true, archivedAt: null, campaigns: { some: { id: { in: [...only] } } } } })
+    : await prisma.adAccount.findMany({ where: { workspaceId, clientId, platform: "META", isActive: true, archivedAt: null } });
   const done: Done[] = [];
   for (const account of accounts) {
+    const accountClient = account.clientId;
     let pixels;
     try {
       pixels = await metaService.getPixels(metaService.decryptToken(account.accessToken), account.accountId);
@@ -84,7 +92,7 @@ async function pixelRule(workspaceId: string, clientId: string, now: Date): Prom
     })) as (CampaignWithAccount & { adSets: { optimizationGoal: string | null }[] })[];
 
     if (silent) {
-      const targets = campaigns.filter((c) => c.status === "ACTIVE" && c.adSets.some((s) => CONVERSION_GOALS.has(s.optimizationGoal ?? "")) && !statusBlocker(c));
+      const targets = campaigns.filter((c) => c.status === "ACTIVE" && (only ? only.has(c.id) : c.adSets.some((s) => CONVERSION_GOALS.has(s.optimizationGoal ?? ""))) && !statusBlocker(c));
       const earlier = await ruleEntries(targets.map((c) => c.id), "PIXEL", episode);
       for (const c of targets) {
         if (earlier.some((e) => e.campaignId === c.id)) continue; // paused already this outage, or someone undid it
@@ -94,12 +102,12 @@ async function pixelRule(workspaceId: string, clientId: string, now: Date): Prom
           console.error(`[safety] pause ${c.id}:`, err instanceof Error ? err.message : err);
           continue;
         }
-        await changeLog.record({ workspaceId, campaignId: c.id, campaignName: c.name, clientId, action: "campaign.status", before: { status: "ACTIVE" }, after: { status: "PAUSED", rule: "PIXEL", episode }, actorType: "RULE", platformPushed: true, note: "(safety rule: the pixel stopped firing)" });
-        done.push({ clientId, key: `pixel:${c.id}:${episode}:pause`, line: `Paused <strong>${escapeHtml(c.name)}</strong>: no pixel event on ${escapeHtml(account.accountName)} since ${new Date(last).toUTCString().slice(5, 22)} UTC` });
+        await changeLog.record({ workspaceId, campaignId: c.id, campaignName: c.name, clientId: accountClient, action: "campaign.status", before: { status: "ACTIVE" }, after: { status: "PAUSED", rule: "PIXEL", episode }, actorType: "RULE", platformPushed: true, note: "(safety rule: the pixel stopped firing)" });
+        done.push({ clientId: accountClient, key: `pixel:${c.id}:${episode}:pause`, line: `Paused <strong>${escapeHtml(c.name)}</strong>: no pixel event on ${escapeHtml(account.accountName)} since ${new Date(last).toUTCString().slice(5, 22)} UTC` });
       }
     } else {
       // Firing again: resume what this rule paused in earlier outages, if it's still as the rule left it.
-      const paused = campaigns.filter((c) => c.status === "PAUSED");
+      const paused = campaigns.filter((c) => c.status === "PAUSED" && (!only || only.has(c.id)));
       for (const c of paused) {
         const latest = await prisma.changeLog.findFirst({ where: { campaignId: c.id, action: "campaign.status" }, orderBy: { createdAt: "desc" } });
         const a = (latest?.after ?? {}) as Record<string, unknown>;
@@ -110,8 +118,8 @@ async function pixelRule(workspaceId: string, clientId: string, now: Date): Prom
           console.error(`[safety] resume ${c.id}:`, err instanceof Error ? err.message : err);
           continue;
         }
-        await changeLog.record({ workspaceId, campaignId: c.id, campaignName: c.name, clientId, action: "campaign.status", before: { status: "PAUSED" }, after: { status: "ACTIVE", rule: "PIXEL", episode: String(a.episode), resumed: true }, actorType: "RULE", platformPushed: true, note: "(safety rule: the pixel is firing again)" });
-        done.push({ clientId, key: `pixel:${c.id}:${String(a.episode)}:resume`, line: `Resumed <strong>${escapeHtml(c.name)}</strong>: the pixel on ${escapeHtml(account.accountName)} is firing again` });
+        await changeLog.record({ workspaceId, campaignId: c.id, campaignName: c.name, clientId: accountClient, action: "campaign.status", before: { status: "PAUSED" }, after: { status: "ACTIVE", rule: "PIXEL", episode: String(a.episode), resumed: true }, actorType: "RULE", platformPushed: true, note: "(safety rule: the pixel is firing again)" });
+        done.push({ clientId: accountClient, key: `pixel:${c.id}:${String(a.episode)}:resume`, line: `Resumed <strong>${escapeHtml(c.name)}</strong>: the pixel on ${escapeHtml(account.accountName)} is firing again` });
       }
     }
   }
@@ -234,6 +242,12 @@ export async function runSafetyRules(workspaceId: string, now = new Date()): Pro
       console.error(`[safety] client ${c.id}:`, err instanceof Error ? err.message : err);
     }
   }
+  // Auto-pause (C6): per-campaign spend caps, blackout dates, tracking.
+  try {
+    done.push(...(await runAutoPause(workspaceId, new Set(clients.filter((c) => c.safetyPixel).map((c) => c.id)), now)));
+  } catch (err) {
+    console.error("[auto-pause] workspace", workspaceId, err instanceof Error ? err.message : err);
+  }
   for (const d of done) {
     await notifyMembers(
       workspaceId,
@@ -241,7 +255,7 @@ export async function runSafetyRules(workspaceId: string, now = new Date()): Pro
       "SAFETY",
       { key: d.key, clientId: d.clientId, line: d.line },
       "Advertix changed a campaign on its own",
-      `Your automation in ${escapeHtml(ws.name)} (safety rules or auto-apply) acted on its own. You can undo it for 7 days in Activity:`,
+      `Your automation in ${escapeHtml(ws.name)} (safety rules, auto-pause or auto-apply) acted on its own. You can undo it for 7 days in Activity:`,
       { label: "Review in Activity", path: "/activity" }
     ).catch((err) => console.error("[safety] email:", err instanceof Error ? err.message : err));
   }
@@ -299,7 +313,10 @@ async function tick() {
   if (running) return;
   running = true;
   try {
-    const workspaces = await prisma.workspace.findMany({ where: { automationPaused: false, clients: { some: { OR: [{ safetyPixel: true }, { safetyCap: true }, { autoApply: true }] } } }, select: { id: true } });
+    const workspaces = await prisma.workspace.findMany({
+      where: { automationPaused: false, OR: [{ clients: { some: { OR: [{ safetyPixel: true }, { safetyCap: true }, { autoApply: true }] } } }, { campaigns: autoPauseWorkspaceWhere }] },
+      select: { id: true },
+    });
     for (const w of workspaces) {
       try {
         await runSafetyRules(w.id);

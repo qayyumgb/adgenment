@@ -193,8 +193,8 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C3 ✅ | **F5 Command palette (⌘K)** — clients, campaigns, actions; "Ask Advertix" needs `/ai/chat` (not yet) | B1 | S |
 | C4 ✅ | **F4 Client portal + D5 Scheduled reports** — share links (token, toggles), public read-only view, weekly PDF + email | B1, PDF rendering service | L |
 | C5 ✅ | **F7 Flight calendar** — `/calendar`: every client's launches and end dates on one timeline, overlap warnings, holiday markers | B1, SCHEDULED status | M |
-| C6 | **F8 Schedule step** in the wizard (end date, smart-hours toggle, auto-pause rules) — auto-pause triggers later | C1, C2 engine | M (+L for triggers) |
-| C7 | **F6 Smart-hours heatmap** — hourly metrics sync, eligibility gate (14 days + 300 conversions), platform writers | C1, hourly sync, Google / TikTok write parity | L |
+| C6 ✅ | **F8 Schedule step** in the wizard (end date, auto-pause: spend cap, blackout dates, tracking stops; calendar warnings). Smart hours moved to C7; "Out of stock" needs Shopify (C18) | C1, C2 engine | M (+L for triggers) |
+| C7 | **F6 Smart-hours heatmap** — hourly metrics sync, eligibility gate (14 days + 300 conversions), platform writers; includes the wizard's Smart hours switch (moved from C6). Meta can only switch hours off, with a lifetime budget, not lower bids by hour | C1, hourly sync, Google / TikTok write parity | L |
 | C8 | **Snapchat connector** — or keep it "coming soon" everywhere | — | M |
 | C9 | **F3 Experiments** — tests with significance, scale the winner | B4, C1 | XL |
 | C10 | **Job queue** — BullMQ + Redis replaces the in-process `setInterval`; multi-platform sync, alerts, reports, scheduled budgets / launches | Adds a Redis service on Railway (≈ $1–3 / month extra) | M |
@@ -283,6 +283,12 @@ Not blocking the start, but needed before the named phase:
 
 Features built and covered by automated tests, but not yet tested end to end by hand. Tick one off once it has been tested locally and on production.
 
+- [ ] **Schedule step and auto-pause (C6)**, built 2026-10-28, not yet looked at in the browser. Needs `prisma db push` (3 Campaign fields):
+  - **Wizard step 2:** Run continuously / Set an end date (Total budget forces an end date); the day count; the Black Friday and overlap notes for Meta (try a start date of 25 Nov, and a goal matching a running campaign).
+  - **Pause automatically:** spend cap (an amount above zero), blackout dates (key-date chips for the campaign's dates, your own dates, remove), Tracking stops ("Already on" when the client's safety rule covers it). The review step's Auto-pause line; publishing keeps it (Settings tab shows it).
+  - **Acting (needs a live Meta campaign):** a blackout covering today pauses it on save; the next day after a blackout it turns back on; a spend cap already reached pauses it on save; raising the cap doesn't restart it. Each shows in Activity with Undo and sends the "changed a campaign on its own" email. Pause all automation stops it.
+  - **Roles:** analysts see the card read-only; limited members only for their clients.
+  - **Dates in the account's time zone** (fix, 2026-10-28): publish a campaign for tomorrow to the end of next week. In Ads Manager the ad set should start at 00:00 and end at 23:59 in the ad account's time zone.
 - [ ] **Flight calendar (`/calendar`, C5)**, built 2026-10-28, not yet looked at in the browser:
   - **Timeline:** a row per client; bars at the right dates for live, scheduled, draft, paused and ended campaigns; open-ended bars fade out; the Today line; 5 weeks / 3 months / 6 months; ‹ › and Today.
   - **Key dates:** Black Friday and Cyber Monday in orange; the Key dates menu hides retail, seasonal and cultural dates and remembers the choice.
@@ -1052,3 +1058,27 @@ C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the 
 - **API:** `GET /calendar?from=YYYY-MM-DD&to=YYYY-MM-DD&clientId=` (at most 400 days), in `services/calendar.service.ts`. It returns the campaigns, overlaps, peak launches, key dates and the count of undated drafts. **No schema change.**
 - **Shared:** `useApi` has a `keepPrevious` option (SWR `keepPreviousData`).
 - **Checks:** API test with 7 groups: key dates for 2026 and 2027 (Easter, Thanksgiving, Black Friday, Mother's Day, across the year end, no guessed lunar years); the window; phases and what's left out; overlaps; peak launches; client scope and shared audience; permissions. Typecheck and lint clean. **Not yet seen in the browser** (the dev server was off).
+
+### C6 — Schedule step and auto-pause ✅ (2026-10-28)
+
+- **Scope (decided 2026-10-28):** schedule plus auto-pause. Smart hours moved to **C7**, where the engine is: Meta can only switch hours off (with a lifetime budget), not lower bids by hour, so a switch now would do nothing. "Out of stock" needs Shopify (**C18**).
+- **Wizard, step 2 (Budget and schedule):**
+  - **Run continuously / Set an end date** (as the mockup) replaces the toggle; a total budget needs an end date; the end date shows the number of days.
+  - **Calendar notes** for the Meta campaign (`GET /calendar/check`): starts in **Black Friday week** (from 3 days before Thanksgiving to Cyber Monday), or **overlaps** a running or scheduled campaign on the same ad account with the same objective, with a link to the calendar.
+- **Pause automatically** (new card in step 2, Meta only; also on the campaign's **Settings** tab for published and synced Meta campaigns):
+  - **Spend reaches a cap:** pauses once lifetime spend (all synced days) reaches it. It's checked hourly, so it can go a little over. **It never restarts on its own:** after a cap pause a person turns it back on, so the extra spend goes through Approvals like any launch.
+  - **Blackout dates:** up to 20 periods, in the workspace time zone, with optional names. Chips suggest the key dates while it runs (Diwali, Christmas…). Paused on those days; **back on the day after** the blackout ends, unless someone changed it meanwhile.
+  - **Tracking stops:** the C14 pixel rule for just this campaign, whatever its goal (paused while the account's pixel has been silent 24 hours, resumed when it fires). When the client's own safety rule already covers it, the switch shows "Already on".
+  - **Saving checks at once:** a blackout covering today, or a cap already reached, pauses it on save (pauses only; turning on is a person's call).
+  - **The review step** shows an Auto-pause line ("Pauses at $1,000 spent, on Diwali · 8 Nov").
+- **Same machinery as the safety rules:**
+  - the hourly safety pass runs auto-pause too (`services/auto-pause.service.ts`);
+  - each action is a RULE change-log entry with a note and the 7-day Undo; an Undo means hands off for that episode;
+  - **Pause all automation** stops it;
+  - the same "Advertix changed a campaign on its own" email.
+- **API:**
+  - `PUT /campaigns/:id/auto-pause` (`routes/auto-pause.ts`, edit), with validation.
+  - `GET /calendar/check?adAccountId=&objective=&start=&end=&excludeId=` (view; limited members only for their clients).
+- **Fix (C5):** overlaps now match an objective under both its names (the wizard's "Conversions" and a synced campaign's "OUTCOME_SALES").
+- **Schema:** `Campaign.spendCap`, `blackouts` (JSON), `pauseOnTrackingLoss`. **Production needs `prisma db push`.**
+- **Checks:** API test with 7 groups (validation; spend cap; blackouts in the workspace time zone with resume the day after and a person's change winning; pause on save and Pause all; tracking for one campaign; the calendar check across objective names; permissions). C14, C13 and C5 tests still pass. Typecheck and lint clean. **Not yet seen in the browser** (the dev server was off).

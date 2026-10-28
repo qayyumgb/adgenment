@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { AlertTriangle, Check, ExternalLink } from "lucide-react";
+import { AlertTriangle, CalendarRange, Check, ExternalLink } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import type { AdAccount, Platform } from "@/lib/api";
+import { AutoPauseFields } from "@/components/app/campaign/AutoPauseFields";
 import { cn } from "@/lib/cn";
 import { currencySymbol } from "@/lib/money";
-import { ButtonLink, Card, PlatformBadge, Segmented, Toggle, type PlatformKey } from "@/components/app/ui";
+import { ButtonLink, Card, PlatformBadge, Segmented, type PlatformKey } from "@/components/app/ui";
 import { Step1Page, Step3Audience, Step5Creative } from "@/components/app/new-campaign/metaSteps";
-import { GOALS, WIZARD_PLATFORMS, hasMeta, scheduleCheck, type Draft } from "./model";
+import { GOALS, WIZARD_PLATFORMS, hasMeta, scheduleCheck, todayStr, type Draft } from "./model";
 
 export const fieldInput =
   "h-10 w-full rounded-ctl border border-line-2 bg-surface px-3 text-sm text-ink outline-none transition-colors focus:border-brand focus:ring-[3px] focus:ring-brand-soft disabled:opacity-60";
@@ -140,6 +141,19 @@ export function PlatformsStep({
 }) {
   const sym = currencySymbol(currency);
   const s = scheduleCheck(draft, minDailyBudget, sym);
+  const goal = GOALS.find((g) => g.id === draft.goal);
+  const meta = hasMeta(draft);
+  const metaAccount = accounts.find((a) => a.id === draft.accountIds.META) ?? null;
+  // The calendar's read on these dates (C5/C6): Black Friday launch, overlapping campaigns, key dates.
+  const datesOk = !s.start && !s.end && !!draft.startDate;
+  const checkQ = useApi(
+    (c) => (metaAccount && goal && datesOk ? c.checkLaunch({ adAccountId: metaAccount.id, objective: goal.value, start: draft.startDate, end: draft.runContinuously ? null : draft.endDate, excludeId: draft.createdIds.META }) : Promise.resolve(null)),
+    [metaAccount?.id, goal?.value, draft.startDate, draft.runContinuously ? "" : draft.endDate, datesOk],
+    { key: "launch-check", keepPrevious: true }
+  );
+  const launchCheck = metaAccount && datesOk ? checkQ.data : null;
+  const safety = useApi((c) => (meta ? c.getSafetySettings() : Promise.resolve(null)), [meta], { key: "safety-settings" }).data;
+  const metaClient = safety?.clients.find((c) => c.id === metaAccount?.clientId);
   // An empty field isn't an error yet; the footer still says what's missing.
   const budgetError = draft.budgetInput.trim() ? s.budget : null;
   const byPlatform = (p: Platform) => accounts.filter((a) => a.platform === p && a.isActive);
@@ -272,27 +286,73 @@ export function PlatformsStep({
             </Field>
           </div>
         </div>
+        <div className="flex flex-col gap-1.5 text-sm font-medium">
+          Schedule
+          <Segmented
+            label="Schedule"
+            value={draft.runContinuously ? "always" : "end"}
+            onChange={(v) => patch({ runContinuously: v === "always", ...(v === "always" ? { endDate: "" } : {}) })}
+            options={[
+              { value: "always", label: "Run continuously", disabled: draft.budgetType === "LIFETIME" },
+              { value: "end", label: "Set an end date" },
+            ]}
+          />
+          <span className="text-xs font-normal text-ink-2">
+            {draft.runContinuously ? "Starts at 00:00 on the start date, with no end date: pause it whenever you like." : `Runs from 00:00 on the start date to 23:59 on the last day${draft.budgetType === "LIFETIME" ? " (a total budget needs an end date, so the platform can spread it)" : ""}.`}
+            {metaAccount?.timezone && ` Times are in the ad account's time zone (${metaAccount.timezone.replace(/_/g, " ")}).`}
+          </span>
+        </div>
         <div className="grid gap-4 min-[600px]:grid-cols-2">
           <Field label="Start date" error={s.start}>
-            <input type="date" value={draft.startDate} min={new Date().toISOString().slice(0, 10)} onChange={(e) => patch({ startDate: e.target.value })} className={fieldInput} />
+            <input type="date" value={draft.startDate} min={todayStr()} onChange={(e) => patch({ startDate: e.target.value })} className={fieldInput} />
           </Field>
-          <Field label="End date" error={s.end}>
-            <input type="date" value={draft.endDate} disabled={draft.runContinuously} min={draft.startDate} onChange={(e) => patch({ endDate: e.target.value })} className={fieldInput} />
-          </Field>
+          {!draft.runContinuously && (
+            <Field label="End date" error={s.end} hint={s.days ? `${s.days} day${s.days === 1 ? "" : "s"}` : undefined}>
+              <input type="date" value={draft.endDate} min={draft.startDate} onChange={(e) => patch({ endDate: e.target.value })} className={fieldInput} />
+            </Field>
+          )}
         </div>
-        <label className={cn("flex items-center gap-3 text-sm", draft.budgetType === "LIFETIME" && "opacity-60")}>
-          <Toggle
-            checked={draft.runContinuously}
-            disabled={draft.budgetType === "LIFETIME"}
-            onChange={(v) => patch({ runContinuously: v, ...(v ? { endDate: "" } : {}) })}
-            label="Run continuously"
-          />
-          <span>
-            <span className="font-medium">Run continuously</span>
-            <span className="block text-xs text-ink-2">{draft.budgetType === "LIFETIME" ? "A total budget needs an end date." : "No end date — pause it whenever you like."}</span>
-          </span>
-        </label>
+        {launchCheck && (launchCheck.peak || launchCheck.overlaps.length > 0) && (
+          <div className="flex flex-col gap-2">
+            {launchCheck.peak && (
+              <p className="m-0 rounded-ctl bg-warn-soft px-3.5 py-2.5 text-[13px] text-ink [text-wrap:pretty]">
+                <span className="font-semibold text-warn">Starts in Black Friday week. </span>
+                Ads cost the most from Thanksgiving to Cyber Monday, and a new campaign spends its first days learning. Starting a week or two earlier lets it settle before the peak.
+              </p>
+            )}
+            {launchCheck.overlaps.length > 0 && (
+              <p className="m-0 rounded-ctl bg-warn-soft px-3.5 py-2.5 text-[13px] text-ink [text-wrap:pretty]">
+                <span className="font-semibold text-warn">
+                  Overlaps with {launchCheck.overlaps.length === 1 ? "a running" : `${launchCheck.overlaps.length} running`} {goal?.name.toLowerCase()} campaign{launchCheck.overlaps.length === 1 ? "" : "s"}{" "}
+                </span>
+                on {metaAccount?.accountName}: {launchCheck.overlaps.slice(0, 3).map((o) => `“${o.name}”`).join(", ")}
+                {launchCheck.overlaps.length > 3 ? ` and ${launchCheck.overlaps.length - 3} more` : ""}. If they reach the same people they bid against each other, so check the audiences or add this to the existing campaign.{" "}
+                <Link href="/calendar" className="inline-flex items-center gap-1 font-semibold text-brand no-underline hover:underline">
+                  <CalendarRange size={13} aria-hidden="true" /> See the calendar
+                </Link>
+              </p>
+            )}
+          </div>
+        )}
       </StepCard>
+
+      {meta && (
+        <StepCard title="Pause automatically" sub="Optional, for the Meta campaign. Advertix checks every hour, and each pause shows in Activity with Undo.">
+          <AutoPauseFields
+            value={draft.autoPause}
+            onChange={(autoPause) => patch({ autoPause })}
+            currencySymbol={sym}
+            trackingRelevant={!!goal?.needsPixel}
+            trackingCoveredBy={metaClient?.pixel && goal?.needsPixel ? metaClient.name : null}
+            keyDates={launchCheck?.keyDates ?? []}
+            minDate={draft.startDate || todayStr()}
+            maxDate={draft.runContinuously ? undefined : draft.endDate || undefined}
+          />
+          {safety?.automationPaused && (
+            <p className="m-0 text-xs font-medium text-warn">Automation is paused for this workspace (Settings › AI &amp; automation), so these won&apos;t act until it&apos;s turned back on.</p>
+          )}
+        </StepCard>
+      )}
     </div>
   );
 }

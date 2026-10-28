@@ -13,6 +13,7 @@ import { metaService, type MetaTargeting } from "../services/meta.service";
 import { isMetaError, friendlyMetaError } from "../lib/meta-errors";
 import { changeLog } from "../services/change-log.service";
 import { syncService } from "../services/sync.service";
+import { metaEndTime, metaStartTime } from "../lib/schedule-time";
 
 /** Pull a just-published / launched campaign's ad sets and ads (B4). Never blocks the response. */
 function refreshStructure(campaignId: string) {
@@ -456,11 +457,12 @@ router.put("/:id", async (req: Request, res: Response, next: NextFunction) => {
             ...(budgetChanged && effectiveBudgetType === "LIFETIME"
               ? { lifetimeBudget: n }
               : {}),
+            // Calendar days → 00:00 / 23:59:59 in the ad account's time zone.
             ...(startChanged
-              ? { startTime: parseDate(startDate)?.toISOString() }
+              ? { startTime: metaStartTime(parseDate(startDate), existing.adAccount.timezone) }
               : {}),
             ...(endChanged
-              ? { endTime: parseDate(endDate)?.toISOString() }
+              ? { endTime: metaEndTime(parseDate(endDate), existing.adAccount.timezone) }
               : {}),
           });
         } else if (budgetChanged) {
@@ -1228,14 +1230,12 @@ router.post(
         status: "PAUSED",
         dailyBudget,
         lifetimeBudget,
-        // Meta rejects a start_time in the past. A campaign drafted last week
-        // and published today would fail on its own stored start date, so
-        // clamp to "now" and let Meta schedule from publish time.
-        startTime:
-          campaign.startDate && campaign.startDate.getTime() > Date.now()
-            ? campaign.startDate.toISOString()
-            : undefined,
-        endTime: campaign.endDate?.toISOString(),
+        // 00:00 on the start day and 23:59:59 on the last day, in the ad
+        // account's time zone (lib/schedule-time). Meta rejects a start_time
+        // in the past, so a start that has passed is left out and Meta
+        // starts it from publish time.
+        startTime: metaStartTime(campaign.startDate, campaign.adAccount.timezone),
+        endTime: metaEndTime(campaign.endDate, campaign.adAccount.timezone),
         promotedPageId: pageId,
         promotedPixelId,
       });

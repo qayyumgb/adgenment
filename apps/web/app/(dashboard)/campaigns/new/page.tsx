@@ -15,7 +15,8 @@ import { useClientScope } from "@/components/app/shell/ClientContext";
 import { useAccess } from "@/components/app/team/access";
 import { Button, ButtonLink, Skeleton } from "@/components/app/ui";
 import { audienceToState, buildPublishPayload, initialState, targetingToState } from "@/components/app/new-campaign/metaSteps";
-import { AUTOSAVE_KEY, GOALS, WIZARD_PLATFORMS, budgetOf, emptyDraft, hasMeta, stepValid, type Draft } from "@/components/app/new-campaign/model";
+import { AUTOSAVE_KEY, GOALS, WIZARD_PLATFORMS, budgetOf, emptyDraft, hasMeta, stepValid, todayStr, type Draft } from "@/components/app/new-campaign/model";
+import { autoPauseFromCampaign, isAutoPauseOn, toAutoPause } from "@/components/app/campaign/AutoPauseFields";
 import { AdsStep, AudienceStep, GoalStep, PlatformsStep } from "@/components/app/new-campaign/steps";
 import { DoneScreen, ReviewStep, SidePanel, type LaunchResult } from "@/components/app/new-campaign/review";
 
@@ -103,9 +104,10 @@ export default function NewCampaignPage() {
         accountIds: { [c.platform]: c.adAccountId },
         budgetType: c.budgetType,
         budgetInput: String(Number(c.budget) || ""),
-        startDate: c.startDate && c.startDate.slice(0, 10) >= new Date().toISOString().slice(0, 10) ? c.startDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        startDate: c.startDate && c.startDate.slice(0, 10) >= todayStr() ? c.startDate.slice(0, 10) : todayStr(),
         endDate: c.endDate ? c.endDate.slice(0, 10) : "",
         runContinuously: !c.endDate,
+        autoPause: autoPauseFromCampaign(c),
         meta: { ...initialState({ headline: c.name }), ...targetingToState(c.targeting as Parameters<typeof targetingToState>[0]) },
         createdIds: { [c.platform]: c.id },
       });
@@ -187,12 +189,20 @@ export default function NewCampaignPage() {
           setDraft((d) => ({ ...d, createdIds: { ...d.createdIds, [p]: c.id } }));
         }
       }
+      // Auto-pause (C6) is saved before publishing, so it's on from the first minute.
+      const autoPause = toAutoPause(draft.autoPause);
+      const withAutoPause = created.META && (isAutoPauseOn(draft.autoPause) || draft.createdIds.META);
+      if (withAutoPause) await api.setAutoPause(created.META!, autoPause);
       const result: LaunchResult = [];
       for (const p of draft.platforms) {
         const id = created[p]!;
         if (p === "META" && draft.launch !== "draft") {
           const res = await api.publishCampaignToMeta(id, buildPublishPayload(draft.meta));
-          if (draft.launch === "start") await api.launchCampaign(id, "ACTIVE");
+          if (draft.launch === "start") {
+            await api.launchCampaign(id, "ACTIVE");
+            // Check it now it's live (a blackout today pauses it straight away); the hourly pass would catch it anyway.
+            if (isAutoPauseOn(draft.autoPause)) await api.setAutoPause(id, autoPause).catch(() => undefined);
+          }
           const acct = accounts.find((a) => a.id === draft.accountIds.META);
           result.push({
             campaignId: id,

@@ -76,6 +76,25 @@ export interface SafetySettings {
   clients: { id: string; name: string; pixel: boolean; cap: boolean; autoApply: boolean; askFirst: boolean; hasMonthlyBudget: boolean }[];
 }
 
+/* Auto-pause (C6) */
+export interface Blackout {
+  /** YYYY-MM-DD, in the workspace time zone. */
+  from: string;
+  to: string;
+  label?: string;
+}
+export interface AutoPause {
+  spendCap: number | null;
+  blackouts: Blackout[];
+  pauseOnTrackingLoss: boolean;
+}
+export interface LaunchCheck {
+  overlaps: { id: string; name: string; start: string | null; end: string | null }[];
+  /** Starts in (or just before) Black Friday week. */
+  peak: { from: string; to: string } | null;
+  keyDates: KeyDate[];
+}
+
 /* Flight calendar (C5) */
 export type FlightPhase = "live" | "scheduled" | "paused" | "draft" | "ended";
 export interface Flight {
@@ -563,6 +582,10 @@ export interface Campaign {
   publishError?: string | null;
   startDate: string | null;
   endDate: string | null;
+  /** Auto-pause (C6), Meta only. Decimal → string from the API. */
+  spendCap?: string | number | null;
+  blackouts?: Blackout[] | null;
+  pauseOnTrackingLoss?: boolean;
   targeting: unknown;
   /** Range-level unique reach (last 30d) from Meta. NOT summed from daily
    *  metrics (reach is de-duplicated) — matches the figure Ads Manager shows. */
@@ -1598,6 +1621,12 @@ export function useApiClient() {
     /* Alerts inbox (C2) */
     getAlerts: (state: "open" | "resolved" = "open", refresh = false) => apiFetch<{ alerts: AppAlert[]; refreshedAt: string }>(`/alerts?state=${state}${refresh ? "&refresh=1" : ""}`),
     getAlertSummary: () => apiFetch<AlertSummary>("/alerts/summary"),
+    setAutoPause: (campaignId: string, data: AutoPause) =>
+      apiFetch<{ autoPause: AutoPause; status: CampaignStatus; acted: string[] }>(`/campaigns/${campaignId}/auto-pause`, { method: "PUT", body: JSON.stringify(data) }),
+    checkLaunch: (q: { adAccountId: string; objective: string; start: string; end?: string | null; excludeId?: string | null }) =>
+      apiFetch<LaunchCheck>(
+        `/calendar/check?${new URLSearchParams({ adAccountId: q.adAccountId, objective: q.objective, start: q.start, ...(q.end ? { end: q.end } : {}), ...(q.excludeId ? { excludeId: q.excludeId } : {}) })}`
+      ),
     getCalendar: (from: string, to: string, clientId?: string | null) =>
       apiFetch<FlightCalendar>(`/calendar?from=${from}&to=${to}${clientId ? `&clientId=${encodeURIComponent(clientId)}` : ""}`),
     markAlertsSeen: () => apiFetch<{ ok: boolean }>("/alerts/seen", { method: "POST" }),

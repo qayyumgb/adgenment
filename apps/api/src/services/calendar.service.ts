@@ -2,6 +2,7 @@ import type { CampaignStatus, Platform, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { campaignClientWhere } from "../lib/clients";
 import { keyDates, peakWindow, type KeyDate } from "../lib/key-dates";
+import { metaService } from "./meta.service";
 
 /**
  * Flight calendar (plan C5): every client's campaigns on one timeline, with
@@ -61,12 +62,20 @@ function phaseOf(status: CampaignStatus, start: Date, end: Date | null, now: Dat
   return start > now ? "scheduled" : "live";
 }
 
+/**
+ * One name per objective: the wizard stores "Conversions", a synced Meta
+ * campaign "OUTCOME_SALES". Other platforms keep their own value.
+ */
+export function objectiveKey(platform: Platform, objective: string) {
+  return platform === "META" ? metaService.mapObjectiveToMeta(objective) : objective.trim().toUpperCase();
+}
+
 /** Same ad account, same objective, running at once: they compete in the same auctions. */
 export function findOverlaps(flights: Flight[]): Overlap[] {
   const groups = new Map<string, Flight[]>();
   for (const f of flights) {
     if (f.phase !== "live" && f.phase !== "scheduled") continue;
-    const key = `${f.adAccountId}|${f.platform}|${f.objective.toUpperCase()}`;
+    const key = `${f.adAccountId}|${f.platform}|${objectiveKey(f.platform, f.objective)}`;
     groups.set(key, [...(groups.get(key) ?? []), f]);
   }
   const out: Overlap[] = [];
@@ -96,7 +105,7 @@ export function findOverlaps(flights: Flight[]): Overlap[] {
       out.push({
         clientId: run[0].clientId,
         platform: run[0].platform,
-        objective: run[0].objective,
+        objective: objectiveKey(run[0].platform, run[0].objective),
         adAccountName: run[0].adAccountName,
         campaignIds: run.map((f) => f.id),
         from: new Date(from).toISOString(),
@@ -248,4 +257,40 @@ export async function flightCalendar(workspaceId: string, clientId: string | nul
     undatedDrafts: undated,
     truncated,
   };
+}
+
+/**
+ * The calendar's read on a campaign being planned (C6, the wizard's schedule):
+ * does it launch into Black Friday week, which running or scheduled campaigns
+ * on the same ad account with the same objective would overlap it, and the
+ * key dates it runs through (for blackout suggestions).
+ */
+export async function launchCheck(workspaceId: string, input: { adAccountId: string; objective: string; start: string; end: string | null; excludeId?: string | null }, now = new Date()) {
+  const account = await prisma.adAccount.findFirst({ where: { id: input.adAccountId, workspaceId }, select: { id: true, platform: true, clientId: true } });
+  if (!account) throw Object.assign(new Error("Ad account not found"), { status: 404 });
+  const start = new Date(`${input.start}T00:00:00Z`);
+  // The day after the last day; no end = open.
+  const end = input.end ? new Date(Date.parse(`${input.end}T00:00:00Z`) + DAY) : null;
+  const key = objectiveKey(account.platform, input.objective);
+  const rows = await prisma.campaign.findMany({
+    where: {
+      adAccountId: account.id,
+      status: "ACTIVE",
+      ...(input.excludeId ? { id: { not: input.excludeId } } : {}),
+      OR: [{ endDate: null }, { endDate: { gt: start > now ? start : now } }],
+      ...(end ? { AND: [{ OR: [{ startDate: null }, { startDate: { lt: end } }] }] } : {}),
+    },
+    select: { id: true, name: true, objective: true, startDate: true, endDate: true },
+    orderBy: { startDate: "asc" },
+    take: 50,
+  });
+  const overlaps = rows
+    .filter((c) => objectiveKey(account.platform, c.objective) === key)
+    .map((c) => ({ id: c.id, name: c.name, start: c.startDate?.toISOString() ?? null, end: c.endDate?.toISOString() ?? null }));
+  const peak = peakWindow(start.getUTCFullYear());
+  const peakFrom = new Date(Date.parse(`${peak.from}T00:00:00Z`) - 3 * DAY).toISOString().slice(0, 10);
+  const inPeak = input.start >= peakFrom && input.start <= peak.to;
+  // Key dates while it runs (no end: the next 3 months).
+  const lastDay = input.end ?? new Date(start.getTime() + 90 * DAY).toISOString().slice(0, 10);
+  return { overlaps, peak: inPeak ? peak : null, keyDates: keyDates(input.start, lastDay) };
 }

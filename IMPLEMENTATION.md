@@ -485,6 +485,29 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-28 — Fix: campaign dates in the ad account's time zone
+
+- **The bug:** the wizard saves dates as midnight UTC, and publishing sent them to Meta as is. A Pakistan account's campaign started at 05:00, a New York one the evening before, and an end date of 30 Nov stopped at the very start of 30 Nov. With a total budget, Meta then spread it over one day fewer than planned.
+- **Now:** a start date means 00:00 and an end date 23:59:59 on that day, in the **ad account's time zone**. This covers clock changes and half-hour zones; an unknown zone falls back to UTC. It's used when publishing and when changing the dates of a live campaign (`lib/schedule-time.ts`). Real times synced from Meta are sent unchanged.
+- **Wizard:**
+  - the schedule hint names the account's time zone;
+  - "Publish paused" warns that a future-dated campaign won't start until it's turned on;
+  - "today" is the viewer's own date (it was the UTC date, a day off near midnight).
+- **Test:** `schedule-time.test.ts` covers Karachi, New York either side of a clock change, Kolkata, Auckland, no or unknown zone, past starts, and real times.
+
+### 2026-10-28 — C6 Schedule step and auto-pause
+
+- **Wizard, step 2:** Run continuously / Set an end date, the day count, and calendar notes for Meta: starts in Black Friday week, or overlaps a running campaign with the same objective on the same ad account.
+- **Pause automatically** (wizard step 2 and the campaign's Settings tab, Meta only):
+  - a spend cap (never restarts on its own; a person turns it back on, through Approvals);
+  - blackout dates in the workspace time zone, with key-date suggestions, back on the day after;
+  - tracking stops (the C14 pixel rule for this campaign).
+  - Runs in the hourly safety pass, logged with Undo, emailed, and stopped by Pause all automation.
+- **API:** `PUT /campaigns/:id/auto-pause`, `GET /calendar/check`, `services/auto-pause.service.ts`; the C14 pixel rule can run for a set of campaigns.
+- **Fix:** the calendar's overlap check now treats "Conversions" and "OUTCOME_SALES" as the same objective.
+- **Schema:** `Campaign.spendCap`, `blackouts`, `pauseOnTrackingLoss` → `prisma db push` on production.
+- Smart hours moved to C7.
+
 ### 2026-10-28 — C5 Flight calendar
 
 - **New page: Calendar (`/calendar`).** Every client's campaigns on one timeline, following the client switcher. Live, scheduled, draft, paused and ended campaigns each have their own bar style, alongside today and the key dates. Zoom is 5 weeks, 3 months or 6 months. On phones it opens as a week-by-week list.

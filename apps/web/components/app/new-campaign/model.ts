@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import { Eye, Heart, MousePointerClick, ShoppingBag, UserPlus } from "lucide-react";
 import type { AnalyticsOverview, Platform } from "@/lib/api";
 import { initialState, isCreativeReady, validateAudience, type WizardState } from "@/components/app/new-campaign/metaSteps";
+import { autoPauseCheck, emptyAutoPause, type AutoPauseForm } from "@/components/app/campaign/AutoPauseFields";
 
 /** What the campaign is for. `value` is the string stored on the Campaign row (unchanged from the old create flow). */
 export type GoalId = "traffic" | "leads" | "conversions" | "awareness" | "video";
@@ -75,13 +76,19 @@ export type Draft = {
   startDate: string;
   endDate: string;
   runContinuously: boolean;
+  /** Auto-pause (C6), Meta only: spend cap, blackout dates, tracking stops. */
+  autoPause: AutoPauseForm;
   launch: LaunchMode;
   meta: WizardState;
   /** Campaign rows already created by a launch attempt that failed at publish — reused on retry (no duplicates). */
   createdIds: Partial<Record<Platform, string>>;
 };
 
-export const todayStr = () => new Date().toISOString().slice(0, 10);
+/** Today in the viewer's own calendar (toISOString would give the UTC date, a day off near midnight). */
+export const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
 export function emptyDraft(): Draft {
   return {
@@ -95,6 +102,7 @@ export function emptyDraft(): Draft {
     startDate: todayStr(),
     endDate: "",
     runContinuously: true,
+    autoPause: emptyAutoPause(),
     launch: "paused",
     meta: initialState(),
     createdIds: {},
@@ -132,7 +140,7 @@ export function scheduleCheck(d: Draft, minDailyBudget: number | null, sym = "")
   else if (d.startDate < todayStr()) start = "The start date can't be in the past.";
   let end: string | null = null;
   if (!d.runContinuously) {
-    if (!d.endDate) end = "Pick an end date, or switch on “Run continuously”.";
+    if (!d.endDate) end = "Pick an end date, or choose “Run continuously”.";
     else if (d.endDate <= d.startDate) end = "The end date has to be after the start date.";
   }
   if (d.budgetType === "LIFETIME" && d.runContinuously) end = "A total budget needs an end date so the platform can spread it.";
@@ -147,7 +155,7 @@ export function stepValid(d: Draft, step: number, minDailyBudget: number | null)
     case 1:
       return d.goal !== null;
     case 2:
-      return d.platforms.length > 0 && d.platforms.every((p) => !!d.accountIds[p]) && scheduleCheck(d, minDailyBudget).ok;
+      return d.platforms.length > 0 && d.platforms.every((p) => !!d.accountIds[p]) && scheduleCheck(d, minDailyBudget).ok && (!hasMeta(d) || autoPauseCheck(d.autoPause).ok);
     case 3:
       return !hasMeta(d) || validateAudience(d.meta).ok;
     case 4:

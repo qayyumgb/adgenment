@@ -8,8 +8,9 @@ import { cn } from "@/lib/cn";
 import { fmtMoney } from "@/lib/money";
 import { AiMark, ButtonLink, Card, PlatformBadge, type PlatformKey } from "@/components/app/ui";
 import { CTA_OPTIONS } from "@/components/app/new-campaign/metaSteps";
-import { GOALS, WIZARD_PLATFORMS, forecast, hasMeta, scheduleCheck, strength, type Draft, type LaunchMode } from "./model";
+import { GOALS, WIZARD_PLATFORMS, forecast, hasMeta, scheduleCheck, strength, todayStr, type Draft, type LaunchMode } from "./model";
 import { StepCard, fieldInput } from "./steps";
+import { autoPauseSummary } from "@/components/app/campaign/AutoPauseFields";
 
 const fmtDate = (iso: string) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—");
 const compact = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1000)}k` : Math.round(n).toLocaleString("en-US"));
@@ -50,11 +51,16 @@ export function ReviewStep({
   const others = draft.platforms.filter((p) => p !== "META");
   const asset = m.creativeType === "CAROUSEL" && m.carouselCards.length >= 2 ? `Carousel · ${m.carouselCards.length} cards` : m.videoId || m.videoUrl ? "Video" : m.imageHash || m.imageUrl ? "Image" : "—";
   const geo = [...m.countries, ...m.cities.map((c) => c.name)];
+  const future = draft.startDate > todayStr();
   const launchOpts: { id: LaunchMode; label: string; sub: string }[] = [
-    { id: "paused", label: "Publish paused", sub: "Created on Meta, nothing spends until you start it. Recommended." },
+    {
+      id: "paused",
+      label: "Publish paused",
+      sub: future ? `Created on Meta, but it won't start on ${fmtDate(draft.startDate)} until you turn it on.` : "Created on Meta, nothing spends until you start it. Recommended.",
+    },
     {
       id: "start",
-      label: draft.startDate > new Date().toISOString().slice(0, 10) ? `Publish and start on ${fmtDate(draft.startDate)}` : "Publish and start now",
+      label: future ? `Publish and start on ${fmtDate(draft.startDate)}` : "Publish and start now",
       sub: "Delivery begins after Meta's review, usually within an hour.",
     },
     { id: "draft", label: "Save as draft", sub: "Saved in Advertix only. Publish it later from the campaign." },
@@ -95,6 +101,7 @@ export function ReviewStep({
           />
           {meta && (
             <>
+              <Row label="Auto-pause" step={2} onEdit={onEdit} value={autoPauseSummary(draft.autoPause, (n) => fmtMoney(n, currency, { whole: n >= 100 }))} />
               <Row
                 label="Audience"
                 step={3}

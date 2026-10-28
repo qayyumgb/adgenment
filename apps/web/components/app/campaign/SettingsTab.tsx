@@ -8,12 +8,13 @@ import { currencySymbol } from "@/lib/money";
 import { cn } from "@/lib/cn";
 import { Button, Card, CardHeader } from "@/components/app/ui";
 import { isLiveOnMeta, isReadOnlySync } from "@/components/app/campaigns/useCampaignMutations";
+import { AutoPauseCard } from "./AutoPauseCard";
 
 const input =
   "h-10 w-full rounded-ctl border bg-surface px-3 text-sm text-ink outline-none transition-colors focus:border-brand focus:ring-[3px] focus:ring-brand-soft";
 
 /**
- * Settings (kept from the old detail page): rename, budget, delete. Saving a
+ * Settings (kept from the old detail page): rename, budget, auto-pause (C6), delete. Saving a
  * campaign that is live on Meta pushes the change to Meta first (PUT
  * /campaigns/:id), and a rejection leaves nothing changed.
  */
@@ -89,6 +90,8 @@ export function SettingsTab({ campaign: c, onSaved, onDelete }: { campaign: Camp
           </Button>
         </div>
       </Card>
+
+      {c.platform === "META" && <AutoPauseCard campaign={c} onSaved={onSaved} />}
 
       <Card className="flex flex-wrap items-center gap-4 border-neg/30">
         <div className="min-w-[220px] flex-1">
