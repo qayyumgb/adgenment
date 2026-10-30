@@ -4,6 +4,7 @@ import { EXTRAPOLATE, fitCurve, valueAt, type Curve } from "../lib/curves";
 import { adResults } from "../lib/ad-metrics";
 import { customAudienceIds } from "../lib/targeting";
 import { metaService } from "./meta.service";
+import { lessonsFor } from "./experiments.service";
 
 /**
  * The AI Planner (plan A12). Advertix reads one client's real accounts (last
@@ -76,6 +77,8 @@ export type PlannerContext = {
   fatigued: { ad: string; campaign: string; reason: string }[];
   shared: { audience: string; campaigns: string[] }[];
   month: { name: string; budget: number; spent: number; daysLeft: number } | null;
+  /** What this client's finished A/B tests showed (C9c), newest first. */
+  lessons: string[];
   /** What each reasoning step found, in words (the chat shows these). */
   steps: { performance: string; compare: string; checks: string };
 };
@@ -132,6 +135,7 @@ export async function plannerContext(workspaceId: string, requestedClientId: str
     fatigued: [],
     shared: [],
     month: null,
+    lessons: [],
     steps: { performance: "No client to read yet.", compare: "Nothing to compare.", checks: "Nothing to check." },
   };
   if (!client) return empty;
@@ -281,6 +285,7 @@ export async function plannerContext(workspaceId: string, requestedClientId: str
     fatigued,
     shared,
     month,
+    lessons: (await lessonsFor(workspaceId, client.id, 5).catch(() => [])).map((l) => l.lesson),
     steps,
   };
 }
@@ -436,6 +441,9 @@ function accountBlock(ctx: PlannerContext) {
     `Audiences used by more than one running campaign: ${ctx.shared.length ? "" : "none"}`,
     ...ctx.shared.map((s) => `- ${s.audience}: ${s.campaigns.map((c) => `"${c}"`).join(", ")}`),
     "",
+    `What this client's A/B tests showed: ${ctx.lessons.length ? "" : "no finished tests yet"}`,
+    ...ctx.lessons.map((l) => `- ${l}`),
+    "",
     ctx.month ? `${ctx.month.name} budget: ${m(ctx.month.budget)}, spent ${m(ctx.month.spent)}, ${ctx.month.daysLeft} days left.` : "No monthly budget is set for this client.",
   ];
   return lines.join("\n");
@@ -452,6 +460,7 @@ ${accountBlock(ctx)}
 
 How to work:
 - Ground the plan in this account. Build on what already returns well, name the campaigns and platforms you build on (set buildsOn to the existing campaign's exact name, or "" for something new), and leave fatigued ads out (say so in watchOuts with the reason given).
+- If past A/B tests are listed, build on what won (say which creative or audience style you're following in needs or reply) and don't repeat what lost.
 - Use only the connected platforms listed. If the brief needs one that isn't connected, plan without it and say so in reply.
 - Don't state forecast revenue, ROAS, CPA or result counts for your plan. Advertix computes the forecast from this client's history and shows it beside the plan. The user's own target is fine to repeat.
 - Budgets are in ${ctx.currency ?? "the account currency"}. Split the budget with share (percentages that add up to 100); every campaign's daily budget (budget × share / its active days) must stay at or above that platform's minimum daily budget. If a campaign shares an audience with another one listed above, mention the overlap in watchOuts.

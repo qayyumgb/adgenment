@@ -1,6 +1,7 @@
 import {
   BarChart3,
   CalendarRange,
+  FlaskConical,
   ClipboardCheck,
   Rocket,
   Image as ImageIcon,
@@ -37,6 +38,7 @@ export const WORKSPACE_NAV: NavItem[] = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Campaigns", href: "/campaigns", icon: Megaphone, count: "campaigns" },
   { label: "Calendar", href: "/calendar", icon: CalendarRange },
+  { label: "Experiments", href: "/experiments", icon: FlaskConical },
   { label: "Creatives", href: "/creatives", icon: ImageIcon },
   { label: "Audiences", href: "/audiences", icon: Users },
   { label: "Analytics", href: "/analytics", icon: BarChart3, match: ["/insights"] },

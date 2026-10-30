@@ -485,6 +485,21 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-30 — C9b + C9c Experiments: start tests, Scale the winner, lessons
+
+- **New test** on the Experiments page: pick a Meta campaign published from Advertix and 1–4 images or videos from Creatives. Advertix creates the new ads (same copy) and starts Meta's creative test, with a test budget and duration. If anything fails, it cleans up what it made.
+- **End test**, and **Scale the winner**: pauses the other versions and moves an ad-set version's daily budget to the winner. It goes through Approvals for media buyers and can be undone for 7 days.
+- **Lessons:** each finished test gets a "What it showed" line (pre-filled, editable). They're listed at the top of Experiments and given to the AI Planner.
+- Ad study calls use Graph `META_STUDIES_API_VERSION` (default v25.0).
+- **Schema:** `Experiment.createdById` / `createdAds` / `lesson` → `prisma db push` on production.
+
+### 2026-10-30 — C9a Experiments (reading A/B tests)
+
+- **New page: Experiments** (`/experiments`). It shows the Meta A/B tests on your ad accounts, including ones made in Ads Manager: each version's cost per result, the chance it's best, who's ahead, when it'll be clear, and the saving from ending early. You can judge by cost per purchase, cost per click or CTR.
+- **Sync:** tests are read after each Meta sync, from the ad account or its Business (`services/experiments.service.ts`, `lib/ab-stats.ts`).
+- **Plan:** C9 runs on Meta's own A/B tests, creatives first; Google, TikTok and LinkedIn experiments follow the same way once Advertix writes to them. C8 Snapchat stays "coming soon".
+- **Schema:** `Experiment`, `AdAccount.metaBusinessId` → `prisma db push` on production.
+
 ### 2026-10-30 — Fix: wizard budget check and stale drafts
 
 - **Total budget minimum counted by the hour, like Meta.** Meta needs more than the daily minimum × hours ÷ 24, in the ad account's time zone. A day with a clock change has 23 or 25 hours: for example, 31 Oct–1 Nov 2026 in Los Angeles is 49 hours, so PKR 278.12 a day needs more than PKR 567.83, not PKR 556.24. The wizard now checks that in step 2 (with a note when the clocks change), instead of Meta refusing it at publish.

@@ -16,6 +16,7 @@ import { changeLog } from "./change-log.service";
 import { metaService, type MetaAdCreativeInfo, type MetaCampaign } from "./meta.service";
 import { googleService, isGoogleAuthError } from "./google.service";
 import { tiktokService } from "./tiktok.service";
+import { syncAccountExperiments } from "./experiments.service";
 import { linkedinService } from "./linkedin.service";
 
 export type SyncResult = {
@@ -457,6 +458,13 @@ class SyncService {
       structure = await this.syncMetaStructure(adAccount, token, idMap, datePreset);
     } catch (err) {
       console.error("[sync:meta] ad sets / ads failed (non-fatal):", err instanceof Error ? err.message : err);
+    }
+
+    // 4b. A/B tests (Experiments, C9). Non-fatal: not every account can list them.
+    try {
+      await syncAccountExperiments(adAccount, token);
+    } catch (err) {
+      console.error("[sync:meta] experiments failed (non-fatal):", err instanceof Error ? err.message : err);
     }
 
     // 5. Stamp the successful sync so the UI can show "last synced" and the

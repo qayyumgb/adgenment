@@ -30,6 +30,7 @@ import { publicPortalRouter, sharesRouter } from "./portal";
 import reportsRouter from "./reports";
 import billingRouter from "./billing";
 import calendarRouter from "./calendar";
+import experimentsRouter, { campaignExperimentsRouter } from "./experiments";
 import { roleGuard } from "../lib/access";
 import { approvalGate, registerApprovalReplay } from "../services/approvals.service";
 
@@ -45,6 +46,7 @@ router.use("/campaigns", campaignRouter);
 router.use("/campaigns", campaignStructureRouter);
 router.use("/campaigns", autoPauseRouter);
 router.use("/campaigns", campaignHoursRouter);
+router.use("/campaigns", campaignExperimentsRouter);
 router.use("/analytics", analyticsRouter);
 router.use("/ai", aiRouter);
 router.use("/ad-accounts", adAccountRouter);
@@ -72,6 +74,7 @@ router.use("/reports", reportsRouter);
 router.use("/billing", billingRouter);
 router.use("/calendar", calendarRouter);
 router.use("/hours", hoursRouter);
+router.use("/experiments", experimentsRouter);
 // Public (C4): the client portal; the token in the link is the only key.
 router.use("/portal", publicPortalRouter);
 

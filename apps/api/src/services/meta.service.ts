@@ -9,6 +9,13 @@ import { encryptToken, decryptToken } from "../lib/crypto";
 import { createOAuthState } from "../lib/oauth-state";
 
 const GRAPH_BASE = "https://graph.facebook.com/v19.0";
+/**
+ * A/B tests (Experiments, C9) use a newer Graph version than the rest: Meta
+ * documents creative tests (SPLIT_TEST_V2) with current versions only. One
+ * app may call different versions per request. Override with
+ * META_STUDIES_API_VERSION (e.g. "v24.0").
+ */
+const STUDIES_BASE = `https://graph.facebook.com/${process.env.META_STUDIES_API_VERSION || "v25.0"}`;
 const FB_DIALOG = "https://www.facebook.com/v19.0/dialog/oauth";
 
 /** Matches the multer cap on the device-upload route so both paths agree. */
@@ -134,6 +141,25 @@ export interface MetaInsight {
 export interface MetaHourlyInsight extends MetaInsight {
   /** "13:00:00 - 13:59:59" */
   hourly_stats_aggregated_by_advertiser_time_zone?: string;
+}
+
+/** An A/B test or lift study (Experiments, C9). */
+export interface MetaAdStudy {
+  id: string;
+  name?: string;
+  type?: string;
+  start_time?: string;
+  end_time?: string;
+}
+/** One version of a study, and the objects it runs on. */
+export interface MetaAdStudyCell {
+  id: string;
+  name?: string;
+  treatment_percentage?: number | string;
+  campaigns?: { data?: { id: string }[] };
+  adsets?: { data?: { id: string }[] };
+  ads?: { data?: { id: string }[] };
+  adaccounts?: { data?: { id: string; account_id?: string }[] };
 }
 
 /** A block of an ad set's delivery schedule: minutes from midnight; days 0 = Sunday. */
@@ -629,6 +655,72 @@ class MetaAdsService {
       access_token: accessToken,
     });
     return this.graphFetchAll<MetaHourlyInsight>(`${GRAPH_BASE}/${this.accountPath(adAccountId)}/insights?${params.toString()}`);
+  }
+
+  /**
+   * A/B tests (Experiments, C9). Meta documents the list on the Business
+   * (`/{business_id}/ad_studies`); the ad account edge is tried first because
+   * it also covers accounts without a Business. Pass the path ("act_123" or a
+   * business id).
+   */
+  async getAdStudies(accessToken: string, ownerPath: string): Promise<MetaAdStudy[]> {
+    const params = new URLSearchParams({ fields: "id,name,type,start_time,end_time", limit: "100", access_token: accessToken });
+    return this.graphFetchAll<MetaAdStudy>(`${STUDIES_BASE}/${ownerPath}/ad_studies?${params.toString()}`);
+  }
+
+  /** A study's versions. `ads` (creative tests) isn't on every API version, so it falls back without it. */
+  async getAdStudyCells(accessToken: string, studyId: string): Promise<MetaAdStudyCell[]> {
+    const read = (fields: string) =>
+      this.graphFetchAll<MetaAdStudyCell>(`${STUDIES_BASE}/${studyId}/cells?${new URLSearchParams({ fields, limit: "50", access_token: accessToken }).toString()}`);
+    try {
+      return await read("id,name,treatment_percentage,campaigns{id},adsets{id},ads{id},adaccounts{id,account_id}");
+    } catch {
+      return read("id,name,treatment_percentage,campaigns{id},adsets{id},adaccounts{id,account_id}");
+    }
+  }
+
+  /**
+   * Start a creative A/B test (C9b): one ad per cell, 2–5 cells summing to
+   * 100%, and the test's own daily budget (account currency, sent in minor
+   * units). Times are unix seconds. `ownerId`: the Business id, or "me" for a
+   * personal ad account (Meta's user edge).
+   */
+  async createCreativeTest(
+    accessToken: string,
+    ownerId: string,
+    params: { name: string; description?: string; startTime: number; endTime: number; dailyBudget: number; cells: { name: string; percent: number; adId: string }[] }
+  ): Promise<{ id: string }> {
+    const body = new URLSearchParams({
+      access_token: accessToken,
+      name: params.name,
+      description: params.description ?? "Created from Advertix",
+      type: "SPLIT_TEST_V2",
+      start_time: String(params.startTime),
+      end_time: String(params.endTime),
+      cells: JSON.stringify(params.cells.map((c) => ({ name: c.name, treatment_percentage: c.percent, ads: [c.adId] }))),
+      creative_test_config: JSON.stringify({ daily_budget: Math.round(params.dailyBudget * 100) }),
+    });
+    return this.graphFetch<{ id: string }>(`${STUDIES_BASE}/${ownerId}/ad_studies`, { method: "POST", body });
+  }
+
+  /** End a test now (or move its end). `endTime` in unix seconds. */
+  async endAdStudy(accessToken: string, studyId: string, endTime: number): Promise<void> {
+    const body = new URLSearchParams({ access_token: accessToken, end_time: String(endTime) });
+    await this.graphFetch(`${STUDIES_BASE}/${studyId}`, { method: "POST", body });
+  }
+
+  /** The Facebook Page an ad's creative posts as (for campaigns Advertix didn't publish itself). */
+  async getCreativePageId(accessToken: string, creativeId: string): Promise<string | null> {
+    const params = new URLSearchParams({ fields: "actor_id,object_story_spec", access_token: accessToken });
+    const r = await this.graphFetch<{ actor_id?: string; object_story_spec?: { page_id?: string } }>(`${GRAPH_BASE}/${creativeId}?${params.toString()}`);
+    return r.object_story_spec?.page_id ?? r.actor_id ?? null;
+  }
+
+  /** The Business that owns an ad account, or null for a personal account. */
+  async getAdAccountBusinessId(accessToken: string, adAccountId: string): Promise<string | null> {
+    const params = new URLSearchParams({ fields: "business{id}", access_token: accessToken });
+    const r = await this.graphFetch<{ business?: { id?: string } }>(`${GRAPH_BASE}/${this.accountPath(adAccountId)}?${params.toString()}`);
+    return r.business?.id ?? null;
   }
 
   /** An ad set's hour schedule and budget (smart hours, C7). No schedule = runs around the clock. */

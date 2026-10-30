@@ -76,6 +76,63 @@ export interface SafetySettings {
   clients: { id: string; name: string; pixel: boolean; cap: boolean; autoApply: boolean; askFirst: boolean; hasMonthlyBudget: boolean }[];
 }
 
+/* Experiments (C9) */
+export type ExperimentGoal = "purchase" | "click" | "ctr";
+export interface ExperimentVersion {
+  name: string;
+  percent: number;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  revenue: number;
+  /** Cost per result, or CTR for the CTR goal. Null = no results yet. */
+  metric: number | null;
+  chanceBest: number;
+  leading: boolean;
+}
+export interface Experiment {
+  id: string;
+  externalId: string;
+  name: string;
+  type: string;
+  platform: Platform;
+  adAccount: { id: string; accountId: string; name: string; currency: string | null };
+  clientId: string | null;
+  clientName: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  status: "scheduled" | "running" | "ended";
+  day: number;
+  totalDays: number | null;
+  goal: ExperimentGoal;
+  goalChosen: boolean;
+  versions: ExperimentVersion[];
+  confidence: number;
+  conclusive: boolean;
+  /** Leader vs runner-up: how much cheaper (or higher CTR), 0.23 = 23%. */
+  lift: number | null;
+  expectedConclusive: string | null;
+  tooClose: boolean;
+  savedByEnding: number;
+  syncedAt: string;
+  /** Started from Advertix (C9b). */
+  createdInAdvertix: boolean;
+  /** Scale the winner (C9b): waiting (OPEN) or applied, with Undo for 7 days. */
+  scale: { suggestionId: string; status: "OPEN" | "APPLIED"; appliedAt: string | null; title: string } | null;
+  /** What the test showed (C9c): saved by a person, or Advertix's read once it ended. */
+  lesson: string | null;
+  suggestedLesson: string | null;
+}
+export interface ExperimentLesson {
+  id: string;
+  test: string;
+  clientName: string | null;
+  endTime: string | null;
+  lesson: string;
+  saved: boolean;
+}
+
 /* Smart hours (C7) */
 export interface HoursCell {
   weekday: number;
@@ -1683,6 +1740,14 @@ export function useApiClient() {
     /* Alerts inbox (C2) */
     getAlerts: (state: "open" | "resolved" = "open", refresh = false) => apiFetch<{ alerts: AppAlert[]; refreshedAt: string }>(`/alerts?state=${state}${refresh ? "&refresh=1" : ""}`),
     getAlertSummary: () => apiFetch<AlertSummary>("/alerts/summary"),
+    getExperiments: (clientId?: string | null) => apiFetch<{ experiments: Experiment[] }>(`/experiments${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`),
+    startExperiment: (campaignId: string, data: { name: string; creativeIds: string[]; days: number; dailyBudget: number }) =>
+      apiFetch<{ id: string }>(`/campaigns/${campaignId}/experiments`, { method: "POST", body: JSON.stringify(data) }),
+    endExperiment: (id: string) => apiFetch<{ ok: boolean }>(`/experiments/${id}/end`, { method: "POST" }),
+    scaleExperiment: (id: string, winner: number) => apiFetch<{ suggestionId: string; status: string }>(`/experiments/${id}/scale`, { method: "POST", body: JSON.stringify({ winner }) }),
+    setExperimentLesson: (id: string, lesson: string) => apiFetch<{ lesson: string | null }>(`/experiments/${id}/lesson`, { method: "PUT", body: JSON.stringify({ lesson }) }),
+    getExperimentLessons: (clientId?: string | null) => apiFetch<{ lessons: ExperimentLesson[] }>(`/experiments/lessons${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`),
+    setExperimentGoal: (id: string, goal: ExperimentGoal | "auto") => apiFetch<{ goal: ExperimentGoal | null }>(`/experiments/${id}/goal`, { method: "PUT", body: JSON.stringify({ goal }) }),
     getCampaignHours: (campaignId: string) => apiFetch<CampaignHours>(`/campaigns/${campaignId}/hours`),
     setSmartHours: (campaignId: string, on: boolean) => apiFetch<{ smartHours: boolean }>(`/campaigns/${campaignId}/smart-hours`, { method: "PUT", body: JSON.stringify({ on }) }),
     suggestHours: (campaignId: string) => apiFetch<{ suggestionId: string; status: string }>(`/campaigns/${campaignId}/hours/suggest`, { method: "POST" }),

@@ -85,6 +85,7 @@ const APP_ONLY_PREFIXES = [
   "/setup", // getting started (C11)
   "/activity",
   "/calendar", // flight calendar (C5)
+  "/experiments", // A/B tests (C9)
   "/sign-in",
   "/sign-up",
 ];

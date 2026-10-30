@@ -30,7 +30,7 @@ import type { MetaScheduleBlock } from "./meta.service";
 import { ALL_HOURS, sameSchedule } from "../lib/schedule-grid";
 
 export const CHANGE_UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-const UNDOABLE = new Set(["campaign.budget", "campaign.status", "campaign.rename", "adset.status", "adset.budget", "ad.status", "adset.schedule"]);
+const UNDOABLE = new Set(["campaign.budget", "campaign.status", "campaign.rename", "adset.status", "adset.budget", "ad.status", "adset.schedule", "experiment.scale"]);
 
 type CampaignLike = {
   id: string;
@@ -87,6 +87,14 @@ export function describe(action: string, before: Record<string, unknown> | null,
     }
     case "ad.status":
       return `${after?.status === "PAUSED" ? "Paused" : "Resumed"} ad “${after?.name ?? before?.name}”`;
+    case "experiment.create":
+      return `Started the A/B test “${after?.test}” (${after?.versions} versions, ${money(Number(after?.dailyBudget ?? 0), currency)} a day for ${after?.days} days)`;
+    case "experiment.end":
+      return `Ended the A/B test “${after?.test}”`;
+    case "experiment.scale": {
+      const moved = after?.budget != null ? ` and raised its daily budget from ${money(Number(before?.budget ?? 0), currency)} to ${money(Number(after.budget), currency)}` : "";
+      return `Scaled the winner of “${after?.test}”: kept ${after?.winner}, paused ${after?.paused} other version${after?.paused === 1 ? "" : "s"}${moved}`;
+    }
     case "adset.schedule":
       return `Changed the hours it runs from ${before?.label ?? "around the clock"} to ${after?.label ?? "custom hours"}`;
     default:
@@ -290,6 +298,8 @@ class ChangeLogService {
       if (!ad) throw new ActionError(410, "The ad no longer exists.");
       if (ownStatus(ad) !== after.status) throw changed();
       await setAdStatus(c as CampaignWithAccount, ad, before.status === "ACTIVE" ? "ACTIVE" : "PAUSED");
+    } else if (e.action === "experiment.scale") {
+      throw new ActionError(409, "Undo this from the test on the Experiments page.");
     } else if (e.action === "adset.schedule") {
       if (!live) throw new ActionError(409, "This campaign isn't live on Meta.");
       const current = await getAdSchedule(c as CampaignWithAccount);

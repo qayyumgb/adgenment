@@ -195,8 +195,8 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C5 ✅ | **F7 Flight calendar** — `/calendar`: every client's launches and end dates on one timeline, overlap warnings, holiday markers | B1, SCHEDULED status | M |
 | C6 ✅ | **F8 Schedule step** in the wizard (end date, auto-pause: spend cap, blackout dates, tracking stops; calendar warnings). Smart hours moved to C7; "Out of stock" needs Shopify (C18) | C1, C2 engine | M (+L for triggers) |
 | C7 ✅ | **F6 Smart-hours heatmap** — Hours tab (campaign) + client view (Budgets); daily hourly report (Meta; Google/TikTok readers untested); 14 days + 300 conversions gate; Meta one-click hour schedule on lifetime budgets via Approvals with Undo; Google/TikTok exact steps; Smart hours switch (wizard + tab) | C1, hourly sync, Google / TikTok write parity | L |
-| C8 | **Snapchat connector** — or keep it "coming soon" everywhere | — | M |
-| C9 | **F3 Experiments** — tests with significance, scale the winner | B4, C1 | XL |
+| C8 | **Snapchat connector** — **kept "coming soon" everywhere (decided 2026-10-30)**; build the connector later, when a customer needs it | — | M |
+| C9 ✅ | **F3 Experiments** — tests with significance, scale the winner. **Decided 2026-10-30:** Meta's own A/B test (ad studies, a fair randomised split), creatives first, in phases: **C9a** (M) Experiments page reading A/B tests on the account (incl. ones made in Ads Manager): results per version, confidence, expected end, early-stop note · **C9b** (L) create creative tests from Advertix + "Scale the winner" through Approvals with Undo (creative tests are `SPLIT_TEST_V2` on `/{business_id}/ad_studies`; check whether it needs the C16 Graph API upgrade first) · **C9c** (S) test history and lessons per client, fed to the AI Planner. **Other platforms: when Advertix gets write access to Google, TikTok, LinkedIn (and Snapchat, C8), add their experiments the same way** (Google Ads experiments, TikTok split tests, LinkedIn A/B tests) on the same Experiments page and model | B4, C1, (C16 for C9b) | XL |
 | C10 | **Job queue** — BullMQ + Redis replaces the in-process `setInterval`; multi-platform sync, alerts, reports, scheduled budgets / launches | Adds a Redis service on Railway (≈ $1–3 / month extra) | M |
 | C11 (part) | Stripe billing ✅, activation checklist ✅, AI credits ✅. Shopify / GA4 moved to C18 (last in the series) | — | — |
 | C12 ✅ | **Morning briefing email** — daily, in the workspace time zone: top 3 decisions across clients (numbers + one-click link) and anything applied overnight. Opt-in per person in Settings › Notifications | A14 notifications, B2 | S |
@@ -283,6 +283,12 @@ Not blocking the start, but needed before the named phase:
 
 Features built and covered by automated tests, but not yet tested end to end by hand. Tick one off once it has been tested locally and on production.
 
+- [ ] **Experiments (C9a + C9b + C9c)**, built 2026-10-30, not yet looked at in the browser or run against real Meta A/B tests. **Test on production** (the local test app can't create ads). Needs `prisma db push` (Experiment, AdAccount.metaBusinessId).
+  - **C9a, reading:** a test made in Ads Manager shows on **Experiments** after a sync, with results per version, chance-best bars, the pill, the Advertix note, Judge by, and the Ads Manager link. Empty state; client switcher; phone; dark mode.
+  - **C9b, New test:** dialog (campaign published from Advertix, name, 1–4 images or videos from Creatives, days, test budget with the per-version minimum) → new ads on Meta with the same copy, and Meta's creative test (check Ads Manager → Experiments). A failure removes what was created. An Ask first client's media buyer goes to Approvals.
+  - **C9b, End test** (with confirm), and **Scale the winner**: it pauses the other versions and moves an ad-set version's daily budget to the winner. A media buyer's click goes to Approvals; Undo restores everything; it's in Activity.
+  - **C9c, lessons:** an ended test shows "What it showed" pre-filled; Save; it's listed under "What your tests showed"; the AI Planner uses it (ask it for a plan for that client and look for the lesson in its reasoning).
+  - If anything Meta-side fails, send the API log lines (`[sync:meta] experiments`, or the error toast). Ad study calls use `META_STUDIES_API_VERSION` (default v25.0).
 - [ ] **Smart hours (C7)**, built 2026-10-30, not yet looked at in the browser. Needs `prisma db push` (HourlyStat + 3 fields). Seed script for local data in the C7 notes below:
   - **Data:** about 4 minutes after the API starts (then hourly), each active ad account with spend in the last 45 days gets its hourly report once a day; the campaign's Hours tab says "updated …".
   - **Hours tab:** heatmap (Mon–Sun × 24 hours + "All days" row), hover/tab readout, legend, hatched thin cells; the 14 days / 300 purchases progress before the gate; dark mode; phone (scrolls sideways inside the card).
@@ -1132,3 +1138,55 @@ C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the 
   - **API test** (8 groups): analysis and gate; schedule grid; Meta hourly sync; Hours API; Smart hours → suggestion → media buyer to Approvals → approve → Meta; Undo and its refusal; tab apply, daily-budget refusal, already off; permissions.
   - **Still pass:** C1, B2, B3, C13, C14, C6, C5.
   - Typecheck and lint clean. A seeded local campaign gave 00–06, +64%, ≈166/week. **Not yet seen in the browser.**
+
+### C9a — Experiments (reading A/B tests) ✅ (2026-10-30)
+
+- **Decisions (2026-10-30):**
+  - **Meta's own A/B test** (ad studies: a randomised split, so each person sees one version), creatives first, built in phases C9a → C9b → C9c;
+  - **Google, TikTok, LinkedIn (and Snapchat) experiments are added the same way once Advertix writes to them**;
+  - **C8 Snapchat stays "coming soon"**.
+- **Reading tests:**
+  - **When:** after each Meta sync, non-fatal (`services/experiments.service.ts`).
+  - **Where from:** the ad account's `act_…/ad_studies` first (not documented by Meta, but it covers accounts without a Business), then `/{business_id}/ad_studies` (Meta's documented edge). The Business id is looked up once and saved as `AdAccount.metaBusinessId`.
+  - **What's kept:** split tests (`SPLIT_TEST` / `SPLIT_TEST_V2`, not lift studies) with 2+ versions on this account (by the cells' ad accounts, or their campaigns, ad sets or ads). They're stored as `Experiment` rows; cells keep the platform's ids, and `ads` is asked for with a fallback for API versions without it.
+- **Results:** each version's totals over the test window (from its start day to its end or now). They come from ad-level results for ad-set or ad versions, and campaign results for campaign versions.
+- **How sure (`lib/ab-stats.ts`):** Bayesian chance each version is best, from 20,000 samples with a fixed seed, so it doesn't jump between page loads.
+  - **Cost goals:** results per unit of spend, Gamma–Poisson.
+  - **CTR:** Beta.
+  - **Conclusive** at 95%. While running, Advertix estimates when it will be clear (at today's pace, up to 8× the data); beyond that it's "too close to call".
+  - Once clear, it shows **the saving by ending early**: the other versions' remaining spend at their pace.
+  - **The goal** is cost per purchase when there are 10+ purchases, otherwise cost per click. **Judge by** overrides it per test (`PUT /experiments/:id/goal`).
+- **Experiments page** (`/experiments`, sidebar after Calendar, follows the client switcher), the mockup's F3 card:
+  - name; client · Meta · split · day x of y · goal; the confidence pill;
+  - each version's cost per result, purchases or clicks, CTR, spend and "chance it's best" bar; the leader outlined green once conclusive;
+  - the Advertix note; Judge by; a link to Ads Manager;
+  - the empty state links to Meta Experiments.
+- **API:** `GET /experiments?clientId=` (view), `PUT /experiments/:id/goal` (edit).
+- **Next, C9b:** create creative tests from Advertix (`SPLIT_TEST_V2` on `/{business_id}/ad_studies`, 2–5 cells with one ad each; Meta's examples use Graph v21+, so check whether the C16 upgrade is needed first), end a test, and **Scale the winner** through Approvals with Undo. That needs the Live app locally (or production), since the test app can't create ads.
+- **Schema:** `Experiment`, `AdAccount.metaBusinessId`. **Production needs `prisma db push`.**
+- **Checks:** API test with 5 groups (stats; sync via the account then the Business, filtering and no duplicates; results in the window with confidence, lift and saving; client scope, goal switch, close race; permissions). B4 sync still passes. Typecheck and lint clean. **Not yet seen in the browser**, and not yet run against real Meta A/B tests.
+
+### C9b + C9c — Starting tests, Scale the winner, lessons ✅ (2026-10-30)
+
+- **C9b, New test** (Experiments header, `POST /campaigns/:id/experiments`):
+  - **What it needs:** a Meta campaign published from Advertix (Advertix knows its ad set, ad and Page), a name, 1–4 **images or videos from Creatives**, 3–30 days, and a test budget a day (at least the account's daily minimum per version).
+  - **What Advertix does:** the current ad is version A. Each creative becomes a new ad in the same ad set with the same text, headline, link, call to action and Page. Images are uploaded if they only have a URL; videos must already be on Meta. Then Meta's creative test is started (`SPLIT_TEST_V2` on `/{business_id}/ad_studies`, one ad per cell, an even split, `creative_test_config.daily_budget`), beginning in 10 minutes.
+  - **If any step fails,** the ads, creatives and test it made are deleted.
+  - **Where the test is created:** under the account's Business; for a **personal ad account** (no Business), under the person who connected it (`me/ad_studies`, Meta's user edge). Reading tests falls back the same way. A failed Business lookup is logged (`[experiments] business of …`) and treated as personal.
+  - **Synced campaigns:** when Advertix didn't publish the campaign, the Page is read from its current ad's creative and saved.
+  - **Approvals:** held for media buyers on Ask first clients, like publishing. Logged as `experiment.create`.
+- **End test** (`POST /experiments/:id/end`): moves the end time on Meta to a minute from now. Logged.
+- **Scale the winner** (`POST /experiments/:id/scale` → a suggestion, then `/suggestions/:id/apply`, actionType `SCALE_WINNER`):
+  - **What it does:** pauses the other versions' active ads, ad sets or campaigns. For ad-set tests it adds their daily budgets to the winner's ad set.
+  - **Approvals and Undo:** a media buyer's click always goes to Approvals. Undo resumes them and restores the budget, and refuses if anything was changed since. Logged as `experiment.scale` ("Scaled the winner of “…”: kept …, paused 1 other version and raised its daily budget from $100 to $180").
+- **Meta version:** ad study calls use `META_STUDIES_API_VERSION` (default **v25.0**) while the rest stays on v19, because Meta documents creative tests with current versions only. One app may call several versions.
+- **C9c, lessons:**
+  - when a test ends, Advertix pre-fills "What it showed" ("Founder hook beat UGC hook: 23% cheaper per purchase (Lumen hooks, Nov 2026)", or "No clear difference …"); people edit and save it (`PUT /experiments/:id/lesson`);
+  - "What your tests showed" lists them at the top of Experiments (`GET /experiments/lessons`);
+  - **the AI Planner** gets the client's last 5 in its account data and is told to build on what won and not repeat what lost.
+- **Schema:** `Experiment.createdById` / `createdAds` / `lesson`.
+- **Checks:** API test with 8 groups:
+  - validation; rollback when Meta refuses; start (copy, split, budget, log); Ask first → Approvals;
+  - End (once); Scale through Approvals with the budget move and Undo; no re-proposal right after an Undo;
+  - lessons (suggested, saved, listed, in the planner prompt).
+  - **Still pass:** C9a, C1, B2, B3, C7, A12 (planner). Typecheck and lint clean. **Not yet seen in the browser, and not yet run against Meta.**

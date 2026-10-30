@@ -43,6 +43,7 @@ const WATCHED: { method: string; re: RegExp }[] = [
   { method: "PUT", re: /^\/campaigns\/([^/]+)$/ },
   { method: "POST", re: /^\/campaigns\/([^/]+)\/launch$/ },
   { method: "POST", re: /^\/campaigns\/([^/]+)\/publish$/ },
+  { method: "POST", re: /^\/campaigns\/([^/]+)\/experiments$/ },
   { method: "DELETE", re: /^\/campaigns\/([^/]+)$/ },
   { method: "POST", re: /^\/campaigns\/([^/]+)\/adsets\/([^/]+)\/(budget|status)$/ },
   { method: "POST", re: /^\/campaigns\/([^/]+)\/ads\/([^/]+)\/status$/ },
@@ -85,6 +86,8 @@ async function evaluate(workspaceId: string, method: string, path: string, body:
     if (client?.askFirst) return held(askFirstReason(client.name));
     // Smart hours (C7, guide §8): every schedule change goes to Approvals.
     if (s.actionType === "SET_AD_SCHEDULE") return held("Changes to the hours a campaign runs need an owner's approval");
+    // A/B tests (C9b): moving spend to a test's winner is the owner's call.
+    if (s.actionType === "SCALE_WINNER") return held("Moving spend to an A/B test's winner needs an owner's approval");
     if (s.actionType === "SET_DAILY_BUDGET" && overLimit(Number(c.budget), Number(p.dailyBudget))) return held(limitReason(Number(c.budget), Number(p.dailyBudget), c.adAccount.currency));
     return null;
   }
@@ -147,6 +150,10 @@ async function evaluate(workspaceId: string, method: string, path: string, body:
 
   if (path.endsWith("/publish")) {
     return client?.askFirst ? held("Publish to Meta", askFirstReason(client.name)) : null;
+  }
+  // A/B test (C9b): new ads and a test budget, like publishing.
+  if (path.endsWith("/experiments")) {
+    return client?.askFirst ? held(`Start the A/B test “${typeof body.name === "string" ? body.name : "A/B test"}”`, askFirstReason(client.name)) : null;
   }
   if (method === "DELETE") {
     return client?.askFirst && live ? held("Delete the campaign (on Meta too)", askFirstReason(client.name)) : null;

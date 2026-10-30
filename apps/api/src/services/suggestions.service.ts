@@ -27,6 +27,7 @@ import { changeLog } from "./change-log.service";
 import { getAdSchedule, scheduleBlocker, setAdSchedule } from "./campaign-actions.service";
 import type { MetaScheduleBlock } from "./meta.service";
 import { ALL_HOURS, describeSchedule, hh, sameSchedule, withHoursOff } from "../lib/schedule-grid";
+import { revertScale, scaleWinner, type ScalePayload, type ScaleRevert } from "./experiment-actions.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Apply can be undone for this long (guide §6; B3 uses the same window). */
@@ -54,10 +55,10 @@ type Draft = {
   impact: string | null;
   priority: number;
   confidence: string | null;
-  actionType: "SET_DAILY_BUDGET" | "SET_STATUS" | "SET_AD_SCHEDULE" | null;
+  actionType: "SET_DAILY_BUDGET" | "SET_STATUS" | "SET_AD_SCHEDULE" | "SCALE_WINNER" | null;
   actionLabel: string;
   doneLabel: string | null;
-  actionPayload: SetBudgetPayload | SetStatusPayload | SetSchedulePayload | null;
+  actionPayload: SetBudgetPayload | SetStatusPayload | SetSchedulePayload | ScalePayload | null;
   reviewHref: string | null;
   expiresAt: Date | null;
 };
@@ -340,6 +341,7 @@ class SuggestionsService {
     try {
       const revert = await this.execute(workspaceId, s.actionType, s.actionPayload, "apply");
       if (s.actionType === "SET_AD_SCHEDULE") await this.logSchedule(workspaceId, s, revert as ScheduleRevert, userId);
+      else if (s.actionType === "SCALE_WINNER") await this.logScale(workspaceId, s, revert as unknown as ScaleRevert, userId);
       else await this.logChange(workspaceId, s, s.actionType, revert as SetBudgetPayload | SetStatusPayload, s.actionPayload as Partial<SetBudgetPayload & SetStatusPayload>, userId, "AI", auto);
       return await prisma.suggestion.update({
         where: { id },
@@ -384,6 +386,7 @@ class SuggestionsService {
     });
     if (entry) await changeLog.markUndone(entry, userId);
     else if (s.actionType === "SET_AD_SCHEDULE") await this.logSchedule(workspaceId, s, s.revertPayload as unknown as ScheduleRevert, userId, true);
+    else if (s.actionType === "SCALE_WINNER") await this.logScale(workspaceId, s, s.revertPayload as unknown as ScaleRevert, userId, true);
     else await this.logChange(workspaceId, s, s.actionType, s.actionPayload as Partial<SetBudgetPayload & SetStatusPayload>, s.revertPayload as Partial<SetBudgetPayload & SetStatusPayload>, userId, "USER");
     return prisma.suggestion.update({
       where: { id },
@@ -396,6 +399,26 @@ class SuggestionsService {
         // Automation (later) must not re-apply something a person just undid.
         suppressUntil: new Date(Date.now() + UNDO_WINDOW_MS),
       },
+    });
+  }
+
+  /** Change-log entry for scaling a test's winner (C9b). */
+  private async logScale(workspaceId: string, s: Suggestion, r: ScaleRevert, userId: string | null, undo = false) {
+    const c = s.campaignId ? await prisma.campaign.findFirst({ where: { id: s.campaignId, workspaceId }, include: { adAccount: { select: { clientId: true, currency: true } } } }) : null;
+    const e = await prisma.experiment.findFirst({ where: { id: r.experimentId, workspaceId }, select: { name: true } });
+    await changeLog.record({
+      workspaceId,
+      campaignId: c?.id ?? null,
+      campaignName: c?.name ?? e?.name ?? "A/B test",
+      clientId: c?.adAccount.clientId ?? null,
+      currency: c?.adAccount.currency,
+      actorType: undo ? "USER" : "AI",
+      userId,
+      suggestionId: s.id,
+      platformPushed: true,
+      action: "experiment.scale",
+      before: { test: e?.name, budget: r.budget?.from ?? null },
+      after: { test: e?.name, winner: r.label, paused: r.paused.length, budget: r.budget?.to ?? null, undo },
     });
   }
 
@@ -454,7 +477,7 @@ class SuggestionsService {
   }
 
   private async assertUnchanged(workspaceId: string, actionType: string, applied: Prisma.JsonValue | null) {
-    if (actionType === "SET_AD_SCHEDULE") return; // checked against Meta in execute()
+    if (actionType === "SET_AD_SCHEDULE" || actionType === "SCALE_WINNER") return; // checked in execute()
     const p = applied as Partial<SetBudgetPayload & SetStatusPayload> | null;
     if (!p?.campaignId) return;
     const c = await loadCampaign(workspaceId, p.campaignId);
@@ -473,7 +496,13 @@ class SuggestionsService {
     actionType: string,
     payload: Prisma.JsonValue,
     mode: "apply" | "undo"
-  ): Promise<SetBudgetPayload | SetStatusPayload | ScheduleRevert> {
+  ): Promise<SetBudgetPayload | SetStatusPayload | ScheduleRevert | ScaleRevert> {
+    // A/B test winner (C9b): a test, not one campaign.
+    if (actionType === "SCALE_WINNER") {
+      if (mode === "apply") return scaleWinner(workspaceId, payload as unknown as ScalePayload);
+      await revertScale(workspaceId, payload as unknown as ScaleRevert);
+      return payload as unknown as ScaleRevert;
+    }
     const p = payload as Partial<SetBudgetPayload & SetStatusPayload> | null;
     if (!p?.campaignId) throw new ActionError(400, "This suggestion is missing its campaign.");
     const c = await loadCampaign(workspaceId, p.campaignId);

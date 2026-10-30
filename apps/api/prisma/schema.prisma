@@ -180,6 +180,7 @@ model Workspace {
   clientShares          ClientShare[]
   aiUsage               AiUsage[]
   reportSchedules       ReportSchedule[]
+  experiments           Experiment[]
 
   @@index([ownerId])
   @@index([stripeCustomerId])
@@ -327,6 +328,8 @@ model AdAccount {
   lastSyncedAt    DateTime?
   /// Smart hours (C7): when the hour-by-hour report was last pulled (once a day).
   hoursSyncedAt   DateTime?
+  /// Experiments (C9): the Meta Business that owns the account (A/B tests are listed there). Looked up once.
+  metaBusinessId  String?
   /// The agency client this account belongs to. Null = not assigned yet.
   clientId        String?
   /// When the stored token stops working and the user has to reconnect (Meta
@@ -345,6 +348,7 @@ model AdAccount {
   workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
   campaigns Campaign[]
+  experiments Experiment[]
 
   @@unique([workspaceId, platform, accountId])
   @@index([workspaceId])
@@ -755,6 +759,43 @@ model Suggestion {
   @@index([workspaceId, clientId])
   @@index([workspaceId, dedupeKey])
   @@index([campaignId])
+}
+
+// ─── Experiments (plan C9) ──────────────────────────────────────────────────
+
+/// An A/B test read from the platform (Meta ad study, SPLIT_TEST /
+/// SPLIT_TEST_V2). Its versions ("cells") point at the platform's campaign,
+/// ad set or ad ids; results are worked out from our synced metrics.
+model Experiment {
+  id          String    @id @default(cuid())
+  workspaceId String
+  adAccountId String
+  platform    Platform
+  /// The platform's test id (Meta ad study id).
+  externalId  String
+  name        String
+  /// SPLIT_TEST, SPLIT_TEST_V2 …
+  type        String
+  startTime   DateTime?
+  endTime     DateTime?
+  /// [{ externalId, name, percent, campaigns: [id], adSets: [id], ads: [id] }] (platform ids)
+  cells       Json
+  /// "purchase" | "click" | "ctr"; null = picked from the data.
+  goal        String?
+  /// Started from Advertix (C9b): who, and the version ads Advertix created for it.
+  createdById String?
+  createdAds  Json?
+  /// What the test showed, in a sentence (C9c): pre-filled when it ends, editable; fed to the AI Planner.
+  lesson      String?   @db.Text
+  syncedAt    DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adAccount AdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([adAccountId, externalId])
+  @@index([workspaceId])
 }
 
 // ─── Smart hours (plan C7) ───────────────────────────────────────────────────
