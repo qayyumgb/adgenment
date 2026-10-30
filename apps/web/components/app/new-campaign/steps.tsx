@@ -8,7 +8,7 @@ import type { AdAccount, Platform } from "@/lib/api";
 import { AutoPauseFields } from "@/components/app/campaign/AutoPauseFields";
 import { cn } from "@/lib/cn";
 import { currencySymbol } from "@/lib/money";
-import { ButtonLink, Card, PlatformBadge, Segmented, type PlatformKey } from "@/components/app/ui";
+import { Button, ButtonLink, Card, PlatformBadge, Segmented, Toggle, type PlatformKey } from "@/components/app/ui";
 import { Step1Page, Step3Audience, Step5Creative } from "@/components/app/new-campaign/metaSteps";
 import { GOALS, WIZARD_PLATFORMS, hasMeta, scheduleCheck, todayStr, type Draft } from "./model";
 
@@ -268,7 +268,11 @@ export function PlatformsStep({
             <Field
               label={draft.budgetType === "DAILY" ? "Daily budget" : "Total budget"}
               error={budgetError}
-              hint={`This account's minimum is ${sym}${s.floor.toLocaleString()}${draft.budgetType === "DAILY" ? " a day" : " in total"}.`}
+              hint={
+                draft.budgetType === "DAILY"
+                  ? `This account's minimum is ${sym}${s.floor.toLocaleString()} a day.`
+                  : `This account's minimum is ${sym}${s.floor.toLocaleString()} in total${s.clockChange ? ` (${s.hours} hours: the clocks change during it)` : ""}.`
+              }
             >
               <span className="relative">
                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-ink-3">{sym}</span>
@@ -352,6 +356,36 @@ export function PlatformsStep({
             <p className="m-0 text-xs font-medium text-warn">Automation is paused for this workspace (Settings › AI &amp; automation), so these won&apos;t act until it&apos;s turned back on.</p>
           )}
         </StepCard>
+      )}
+
+      {meta && (
+        <Card className="flex items-start gap-4 p-6">
+          <Toggle checked={draft.smartHours} onChange={(v) => patch({ smartHours: v })} label="Smart hours" className="mt-0.5" />
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className="font-semibold">Smart hours</span>
+            <span className="text-[13px] text-ink-2 [text-wrap:pretty]">
+              Advertix checks this campaign&apos;s hours every day. After 14 days and 300 conversions, it suggests switching off hours that cost 40%+ more than average. Each change goes to Approvals first and can be undone.
+            </span>
+            {draft.smartHours && draft.budgetType === "DAILY" && (
+              <span className="flex flex-col items-start gap-2 rounded-ctl bg-warn-soft px-3 py-2.5 text-xs text-ink">
+                <span>
+                  <span className="font-semibold text-warn">Meta needs a total budget for hour schedules. </span>
+                  {draft.runContinuously
+                    ? "Set an end date, then switch to a total budget, so Advertix can change its hours in one click. With a daily budget you'll get the steps instead."
+                    : s.amount > 0 && s.days
+                      ? `Your ${sym}${s.amount.toLocaleString()} a day becomes ${sym}${(s.amount * s.days).toLocaleString()} in total over ${s.days} days.`
+                      : "Switch to a total budget so Advertix can change its hours in one click."}
+                </span>
+                {!draft.runContinuously && s.amount > 0 && s.days && (
+                  <Button variant="secondary" size="sm" onClick={() => patch({ budgetType: "LIFETIME", budgetInput: String(Math.round(s.amount * s.days! * 100) / 100) })}>
+                    Use {sym}
+                    {(s.amount * s.days).toLocaleString()} in total
+                  </Button>
+                )}
+              </span>
+            )}
+          </div>
+        </Card>
       )}
     </div>
   );

@@ -17,6 +17,7 @@ import {
 import { startNotificationScheduler } from "./services/notifications.service";
 import { startApprovalScheduler } from "./services/approvals.service";
 import { startSafetyScheduler } from "./services/safety.service";
+import { startHoursScheduler } from "./services/hours.service";
 import { startAlertsScheduler } from "./services/alerts.service";
 import { startReportScheduler } from "./services/reports.service";
 import { handleWebhook } from "./services/billing.service";
@@ -199,6 +200,7 @@ async function startServer() {
     startApprovalScheduler();
     // Safety rules (C14) and auto-apply (C13): only for clients that opted in.
     startSafetyScheduler();
+    startHoursScheduler();
     // Alerts inbox (C2): recomputed hourly from stored data.
     startAlertsScheduler();
     // Scheduled client reports (C4b): 09:00 workspace time, weekly or monthly.

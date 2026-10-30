@@ -15,6 +15,7 @@ import { useAccess } from "@/components/app/team/access";
 import { suggestionState, useSuggestions } from "@/components/app/suggestions/useSuggestions";
 import { Allocator, type AllocatorHandle } from "@/components/app/budgets/Allocator";
 import { PacingGrid } from "@/components/app/budgets/Pacing";
+import { ClientHoursCard } from "@/components/app/hours/ClientHoursCard";
 
 /**
  * Budgets (guide §5.6, plan A11): the cross-platform allocator (response
@@ -80,6 +81,8 @@ export default function BudgetsPage() {
         </div>
 
         <PacingGrid data={p ?? null} loading={pacing.loading} onPlan={plan} onChanged={() => void pacing.refetch()} />
+
+        <ClientHoursCard clientId={clientId} clientName={client?.name ?? (hasMultiple ? "your clients" : "your account")} />
 
         <Card padded={false} className="flex flex-col gap-2.5 px-5 pb-2 pt-5">
           <div className="flex flex-wrap items-center gap-2.5">

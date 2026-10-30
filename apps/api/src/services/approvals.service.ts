@@ -83,6 +83,8 @@ async function evaluate(workspaceId: string, method: string, path: string, body:
     const p = (s.actionPayload ?? {}) as { dailyBudget?: number };
     const held = (reason: string): Held => ({ summary: `Apply suggestion: ${s.title}`, reason, campaignId: c.id, campaignName: c.name, clientId: client?.id ?? null });
     if (client?.askFirst) return held(askFirstReason(client.name));
+    // Smart hours (C7, guide §8): every schedule change goes to Approvals.
+    if (s.actionType === "SET_AD_SCHEDULE") return held("Changes to the hours a campaign runs need an owner's approval");
     if (s.actionType === "SET_DAILY_BUDGET" && overLimit(Number(c.budget), Number(p.dailyBudget))) return held(limitReason(Number(c.budget), Number(p.dailyBudget), c.adAccount.currency));
     return null;
   }
@@ -118,6 +120,7 @@ async function evaluate(workspaceId: string, method: string, path: string, body:
     const held = (reason: string): Held => ({ summary: `Undo: ${e.summary}`, reason, campaignId: c.id, campaignName: c.name, clientId: client?.id ?? null });
     if (e.action === "campaign.rename") return null;
     if (client?.askFirst) return held(askFirstReason(client.name));
+    if (e.action === "adset.schedule") return held("Changes to the hours a campaign runs need an owner's approval");
     if (e.action === "campaign.budget") {
       const from = Number(c.budget);
       const to = Number(before.budget);

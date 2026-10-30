@@ -251,6 +251,43 @@ class TikTokAdsService {
     }));
   }
 
+  /**
+   * Hour-by-hour results per campaign for one day (smart hours, C7). TikTok
+   * only allows hourly reports a day at a time; `stat_time_hour` is
+   * "YYYY-MM-DD HH:00:00" in the advertiser's time zone.
+   */
+  async getHourlyMetrics(accessToken: string, advertiserId: string, day: string) {
+    const params = new URLSearchParams({
+      advertiser_id: advertiserId,
+      start_date: day,
+      end_date: day,
+      page_size: "1000",
+      report_type: "BASIC",
+      data_level: "AUCTION_CAMPAIGN",
+      dimensions: JSON.stringify(["campaign_id", "stat_time_hour"]),
+      metrics: JSON.stringify(["impressions", "clicks", "spend", "conversions"]),
+    });
+    const data = await this.tiktokFetch<
+      TikTokEnvelope<{
+        list?: Array<{ dimensions?: { campaign_id?: string; stat_time_hour?: string }; metrics?: { impressions?: string; clicks?: string; spend?: string; conversions?: string } }>;
+      }>
+    >(`${TIKTOK_BASE}/report/integrated/get/?${params.toString()}`, { method: "GET", headers: { "Access-Token": accessToken } });
+    return (data.data.list ?? [])
+      .map((row) => {
+        const t = row.dimensions?.stat_time_hour ?? "";
+        return {
+          campaignId: row.dimensions?.campaign_id ?? "",
+          date: t.slice(0, 10),
+          hour: Number(t.slice(11, 13)),
+          spend: Number(row.metrics?.spend ?? 0),
+          impressions: Number(row.metrics?.impressions ?? 0),
+          clicks: Number(row.metrics?.clicks ?? 0),
+          conversions: Number(row.metrics?.conversions ?? 0),
+        };
+      })
+      .filter((r) => r.campaignId && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && r.hour >= 0 && r.hour < 24);
+  }
+
   /* ───────────────────────────────── */
   /* Mutations                         */
   /* ───────────────────────────────── */

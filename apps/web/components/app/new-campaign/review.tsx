@@ -103,6 +103,12 @@ export function ReviewStep({
             <>
               <Row label="Auto-pause" step={2} onEdit={onEdit} value={autoPauseSummary(draft.autoPause, (n) => fmtMoney(n, currency, { whole: n >= 100 }))} />
               <Row
+                label="Smart hours"
+                step={2}
+                onEdit={onEdit}
+                value={draft.smartHours ? (draft.budgetType === "LIFETIME" ? "On: Advertix suggests hour changes once it has enough data" : "On, with steps instead of one click (daily budget)") : "Off"}
+              />
+              <Row
                 label="Audience"
                 step={3}
                 onEdit={onEdit}

@@ -24,6 +24,9 @@ import {
   type CampaignWithAccount,
 } from "./campaign-actions.service";
 import { changeLog } from "./change-log.service";
+import { getAdSchedule, scheduleBlocker, setAdSchedule } from "./campaign-actions.service";
+import type { MetaScheduleBlock } from "./meta.service";
+import { ALL_HOURS, describeSchedule, hh, sameSchedule, withHoursOff } from "../lib/schedule-grid";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Apply can be undone for this long (guide §6; B3 uses the same window). */
@@ -35,6 +38,10 @@ const MAX_RATIO = 2;
 
 export type SetBudgetPayload = { campaignId: string; dailyBudget: number };
 export type SetStatusPayload = { campaignId: string; status: "ACTIVE" | "PAUSED" };
+/** Smart hours (C7): switch these hours off on every day (Meta, lifetime budget). */
+export type SetSchedulePayload = { campaignId: string; from: number; to: number };
+/** What Undo restores, and what was set (Undo refuses if the hours changed since). */
+type ScheduleRevert = { campaignId: string; schedule: MetaScheduleBlock[]; applied: MetaScheduleBlock[] };
 
 type Draft = {
   dedupeKey: string;
@@ -47,13 +54,16 @@ type Draft = {
   impact: string | null;
   priority: number;
   confidence: string | null;
-  actionType: "SET_DAILY_BUDGET" | "SET_STATUS" | null;
+  actionType: "SET_DAILY_BUDGET" | "SET_STATUS" | "SET_AD_SCHEDULE" | null;
   actionLabel: string;
   doneLabel: string | null;
-  actionPayload: SetBudgetPayload | SetStatusPayload | null;
+  actionPayload: SetBudgetPayload | SetStatusPayload | SetSchedulePayload | null;
   reviewHref: string | null;
   expiresAt: Date | null;
 };
+
+/** A smart hours suggestion (C7), built by hours.service. */
+export type SmartHoursDraft = Draft;
 
 function money(n: number, currency: string | null | undefined) {
   const whole = Math.abs(n - Math.round(n)) < 0.005;
@@ -140,7 +150,7 @@ class SuggestionsService {
    * Not now (snoozed until …) and recent applies (no re-proposing inside the
    * undo window).
    */
-  private async upsertBatch(workspaceId: string, source: SuggestionSource, drafts: Draft[]) {
+  private async upsertBatch(workspaceId: string, source: SuggestionSource, drafts: Draft[], expirePrefix?: string) {
     const now = new Date();
     const keys = new Set<string>();
     for (const d of drafts) {
@@ -179,9 +189,22 @@ class SuggestionsService {
       }
     }
     await prisma.suggestion.updateMany({
-      where: { workspaceId, source, status: "OPEN", dedupeKey: { notIn: [...keys] } },
+      where: { workspaceId, source, status: "OPEN", dedupeKey: expirePrefix ? { notIn: [...keys], startsWith: expirePrefix } : { notIn: [...keys] } },
       data: { status: "EXPIRED" },
     });
+  }
+
+  /** Smart hours (C7): the daily batch for campaigns with it on; only those (`hours:auto:`) expire. */
+  async syncSmartHours(workspaceId: string, drafts: Draft[]) {
+    await this.upsertBatch(workspaceId, "RULE", drafts, "hours:auto:");
+  }
+
+  /** One suggestion now (the Hours tab's Apply): the open or recently applied match, or a new one. */
+  async upsertOne(workspaceId: string, d: Draft): Promise<Suggestion> {
+    await this.upsertBatch(workspaceId, "RULE", [d], "hours:never:");
+    const s = await prisma.suggestion.findFirst({ where: { workspaceId, dedupeKey: d.dedupeKey, status: { in: ["OPEN", "APPLIED", "SNOOZED"] } }, orderBy: { createdAt: "desc" } });
+    if (!s) throw new ActionError(409, "This was undone recently, so Advertix won't suggest it again for a few days.");
+    return s;
   }
 
   /** Mirror the active insights into suggestions (review-only). */
@@ -316,7 +339,8 @@ class SuggestionsService {
 
     try {
       const revert = await this.execute(workspaceId, s.actionType, s.actionPayload, "apply");
-      await this.logChange(workspaceId, s, s.actionType, revert, s.actionPayload as Partial<SetBudgetPayload & SetStatusPayload>, userId, "AI", auto);
+      if (s.actionType === "SET_AD_SCHEDULE") await this.logSchedule(workspaceId, s, revert as ScheduleRevert, userId);
+      else await this.logChange(workspaceId, s, s.actionType, revert as SetBudgetPayload | SetStatusPayload, s.actionPayload as Partial<SetBudgetPayload & SetStatusPayload>, userId, "AI", auto);
       return await prisma.suggestion.update({
         where: { id },
         data: { revertPayload: revert as unknown as Prisma.InputJsonValue, undoneAt: null },
@@ -359,6 +383,7 @@ class SuggestionsService {
       orderBy: { createdAt: "desc" },
     });
     if (entry) await changeLog.markUndone(entry, userId);
+    else if (s.actionType === "SET_AD_SCHEDULE") await this.logSchedule(workspaceId, s, s.revertPayload as unknown as ScheduleRevert, userId, true);
     else await this.logChange(workspaceId, s, s.actionType, s.actionPayload as Partial<SetBudgetPayload & SetStatusPayload>, s.revertPayload as Partial<SetBudgetPayload & SetStatusPayload>, userId, "USER");
     return prisma.suggestion.update({
       where: { id },
@@ -371,6 +396,27 @@ class SuggestionsService {
         // Automation (later) must not re-apply something a person just undid.
         suppressUntil: new Date(Date.now() + UNDO_WINDOW_MS),
       },
+    });
+  }
+
+  /** Change-log entry for a schedule change (`undo`: the reverse, when there was no entry to mark). */
+  private async logSchedule(workspaceId: string, s: Suggestion, r: ScheduleRevert, userId: string | null, undo = false) {
+    const c = await prisma.campaign.findFirst({ where: { id: r.campaignId, workspaceId }, include: { adAccount: { select: { clientId: true } } } });
+    if (!c) return;
+    const [before, after] = undo ? [r.applied, r.schedule] : [r.schedule, r.applied];
+    await changeLog.record({
+      workspaceId,
+      campaignId: c.id,
+      campaignName: c.name,
+      clientId: c.adAccount.clientId,
+      actorType: undo ? "USER" : "AI",
+      userId,
+      suggestionId: s.id,
+      platformPushed: true,
+      action: "adset.schedule",
+      before: { schedule: before, label: describeSchedule(before) },
+      after: { schedule: after, label: describeSchedule(after) },
+      note: "(smart hours)",
     });
   }
 
@@ -408,6 +454,7 @@ class SuggestionsService {
   }
 
   private async assertUnchanged(workspaceId: string, actionType: string, applied: Prisma.JsonValue | null) {
+    if (actionType === "SET_AD_SCHEDULE") return; // checked against Meta in execute()
     const p = applied as Partial<SetBudgetPayload & SetStatusPayload> | null;
     if (!p?.campaignId) return;
     const c = await loadCampaign(workspaceId, p.campaignId);
@@ -426,7 +473,7 @@ class SuggestionsService {
     actionType: string,
     payload: Prisma.JsonValue,
     mode: "apply" | "undo"
-  ): Promise<SetBudgetPayload | SetStatusPayload> {
+  ): Promise<SetBudgetPayload | SetStatusPayload | ScheduleRevert> {
     const p = payload as Partial<SetBudgetPayload & SetStatusPayload> | null;
     if (!p?.campaignId) throw new ActionError(400, "This suggestion is missing its campaign.");
     const c = await loadCampaign(workspaceId, p.campaignId);
@@ -455,6 +502,28 @@ class SuggestionsService {
       const previous = c.status;
       await setStatus(c, next);
       return { campaignId: c.id, status: previous };
+    }
+
+    if (actionType === "SET_AD_SCHEDULE") {
+      const blocker = scheduleBlocker(c);
+      if (blocker) throw new ActionError(409, blocker);
+      const current = await getAdSchedule(c);
+      if (mode === "apply") {
+        const q = payload as Partial<SetSchedulePayload>;
+        const from = Number(q.from);
+        const to = Number(q.to);
+        if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from > 23 || to < 0 || to > 23 || from === to) throw new ActionError(400, "Unknown hours.");
+        const next = withHoursOff(current, from, to);
+        if (!next.length) throw new ActionError(409, "That would switch off every hour.");
+        if (sameSchedule(next, current)) throw new ActionError(409, `${hh(from)}–${hh(to)} is already switched off.`);
+        await setAdSchedule(c, next);
+        return { campaignId: c.id, schedule: current, applied: next };
+      }
+      // Undo: only if the hours are still as we set them.
+      const r = payload as unknown as ScheduleRevert;
+      if (!sameSchedule(current, r.applied ?? [])) throw new ActionError(409, "The ad set's hours have changed since this was applied, so Undo would overwrite that change. Set them in Ads Manager instead.");
+      await setAdSchedule(c, r.schedule?.length ? r.schedule : ALL_HOURS);
+      return { campaignId: c.id, schedule: r.applied, applied: r.schedule };
     }
 
     throw new ActionError(400, "Unknown action.");

@@ -130,6 +130,20 @@ export interface MetaInsight {
   purchase_roas?: Array<{ action_type: string; value: string }>;
 }
 
+/** One hour of one day (account time zone) for one campaign (smart hours, C7). */
+export interface MetaHourlyInsight extends MetaInsight {
+  /** "13:00:00 - 13:59:59" */
+  hourly_stats_aggregated_by_advertiser_time_zone?: string;
+}
+
+/** A block of an ad set's delivery schedule: minutes from midnight; days 0 = Sunday. */
+export interface MetaScheduleBlock {
+  start_minute: number;
+  end_minute: number;
+  days: number[];
+  timezone_type?: "USER" | "ADVERTISER";
+}
+
 export interface MetaAdSet {
   id: string;
   name: string;
@@ -600,6 +614,32 @@ class MetaAdsService {
   }
 
   /**
+   * Hour-by-hour results per campaign and day, in the ad account's time zone
+   * (smart hours, C7). `since` / `until` are YYYY-MM-DD. Up to 24 rows per
+   * campaign per day, so it pages.
+   */
+  async getHourlyInsights(accessToken: string, adAccountId: string, since: string, until: string): Promise<MetaHourlyInsight[]> {
+    const params = new URLSearchParams({
+      fields: "campaign_id,campaign_name,date_start,date_stop,impressions,clicks,spend,actions,action_values",
+      level: "campaign",
+      time_increment: "1",
+      breakdowns: "hourly_stats_aggregated_by_advertiser_time_zone",
+      time_range: JSON.stringify({ since, until }),
+      limit: "500",
+      access_token: accessToken,
+    });
+    return this.graphFetchAll<MetaHourlyInsight>(`${GRAPH_BASE}/${this.accountPath(adAccountId)}/insights?${params.toString()}`);
+  }
+
+  /** An ad set's hour schedule and budget (smart hours, C7). No schedule = runs around the clock. */
+  async getAdSetSchedule(accessToken: string, adSetId: string): Promise<{ schedule: MetaScheduleBlock[]; pacingType: string[]; lifetimeBudget: number | null }> {
+    const params = new URLSearchParams({ fields: "adset_schedule,pacing_type,lifetime_budget", access_token: accessToken });
+    const r = await this.graphFetch<{ adset_schedule?: MetaScheduleBlock[]; pacing_type?: string[]; lifetime_budget?: string }>(`${GRAPH_BASE}/${adSetId}?${params.toString()}`);
+    const lifetime = r.lifetime_budget ? Number(r.lifetime_budget) / 100 : 0;
+    return { schedule: r.adset_schedule ?? [], pacingType: r.pacing_type ?? [], lifetimeBudget: lifetime > 0 ? lifetime : null };
+  }
+
+  /**
    * Range-level unique reach per campaign (NO time_increment). Reach is
    * de-duplicated across days, so it CANNOT be summed from daily rows — this
    * returns the single figure Ads Manager shows for the period. Keyed by
@@ -820,6 +860,8 @@ class MetaAdsService {
       lifetimeBudget?: number;
       startTime?: string;
       endTime?: string;
+      /** Hour schedule (needs a lifetime budget): the blocks it runs in. */
+      schedule?: MetaScheduleBlock[];
     }
   ): Promise<{ success: boolean }> {
     const body = new URLSearchParams({ access_token: accessToken });
@@ -833,6 +875,10 @@ class MetaAdsService {
     }
     if (fields.startTime) body.set("start_time", fields.startTime);
     if (fields.endTime) body.set("end_time", fields.endTime);
+    if (fields.schedule) {
+      body.set("pacing_type", JSON.stringify(["day_parting"]));
+      body.set("adset_schedule", JSON.stringify(fields.schedule));
+    }
     if ([...body.keys()].length <= 1) return { success: true };
 
     await this.graphFetch<{ success?: boolean }>(`${GRAPH_BASE}/${adSetId}`, {

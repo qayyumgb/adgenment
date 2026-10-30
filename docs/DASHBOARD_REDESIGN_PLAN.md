@@ -194,7 +194,7 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C4 ✅ | **F4 Client portal + D5 Scheduled reports** — share links (token, toggles), public read-only view, weekly PDF + email | B1, PDF rendering service | L |
 | C5 ✅ | **F7 Flight calendar** — `/calendar`: every client's launches and end dates on one timeline, overlap warnings, holiday markers | B1, SCHEDULED status | M |
 | C6 ✅ | **F8 Schedule step** in the wizard (end date, auto-pause: spend cap, blackout dates, tracking stops; calendar warnings). Smart hours moved to C7; "Out of stock" needs Shopify (C18) | C1, C2 engine | M (+L for triggers) |
-| C7 | **F6 Smart-hours heatmap** — hourly metrics sync, eligibility gate (14 days + 300 conversions), platform writers; includes the wizard's Smart hours switch (moved from C6). Meta can only switch hours off, with a lifetime budget, not lower bids by hour | C1, hourly sync, Google / TikTok write parity | L |
+| C7 ✅ | **F6 Smart-hours heatmap** — Hours tab (campaign) + client view (Budgets); daily hourly report (Meta; Google/TikTok readers untested); 14 days + 300 conversions gate; Meta one-click hour schedule on lifetime budgets via Approvals with Undo; Google/TikTok exact steps; Smart hours switch (wizard + tab) | C1, hourly sync, Google / TikTok write parity | L |
 | C8 | **Snapchat connector** — or keep it "coming soon" everywhere | — | M |
 | C9 | **F3 Experiments** — tests with significance, scale the winner | B4, C1 | XL |
 | C10 | **Job queue** — BullMQ + Redis replaces the in-process `setInterval`; multi-platform sync, alerts, reports, scheduled budgets / launches | Adds a Redis service on Railway (≈ $1–3 / month extra) | M |
@@ -283,6 +283,13 @@ Not blocking the start, but needed before the named phase:
 
 Features built and covered by automated tests, but not yet tested end to end by hand. Tick one off once it has been tested locally and on production.
 
+- [ ] **Smart hours (C7)**, built 2026-10-30, not yet looked at in the browser. Needs `prisma db push` (HourlyStat + 3 fields). Seed script for local data in the C7 notes below:
+  - **Data:** about 4 minutes after the API starts (then hourly), each active ad account with spend in the last 45 days gets its hourly report once a day; the campaign's Hours tab says "updated …".
+  - **Hours tab:** heatmap (Mon–Sun × 24 hours + "All days" row), hover/tab readout, legend, hatched thin cells; the 14 days / 300 purchases progress before the gate; dark mode; phone (scrolls sideways inside the card).
+  - **Suggestion:** "Switch off 00:00–06:00" with the why and ≈ saving; one click on a Meta campaign published from Advertix with a total budget (changes the ad set's hours in Ads Manager); a media buyer's click goes to Approvals; Undo restores the hours. Daily budget → the manual steps. "Keep it running around the clock" when nothing qualifies.
+  - **Smart hours switch:** on the tab and in the wizard (with "Use $X in total" on Meta); with it on, the suggestion also appears in the suggestions feed.
+  - **Budgets:** the client heatmap with All / Meta / Google / TikTok; mixed currencies explained.
+  - **Google / TikTok:** need a connected account (and Google's developer token) to test at all.
 - [ ] **Schedule step and auto-pause (C6)**, built 2026-10-28, not yet looked at in the browser. Needs `prisma db push` (3 Campaign fields):
   - **Wizard step 2:** Run continuously / Set an end date (Total budget forces an end date); the day count; the Black Friday and overlap notes for Meta (try a start date of 25 Nov, and a goal matching a running campaign).
   - **Pause automatically:** spend cap (an amount above zero), blackout dates (key-date chips for the campaign's dates, your own dates, remove), Tracking stops ("Already on" when the client's safety rule covers it). The review step's Auto-pause line; publishing keeps it (Settings tab shows it).
@@ -1082,3 +1089,46 @@ C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the 
 - **Fix (C5):** overlaps now match an objective under both its names (the wizard's "Conversions" and a synced campaign's "OUTCOME_SALES").
 - **Schema:** `Campaign.spendCap`, `blackouts` (JSON), `pauseOnTrackingLoss`. **Production needs `prisma db push`.**
 - **Checks:** API test with 7 groups (validation; spend cap; blackouts in the workspace time zone with resume the day after and a person's change winning; pause on save and Pause all; tracking for one campaign; the calendar check across objective names; permissions). C14, C13 and C5 tests still pass. Typecheck and lint clean. **Not yet seen in the browser** (the dev server was off).
+
+### C7 — Smart hours ✅ (2026-10-30)
+
+- **Scope (decided 2026-10-30): the full C7.** One-click hour changes are Meta only. Google (bid adjustment) and TikTok (dayparting) get exact manual steps, because Advertix doesn't write to those platforms anywhere else yet and neither has a test account (Google's developer token isn't set).
+- **Data** (`services/hours.service.ts`):
+  - **Once a day per ad account** (hourly check, 4 minutes after start; `SMART_HOURS_ENABLED=false` turns it off), for active accounts with spend in the last 45 days.
+  - **Meta:** one insights call with `hourly_stats_aggregated_by_advertiser_time_zone` and daily rows over 45 days, purchases counted as in the daily sync.
+  - **Google:** GAQL by `segments.day_of_week` × `segments.hour`.
+  - **TikTok:** `stat_time_hour`, a day per call, the last 14 days.
+  - Each campaign's week is stored as up to 168 `HourlyStat` rows (weekday × hour, account time zone), rebuilt each day. A failed account is retried the next day, not every hour.
+- **Analysis:**
+  - cost per result (purchases; clicks when there are none) against the average;
+  - a cell needs 3 conversions (an hour row 10) or it's hatched "too few to judge";
+  - spending 3× the average cost with nothing back counts as expensive.
+- **Gate:** suggestions only after **14 days with spend and 300 conversions**. Before that the tab shows progress bars and the heatmap is for reading.
+- **The suggestion:**
+  - the run of 2–8 hours (it can wrap past midnight) costing **40%+ more** than average;
+  - no cheaper-than-average hour inside it;
+  - enough spend to expect 10+ conversions, and a shortfall beyond normal variation;
+  - never more than a third of the spend;
+  - the biggest saving wins, shown as ≈ per week. Google gets a bid adjustment in 5% steps (−10 to −90%).
+  - Otherwise: "Keep it running around the clock".
+- **Acting:**
+  - **Meta one-click** (Advertix-published campaign, total budget, active or paused) switches those hours off on the ad set (`adset_schedule`, advertiser time zone). It keeps any hours already off, and says so if they're already off.
+  - It runs as a suggestion (`SET_AD_SCHEDULE`, source RULE, kind "Smart hours"). **A media buyer's apply or undo always goes to Approvals.**
+  - Logged as `adset.schedule` ("Changed the hours it runs from around the clock to off 00:00–06:00 (smart hours)").
+  - **Undo** restores the previous hours (all hours if there were none) and refuses if they were changed since.
+  - **Daily budget, or not published from Advertix:** the steps for Ads Manager, because Meta can't switch an existing ad set from daily to lifetime.
+- **Smart hours switch** (`Campaign.smartHours`):
+  - on the Hours tab and in the wizard (step 2, with "Use $X in total" when the budget is daily and there's an end date);
+  - when on, the daily run puts the suggestion in the suggestions feed and briefing;
+  - turning it off expires its waiting suggestions.
+- **UI:**
+  - **Hours** tab on campaign detail: heatmap with an "All days" row (the suggested hours outlined), a readout on hover or focus, **click or tap a cell to pin it** (to compare, and for phones with no hover; Esc or Unpin clears it), a legend ("Around average (up to +40%)"), a screen-reader table, the Advertix suggests card and "What each platform allows";
+  - **Budgets:** the client view (All / Meta / Google / TikTok, read only, mixed currencies explained);
+  - the review step shows Smart hours.
+- **API:** `GET /campaigns/:id/hours`, `PUT /campaigns/:id/smart-hours`, `POST /campaigns/:id/hours/suggest` (then the usual `/suggestions/:id/apply`), `GET /hours?clientId=&platform=`.
+- **Schema:** `HourlyStat`, `Campaign.smartHours` / `hoursSyncedAt`, `AdAccount.hoursSyncedAt`. **Production needs `prisma db push`.**
+- **Local test data:** the scratchpad script `seed-hours.ts <campaignId>` fills one campaign's week (~470 purchases, 00–06 about 2× the cost) on a **local** database only; `--undo` removes it.
+- **Checks:**
+  - **API test** (8 groups): analysis and gate; schedule grid; Meta hourly sync; Hours API; Smart hours → suggestion → media buyer to Approvals → approve → Meta; Undo and its refusal; tab apply, daily-budget refusal, already off; permissions.
+  - **Still pass:** C1, B2, B3, C13, C14, C6, C5.
+  - Typecheck and lint clean. A seeded local campaign gave 00–06, +64%, ≈166/week. **Not yet seen in the browser.**

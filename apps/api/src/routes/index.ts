@@ -3,6 +3,7 @@ import authRouter from "./auth";
 import campaignRouter from "./campaigns";
 import campaignStructureRouter from "./campaign-structure";
 import autoPauseRouter from "./auto-pause";
+import { campaignHoursRouter, hoursRouter } from "./hours";
 import analyticsRouter from "./analytics";
 import aiRouter from "./ai";
 import adAccountRouter from "./ad-accounts";
@@ -43,6 +44,7 @@ router.use("/auth", authRouter);
 router.use("/campaigns", campaignRouter);
 router.use("/campaigns", campaignStructureRouter);
 router.use("/campaigns", autoPauseRouter);
+router.use("/campaigns", campaignHoursRouter);
 router.use("/analytics", analyticsRouter);
 router.use("/ai", aiRouter);
 router.use("/ad-accounts", adAccountRouter);
@@ -69,6 +71,7 @@ router.use("/shares", sharesRouter);
 router.use("/reports", reportsRouter);
 router.use("/billing", billingRouter);
 router.use("/calendar", calendarRouter);
+router.use("/hours", hoursRouter);
 // Public (C4): the client portal; the token in the link is the only key.
 router.use("/portal", publicPortalRouter);
 

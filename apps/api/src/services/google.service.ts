@@ -355,6 +355,52 @@ class GoogleAdsService {
     }));
   }
 
+  /**
+   * Results by weekday and hour per campaign over a date range (smart hours,
+   * C7), in the account's time zone. Google aggregates across the days itself.
+   */
+  async getHourlyMetrics(accessToken: string, customerId: string, startDate: string, endDate: string) {
+    const cid = this.normalizeCustomerId(customerId);
+    const query = `
+      SELECT
+        campaign.id,
+        segments.day_of_week,
+        segments.hour,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions,
+        metrics.conversions_value
+      FROM campaign
+      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        AND campaign.status != 'REMOVED'
+    `.trim();
+    const data = await this.googleFetch<{
+      results?: Array<{
+        campaign?: { id?: string };
+        segments?: { dayOfWeek?: string; hour?: number };
+        metrics?: { impressions?: string; clicks?: string; costMicros?: string; conversions?: number | string; conversionsValue?: number | string };
+      }>;
+    }>(`${ADS_API_BASE}/customers/${cid}/googleAds:search`, {
+      method: "POST",
+      headers: { ...this.adsHeaders(accessToken), "login-customer-id": cid, "content-type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    const DAYS = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+    return (data.results ?? [])
+      .map((row) => ({
+        campaignId: row.campaign?.id ?? "",
+        weekday: DAYS.indexOf(row.segments?.dayOfWeek ?? ""),
+        hour: Number(row.segments?.hour ?? -1),
+        spend: Number(row.metrics?.costMicros ?? 0) / 1_000_000,
+        impressions: Number(row.metrics?.impressions ?? 0),
+        clicks: Number(row.metrics?.clicks ?? 0),
+        conversions: Number(row.metrics?.conversions ?? 0),
+        revenue: Number(row.metrics?.conversionsValue ?? 0),
+      }))
+      .filter((r) => r.campaignId && r.weekday >= 0 && r.hour >= 0 && r.hour < 24);
+  }
+
   /* ───────────────────────────────── */
   /* Mutations                         */
   /* ───────────────────────────────── */

@@ -325,6 +325,8 @@ model AdAccount {
   /// Timestamp of the last successful platform sync. Drives the "Last synced"
   /// label and lets the scheduler skip recently-synced accounts. Null = never.
   lastSyncedAt    DateTime?
+  /// Smart hours (C7): when the hour-by-hour report was last pulled (once a day).
+  hoursSyncedAt   DateTime?
   /// The agency client this account belongs to. Null = not assigned yet.
   clientId        String?
   /// When the stored token stops working and the user has to reconnect (Meta
@@ -401,10 +403,16 @@ model Campaign {
   blackouts          Json?
   /// Pause while the account's pixel is silent, resume when it fires (the C14 rule, for this campaign).
   pauseOnTrackingLoss Boolean  @default(false)
+  /// Smart hours (C7): Advertix watches this campaign's hours and, once it has
+  /// 14+ days and 300+ conversions, suggests switching off costly hours (via Approvals).
+  smartHours         Boolean   @default(false)
+  /// When its hour-by-hour report (HourlyStat) was last rebuilt.
+  hoursSyncedAt      DateTime?
 
   workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   adAccount   AdAccount         @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
   metrics     CampaignMetrics[]
+  hourlyStats HourlyStat[]
   creatives   Creative[]
   suggestions Suggestion[]
   changeLogs  ChangeLog[]
@@ -746,6 +754,32 @@ model Suggestion {
   @@index([workspaceId, status])
   @@index([workspaceId, clientId])
   @@index([workspaceId, dedupeKey])
+  @@index([campaignId])
+}
+
+// ─── Smart hours (plan C7) ───────────────────────────────────────────────────
+
+/// One cell of a campaign's week: totals for this weekday and hour over the
+/// last 45 days, in the ad account's time zone. Rebuilt daily from the
+/// platform's hourly report.
+model HourlyStat {
+  id          String   @id @default(cuid())
+  campaignId  String
+  /// 0 = Sunday … 6 = Saturday.
+  weekday     Int
+  /// 0–23.
+  hour        Int
+  spend       Decimal  @db.Decimal(12, 2)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  /// Google reports fractional conversions.
+  conversions Float    @default(0)
+  revenue     Decimal  @default(0) @db.Decimal(14, 2)
+  updatedAt   DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, weekday, hour])
   @@index([campaignId])
 }
 

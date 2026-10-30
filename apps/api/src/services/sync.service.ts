@@ -96,7 +96,7 @@ function firstActionValue(list: MetaActions, types: string[]): number {
 }
 
 /** Spend, clicks, purchases and revenue from one Meta insights row (campaign or ad level). */
-function metaResults(row: {
+export function metaResults(row: {
   spend?: string;
   impressions?: string;
   clicks?: string;

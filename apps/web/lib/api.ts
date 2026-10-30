@@ -76,6 +76,66 @@ export interface SafetySettings {
   clients: { id: string; name: string; pixel: boolean; cap: boolean; autoApply: boolean; askFirst: boolean; hasMonthlyBudget: boolean }[];
 }
 
+/* Smart hours (C7) */
+export interface HoursCell {
+  weekday: number;
+  hour: number;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  revenue: number;
+  /** Cost per result ÷ average (1 = average). 99 = spent 3× the average, got nothing. null = too few to judge (`thin`) or no delivery (`empty`). */
+  value: number | null;
+  thin: boolean;
+  empty: boolean;
+}
+export interface HoursEligibility {
+  days: number;
+  conversions: number;
+  needDays: number;
+  needConversions: number;
+  ok: boolean;
+}
+export interface HoursRecommendation {
+  from: number;
+  to: number;
+  cost: number | null;
+  average: number;
+  pctMore: number;
+  spendShare: number;
+  conversionShare: number;
+  savedPerWeek: number;
+  bidAdjustment: number;
+}
+export type HoursApply =
+  | { mode: "one-click"; label: string }
+  | { mode: "manual"; reason: string; steps: string[] }
+  | { mode: "none"; reason: string };
+export interface HoursAnalysis {
+  metric: "conversion" | "click";
+  average: number;
+  total: { spend: number; impressions: number; clicks: number; conversions: number; revenue: number };
+  cells: HoursCell[];
+  hours: HoursCell[];
+  eligible: HoursEligibility;
+  recommendation: HoursRecommendation | null;
+  windowDays: number;
+}
+export interface CampaignHours extends HoursAnalysis {
+  campaignId: string;
+  platform: Platform;
+  timezone: string | null;
+  currency: string | null;
+  smartHours: boolean;
+  syncedAt: string | null;
+  apply: HoursApply;
+  suggestion: { id: string; status: "OPEN" | "APPLIED"; title: string; appliedAt: string | null; payload: { from?: number; to?: number } | null } | null;
+}
+export type ClientHours =
+  | { mixedCurrency: true; currencies: string[]; campaigns: number }
+  | (HoursAnalysis & { mixedCurrency: false; currency: string; timezone: string | null; mixedZones: boolean; campaigns: number; platforms: Platform[] });
+
 /* Auto-pause (C6) */
 export interface Blackout {
   /** YYYY-MM-DD, in the workspace time zone. */
@@ -586,6 +646,8 @@ export interface Campaign {
   spendCap?: string | number | null;
   blackouts?: Blackout[] | null;
   pauseOnTrackingLoss?: boolean;
+  /** Smart hours (C7). */
+  smartHours?: boolean;
   targeting: unknown;
   /** Range-level unique reach (last 30d) from Meta. NOT summed from daily
    *  metrics (reach is de-duplicated) — matches the figure Ads Manager shows. */
@@ -1621,6 +1683,11 @@ export function useApiClient() {
     /* Alerts inbox (C2) */
     getAlerts: (state: "open" | "resolved" = "open", refresh = false) => apiFetch<{ alerts: AppAlert[]; refreshedAt: string }>(`/alerts?state=${state}${refresh ? "&refresh=1" : ""}`),
     getAlertSummary: () => apiFetch<AlertSummary>("/alerts/summary"),
+    getCampaignHours: (campaignId: string) => apiFetch<CampaignHours>(`/campaigns/${campaignId}/hours`),
+    setSmartHours: (campaignId: string, on: boolean) => apiFetch<{ smartHours: boolean }>(`/campaigns/${campaignId}/smart-hours`, { method: "PUT", body: JSON.stringify({ on }) }),
+    suggestHours: (campaignId: string) => apiFetch<{ suggestionId: string; status: string }>(`/campaigns/${campaignId}/hours/suggest`, { method: "POST" }),
+    getClientHours: (clientId: string | null, platform: Platform | null) =>
+      apiFetch<ClientHours>(`/hours?${new URLSearchParams({ ...(clientId ? { clientId } : {}), ...(platform ? { platform } : {}) })}`),
     setAutoPause: (campaignId: string, data: AutoPause) =>
       apiFetch<{ autoPause: AutoPause; status: CampaignStatus; acted: string[] }>(`/campaigns/${campaignId}/auto-pause`, { method: "PUT", body: JSON.stringify(data) }),
     checkLaunch: (q: { adAccountId: string; objective: string; start: string; end?: string | null; excludeId?: string | null }) =>

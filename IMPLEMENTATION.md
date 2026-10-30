@@ -485,6 +485,21 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-10-30 — Fix: wizard budget check and stale drafts
+
+- **Total budget minimum counted by the hour, like Meta.** Meta needs more than the daily minimum × hours ÷ 24, in the ad account's time zone. A day with a clock change has 23 or 25 hours: for example, 31 Oct–1 Nov 2026 in Los Angeles is 49 hours, so PKR 278.12 a day needs more than PKR 567.83, not PKR 556.24. The wizard now checks that in step 2 (with a note when the clocks change), instead of Meta refusing it at publish.
+- **A one-day campaign is allowed** (end date = start date): it runs 00:00–23:59.
+- **Restored drafts with an old ad account:** a reconnected account gets a new id, and a saved draft kept the old one ("Ad account not found in this workspace" at publish). The wizard now switches it to the platform's current account, or drops the platform if none is connected.
+
+### 2026-10-30 — C7 Smart hours
+
+- **Hours tab** on campaign detail: cost per purchase by weekday and hour (last 45 days, account time zone), with "too few to judge" hatching and a hover readout. Before 14 days and 300 purchases it shows progress toward that; after, "Advertix suggests" names the costliest run of hours (e.g. "Switch off 00:00–06:00", +64% per purchase, ≈ $166 / week).
+- **Meta, one click**, on campaigns published from Advertix with a total budget: switches those hours off on the ad set, through Approvals for media buyers, with Undo. Daily budgets and other platforms get exact steps (Google: a bid adjustment; TikTok: dayparting).
+- **Smart hours switch** on the tab and in the wizard: with it on, the suggestion also lands in the suggestions feed.
+- **Budgets:** the same heatmap for a client's campaigns together, by platform.
+- **Data:** a daily hourly report per ad account (Meta; Google and TikTok readers written but untested), `services/hours.service.ts`.
+- **Schema:** `HourlyStat`, `Campaign.smartHours` / `hoursSyncedAt`, `AdAccount.hoursSyncedAt` → `prisma db push` on production.
+
 ### 2026-10-28 — Fix: campaign dates in the ad account's time zone
 
 - **The bug:** the wizard saves dates as midnight UTC, and publishing sent them to Meta as is. A Pakistan account's campaign started at 05:00, a New York one the evening before, and an end date of 30 Nov stopped at the very start of 30 Nov. With a total budget, Meta then spread it over one day fewer than planned.

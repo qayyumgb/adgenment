@@ -10,7 +10,7 @@
 
 import { Prisma, type Ad, type AdAccount, type AdSet, type Campaign } from "@prisma/client";
 import { prisma } from "../lib/prisma";
-import { metaService } from "./meta.service";
+import { metaService, type MetaScheduleBlock } from "./meta.service";
 import { friendlyMetaError, isMetaError } from "../lib/meta-errors";
 
 export type CampaignWithAccount = Campaign & { adAccount: AdAccount };
@@ -90,6 +90,39 @@ export async function setDailyBudget(c: CampaignWithAccount, amount: number): Pr
   // Keep the synced ad set row in step (B4).
   if (c.externalAdSetId) {
     await prisma.adSet.updateMany({ where: { campaignId: c.id, externalId: c.externalAdSetId }, data: { dailyBudget: new Prisma.Decimal(amount.toFixed(2)) } });
+  }
+}
+
+/** Why Advertix can't set this campaign's hours on Meta (smart hours, C7), or null if it can. */
+export function scheduleBlocker(c: CampaignWithAccount): string | null {
+  const s = statusBlocker(c);
+  if (s) return s;
+  if (!c.externalAdSetId) return "This campaign wasn't published from Advertix, so set its hours on each ad set in Ads Manager.";
+  if (c.budgetType !== "LIFETIME") return "Meta allows hour schedules only on a total (lifetime) budget.";
+  return null;
+}
+
+/** The hours our single ad set runs in (no blocks = around the clock). */
+export async function getAdSchedule(c: CampaignWithAccount): Promise<MetaScheduleBlock[]> {
+  const blocker = scheduleBlocker(c);
+  if (blocker) throw new ActionError(409, blocker);
+  try {
+    return (await metaService.getAdSetSchedule(metaService.decryptToken(c.adAccount.accessToken), c.externalAdSetId!)).schedule;
+  } catch (err) {
+    throw platformError(err);
+  }
+}
+
+/** Set the hours our single ad set runs in, on Meta. */
+export async function setAdSchedule(c: CampaignWithAccount, schedule: MetaScheduleBlock[]): Promise<void> {
+  const blocker = scheduleBlocker(c);
+  if (blocker) throw new ActionError(409, blocker);
+  try {
+    await metaService.updateAdSet(metaService.decryptToken(c.adAccount.accessToken), c.externalAdSetId!, { schedule });
+  } catch (err) {
+    const e = platformError(err);
+    console.error(`[campaign-actions] schedule ${c.id} failed: ${e.detail ?? e.message}`);
+    throw e;
   }
 }
 

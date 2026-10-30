@@ -22,6 +22,7 @@ import { dailySeries, dayLabel } from "@/components/app/campaign/metrics";
 import { OverviewTab } from "@/components/app/campaign/OverviewTab";
 import { SettingsTab } from "@/components/app/campaign/SettingsTab";
 import { HistoryTab } from "@/components/app/campaign/HistoryTab";
+import { HoursTab } from "@/components/app/campaign/HoursTab";
 import { DuplicateDialog } from "@/components/app/campaign/DuplicateDialog";
 
 /**
@@ -33,7 +34,7 @@ import { DuplicateDialog } from "@/components/app/campaign/DuplicateDialog";
  * launch / pause on Meta, rename / budget / delete.
  */
 
-const TABS = ["overview", "adsets", "ads", "log", "settings"] as const;
+const TABS = ["overview", "adsets", "ads", "hours", "log", "settings"] as const;
 type Tab = (typeof TABS)[number];
 const STATUS_LABEL: Record<Campaign["status"], string> = { ACTIVE: "Active", PAUSED: "Paused", DRAFT: "Draft", ENDED: "Ended" };
 
@@ -258,6 +259,7 @@ export default function CampaignDetailPage() {
               { id: "overview", label: "Overview", href: tabHref("overview") },
               { id: "adsets", label: "Ad sets", href: tabHref("adsets"), count: structure.data?.adSets.length || undefined },
               { id: "ads", label: "Ads", href: tabHref("ads"), count: structure.data?.ads.length || undefined },
+              { id: "hours", label: "Hours", href: tabHref("hours") },
               { id: "log", label: "Change log", href: tabHref("log") },
               { id: "settings", label: "Settings", href: tabHref("settings") },
             ]}
@@ -279,6 +281,7 @@ export default function CampaignDetailPage() {
         {tab === "overview" && <OverviewTab campaign={c} current={current} previous={previous} loading={metricsQ.loading} onChanged={refetch} structure={structure} />}
         {tab === "adsets" && <AdSetsTab campaign={c} st={structure} onSynced={() => (refetch(), void structure.refetch())} />}
         {tab === "ads" && <AdsTab campaign={c} st={structure} adSetFilter={searchParams.get("adset")} onSynced={() => (refetch(), void structure.refetch())} />}
+        {tab === "hours" && <HoursTab campaign={c} />}
         {tab === "log" && <HistoryTab campaign={c} onChanged={refetch} />}
         {tab === "settings" && <SettingsTab key={c.updatedAt} campaign={c} onSaved={refetch} onDelete={() => void remove()} />}
       </PageBody>

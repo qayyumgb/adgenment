@@ -108,6 +108,7 @@ export default function NewCampaignPage() {
         endDate: c.endDate ? c.endDate.slice(0, 10) : "",
         runContinuously: !c.endDate,
         autoPause: autoPauseFromCampaign(c),
+        smartHours: !!c.smartHours,
         meta: { ...initialState({ headline: c.name }), ...targetingToState(c.targeting as Parameters<typeof targetingToState>[0]) },
         createdIds: { [c.platform]: c.id },
       });
@@ -115,6 +116,23 @@ export default function NewCampaignPage() {
     }
     setHydrated(true);
   }, [hydrated, accountsQ.loading, fromId, fromQ.loading, fromQ.data, storageKey, accounts, audienceParam, audienceQ.loading, audienceQ.data]);
+
+  // A restored draft can name an ad account that's gone (reconnected accounts
+  // get a new id): use the platform's current account, or drop the platform.
+  useEffect(() => {
+    if (!hydrated || accountsQ.loading || !accountsQ.data) return;
+    const stale = draft.platforms.filter((p) => !accounts.some((a) => a.id === draft.accountIds[p] && a.platform === p));
+    if (!stale.length) return;
+    const accountIds = { ...draft.accountIds };
+    const platforms = draft.platforms.filter((p) => {
+      if (!stale.includes(p)) return true;
+      const first = accounts.find((a) => a.platform === p);
+      if (first) accountIds[p] = first.id;
+      else delete accountIds[p];
+      return !!first;
+    });
+    patch({ platforms, accountIds });
+  }, [hydrated, accountsQ.loading, accountsQ.data, accounts, draft.platforms, draft.accountIds, patch]);
 
   // Autosave (minus the File, which can't be stored).
   useEffect(() => {
@@ -131,6 +149,11 @@ export default function NewCampaignPage() {
   const budgetAccount = accounts.find((a) => a.id === (budgetPlatform ? draft.accountIds[budgetPlatform] : undefined)) ?? accounts[0] ?? null;
   const minDailyBudget = budgetAccount?.minDailyBudget ?? null;
   const currency = budgetAccount?.currency ?? null;
+  // The budget check counts a total budget by the hour in this zone (see scheduleCheck).
+  const budgetTz = budgetAccount?.timezone ?? null;
+  useEffect(() => {
+    if (hydrated && (draft.budgetTz ?? null) !== budgetTz) patch({ budgetTz });
+  }, [hydrated, budgetTz, draft.budgetTz, patch]);
   const clientName = useCallback((id: string | null | undefined) => (id ? clients.find((c) => c.id === id && !c.isDefault)?.name ?? null : null), [clients]);
   const history = useApi((c) => c.getAnalyticsOverview(30, undefined, budgetAccount?.clientId ?? undefined), [budgetAccount?.clientId], { key: "wizard-history" });
   const historyLabel = clientName(budgetAccount?.clientId) ?? "your workspace";
@@ -193,6 +216,8 @@ export default function NewCampaignPage() {
       const autoPause = toAutoPause(draft.autoPause);
       const withAutoPause = created.META && (isAutoPauseOn(draft.autoPause) || draft.createdIds.META);
       if (withAutoPause) await api.setAutoPause(created.META!, autoPause);
+      // Smart hours (C7) is saved before publishing too.
+      if (created.META && (draft.smartHours || draft.createdIds.META)) await api.setSmartHours(created.META, draft.smartHours);
       const result: LaunchResult = [];
       for (const p of draft.platforms) {
         const id = created[p]!;
