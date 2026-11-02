@@ -10,16 +10,9 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import router from "./routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { prisma } from "./lib/prisma";
-import {
-  startSyncScheduler,
-  stopSyncScheduler,
-} from "./services/sync-scheduler.service";
-import { startNotificationScheduler } from "./services/notifications.service";
-import { startApprovalScheduler } from "./services/approvals.service";
-import { startSafetyScheduler } from "./services/safety.service";
-import { startHoursScheduler } from "./services/hours.service";
-import { startAlertsScheduler } from "./services/alerts.service";
-import { startReportScheduler } from "./services/reports.service";
+import { stopSyncScheduler } from "./services/sync-scheduler.service";
+import { startBackgroundJobs } from "./services/jobs.service";
+import { queueRunning, stopJobs } from "./lib/jobs";
 import { handleWebhook } from "./services/billing.service";
 
 const app = express();
@@ -105,6 +98,7 @@ app.get("/health", (_req: Request, res: Response) => {
     version: "1.0.0",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    jobs: queueRunning() ? "queue" : "timers",
   });
 });
 
@@ -193,25 +187,20 @@ async function startServer() {
       );
     });
 
-    // Periodic platform sync so dashboards stay current without manual action.
-    startSyncScheduler();
-    // Hourly email alerts (A14); nothing is sent without RESEND_API_KEY.
-    startNotificationScheduler();
-    startApprovalScheduler();
-    // Safety rules (C14) and auto-apply (C13): only for clients that opted in.
-    startSafetyScheduler();
-    startHoursScheduler();
-    // Alerts inbox (C2): recomputed hourly from stored data.
-    startAlertsScheduler();
-    // Scheduled client reports (C4b): 09:00 workspace time, weekly or monthly.
-    startReportScheduler();
+    // Background work (sync, alerts, emails, safety rules, smart hours,
+    // reports, approval timeouts) on the job queue (C10); falls back to
+    // in-process timers if the queue can't start.
+    await startBackgroundJobs();
 
     // Graceful shutdown — Railway sends SIGTERM during redeploy
     const shutdown = (signal: string) => {
       console.log(`[advertix-api] ${signal} received — shutting down…`);
       stopSyncScheduler();
+      // Running jobs get a few seconds (alongside open requests); anything cut off is retried after the deploy.
+      const jobsStopped = stopJobs();
       server.close(async () => {
         try {
+          await jobsStopped;
           await prisma.$disconnect();
           console.log("[advertix-api] prisma disconnected — bye");
           process.exit(0);

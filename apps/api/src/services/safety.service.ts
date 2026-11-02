@@ -309,7 +309,8 @@ export async function saveSafetySettings(workspaceId: string, input: { maxCutPct
 let handle: NodeJS.Timeout | null = null;
 let running = false;
 
-async function tick() {
+/** One pass over the workspaces with a rule on (the "safety-rules" job, or the timer). */
+export async function safetyTick() {
   if (running) return;
   running = true;
   try {
@@ -333,8 +334,8 @@ async function tick() {
 export function startSafetyScheduler() {
   if ((process.env.SAFETY_RULES_ENABLED ?? "true").toLowerCase() === "false" || handle) return;
   setTimeout(() => {
-    void tick();
-    handle = setInterval(() => void tick(), HOUR);
+    void safetyTick();
+    handle = setInterval(() => void safetyTick(), HOUR);
   }, 180_000);
   console.log("[safety] safety rules scheduled hourly");
 }

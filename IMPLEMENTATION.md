@@ -485,6 +485,14 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-02 — C10 Job queue (pg-boss)
+
+- **Background work moved to a job queue** on the existing Postgres (pg-boss 10.4, schema `pgboss`, created on first start; no Redis, no extra service). The 7 timers (sync, approval timeouts, email alerts, client reports, safety rules, alerts inbox, smart hours) are scheduled jobs: once per slot across every API instance, never overlapping, retried with backoff, and retried after a deploy cuts them off.
+- **Sync:** checked every 15 minutes; each due account is its own job in a per-platform queue (`SYNC_CONCURRENCY`, default 2), retried 3 times for temporary failures, not for lost access. Sync now is unchanged.
+- **Fallback:** `JOB_QUEUE=off`, or a queue that can't start, runs the old in-process timers. `/health` shows which (`jobs: "queue" | "timers"`).
+- **New env (all optional):** `JOB_QUEUE` (on/off), `JOB_QUEUE_POOL` (default 4), `JOB_QUEUE_SCHEMA` (default pgboss), `SYNC_CONCURRENCY` (default 2).
+- **Files:** [lib/jobs.ts](apps/api/src/lib/jobs.ts), [jobs.service.ts](apps/api/src/services/jobs.service.ts), [sync-scheduler.service.ts](apps/api/src/services/sync-scheduler.service.ts), [index.ts](apps/api/src/index.ts); ticks exported from the notifications, reports, safety and alerts services. New dependency `pg-boss@^10.4.2`. No Prisma schema change.
+
 ### 2026-10-30 — C9b + C9c Experiments: start tests, Scale the winner, lessons
 
 - **New test** on the Experiments page: pick a Meta campaign published from Advertix and 1–4 images or videos from Creatives. Advertix creates the new ads (same copy) and starts Meta's creative test, with a test budget and duration. If anything fails, it cleans up what it made.

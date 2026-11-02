@@ -341,7 +341,8 @@ export async function dismissAlert(access: Access, userId: string, id: string) {
 let handle: NodeJS.Timeout | null = null;
 let running = false;
 
-async function tick() {
+/** One pass over every workspace (the "alerts-inbox" job, or the timer). */
+export async function alertsTick() {
   if (running) return;
   running = true;
   try {
@@ -364,8 +365,8 @@ async function tick() {
 export function startAlertsScheduler() {
   if ((process.env.ALERTS_INBOX_ENABLED ?? "true").toLowerCase() === "false" || handle) return;
   setTimeout(() => {
-    void tick();
-    handle = setInterval(() => void tick(), 60 * 60_000);
+    void alertsTick();
+    handle = setInterval(() => void alertsTick(), 60 * 60_000);
   }, 240_000);
   console.log("[alerts] inbox refresh scheduled hourly");
 }

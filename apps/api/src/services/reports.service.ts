@@ -360,23 +360,25 @@ export async function runScheduledReports(now = new Date()) {
 let handle: NodeJS.Timeout | null = null;
 let running = false;
 
+/** One check for due reports (the "client-reports" job, or the timer). */
+export async function reportsTick() {
+  if (running || !emailConfigured()) return;
+  running = true;
+  try {
+    await runScheduledReports();
+  } catch (err) {
+    console.error("[reports]", err instanceof Error ? err.message : err);
+  } finally {
+    running = false;
+  }
+}
+
 /** Hourly check for due reports. Disable with SCHEDULED_REPORTS_ENABLED=false; nothing is sent without RESEND_API_KEY. */
 export function startReportScheduler() {
   if ((process.env.SCHEDULED_REPORTS_ENABLED ?? "true").toLowerCase() === "false" || handle) return;
-  const tick = async () => {
-    if (running || !emailConfigured()) return;
-    running = true;
-    try {
-      await runScheduledReports();
-    } catch (err) {
-      console.error("[reports]", err instanceof Error ? err.message : err);
-    } finally {
-      running = false;
-    }
-  };
   setTimeout(() => {
-    void tick();
-    handle = setInterval(() => void tick(), 60 * 60_000);
+    void reportsTick();
+    handle = setInterval(() => void reportsTick(), 60 * 60_000);
   }, 300_000);
   console.log("[reports] scheduled client reports checked hourly");
 }

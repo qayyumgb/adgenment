@@ -197,7 +197,7 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C7 ✅ | **F6 Smart-hours heatmap** — Hours tab (campaign) + client view (Budgets); daily hourly report (Meta; Google/TikTok readers untested); 14 days + 300 conversions gate; Meta one-click hour schedule on lifetime budgets via Approvals with Undo; Google/TikTok exact steps; Smart hours switch (wizard + tab) | C1, hourly sync, Google / TikTok write parity | L |
 | C8 | **Snapchat connector** — **kept "coming soon" everywhere (decided 2026-10-30)**; build the connector later, when a customer needs it | — | M |
 | C9 ✅ | **F3 Experiments** — tests with significance, scale the winner. **Decided 2026-10-30:** Meta's own A/B test (ad studies, a fair randomised split), creatives first, in phases: **C9a** (M) Experiments page reading A/B tests on the account (incl. ones made in Ads Manager): results per version, confidence, expected end, early-stop note · **C9b** (L) create creative tests from Advertix + "Scale the winner" through Approvals with Undo (creative tests are `SPLIT_TEST_V2` on `/{business_id}/ad_studies`; check whether it needs the C16 Graph API upgrade first) · **C9c** (S) test history and lessons per client, fed to the AI Planner. **Other platforms: when Advertix gets write access to Google, TikTok, LinkedIn (and Snapchat, C8), add their experiments the same way** (Google Ads experiments, TikTok split tests, LinkedIn A/B tests) on the same Experiments page and model | B4, C1, (C16 for C9b) | XL |
-| C10 | **Job queue** — BullMQ + Redis replaces the in-process `setInterval`; multi-platform sync, alerts, reports, scheduled budgets / launches | Adds a Redis service on Railway (≈ $1–3 / month extra) | M |
+| C10 ✅ | **Job queue** — **pg-boss on the existing Postgres** (decided 2026-11-02 instead of BullMQ + Redis: no extra service or cost). The 7 background timers become scheduled jobs (once across instances, retries, survive deploys); sync runs one job per account in per-platform queues; falls back to the old timers if the queue can't start | — | M |
 | C11 (part) | Stripe billing ✅, activation checklist ✅, AI credits ✅. Shopify / GA4 moved to C18 (last in the series) | — | — |
 | C12 ✅ | **Morning briefing email** — daily, in the workspace time zone: top 3 decisions across clients (numbers + one-click link) and anything applied overnight. Opt-in per person in Settings › Notifications | A14 notifications, B2 | S |
 | C13 ✅ | **Guarded auto-apply** — per client "Suggest only" / "Auto-apply small changes" (Settings › AI). Only executable Meta budget suggestions, under a daily limit (default 15% of the campaign's budget), one move per campaign per day, logged as applied automatically with 7-day undo; workspace "Pause all automation" switch. Runs after each sync | B2, B3, A14 | M |
@@ -282,6 +282,11 @@ Not blocking the start, but needed before the named phase:
 ## 10a. Testing backlog
 
 Features built and covered by automated tests, but not yet tested end to end by hand. Tick one off once it has been tested locally and on production.
+
+- [ ] **Job queue (C10)**, built 2026-11-02. Nothing to push to the schema: pg-boss creates its own `pgboss` schema on first start.
+  - **Local:** start the API. The log shows `[jobs] queue started: 7 scheduled jobs, 4 work queues`, and `GET /health` returns `"jobs": "queue"`. Within 15 minutes, due accounts are queued (`[sync-scheduler] queued N account sync(s)`) and synced. The rest run at their minute (email alerts :00, reports :02, safety :05, alerts inbox :12, smart hours :20, approval timeouts every 10 minutes).
+  - **Fallback:** `JOB_QUEUE=off` → `[jobs] queue off… using in-process timers` and `"jobs": "timers"`; everything still runs as before C10.
+  - **Production:** after the deploy, the same log line and `/health`. Redeploy while a sync runs: it's retried after the new instance starts. Watch for `[jobs]` errors. If the database URL has `sslmode=require` and the queue can't connect, the API falls back to timers and logs why.
 
 - [ ] **Experiments (C9a + C9b + C9c)**, built 2026-10-30, not yet looked at in the browser or run against real Meta A/B tests. **Test on production** (the local test app can't create ads). Needs `prisma db push` (Experiment, AdAccount.metaBusinessId).
   - **C9a, reading:** a test made in Ads Manager shows on **Experiments** after a sync, with results per version, chance-best bars, the pill, the Advertix note, Judge by, and the Ads Manager link. Empty state; client switcher; phone; dark mode.
@@ -1190,3 +1195,23 @@ C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the 
   - End (once); Scale through Approvals with the budget move and Undo; no re-proposal right after an Undo;
   - lessons (suggested, saved, listed, in the planner prompt).
   - **Still pass:** C9a, C1, B2, B3, C7, A12 (planner). Typecheck and lint clean. **Not yet seen in the browser, and not yet run against Meta.**
+
+### C10 — Job queue (pg-boss) ✅ (2026-11-02)
+
+- **Decision (2026-11-02):** **pg-boss** on the app's own Postgres instead of BullMQ + Redis. Advertix runs hundreds to a few thousand jobs a day, far below what needs Redis; pg-boss gives cron schedules, one-at-a-time jobs, retries with backoff and recovery after restarts with no extra service, bill or local Redis. Version **10.4.x** (CommonJS, Node ≥ 20, matches the API's Docker image); 11+ needs Node 22, 12+ is ESM-only.
+- **`lib/jobs.ts`:**
+  - starts pg-boss in schema `pgboss` (`JOB_QUEUE_SCHEMA`), pool `JOB_QUEUE_POOL` (default 4), created on first start;
+  - **scheduled jobs:** queue policy `stately` (one running + at most one waiting), so a tick runs once per cron slot across every instance and never overlaps itself; 2 retries with backoff; a run past its expiry counts as stuck and is retried;
+  - **work queues:** `concurrency` workers per instance, retries and expiry per queue; `enqueue(name, data, key)` keeps one waiting job per key; `pendingKeys` lists keys with a job waiting, retrying or running;
+  - **fallback:** `JOB_QUEUE=off`, or a queue that can't start, runs the old in-process timers (each job keeps its `*_ENABLED` switch); disabled jobs are unscheduled;
+  - **shutdown:** running jobs get 8 seconds alongside open requests; anything cut off is retried after the deploy.
+- **`services/jobs.service.ts`, the 7 jobs (UTC):** `sync-due-accounts` at :07/:22/:37/:52 · `approval-timeouts` every 10 minutes · `email-alerts` (alerts + morning briefing) :00 · `client-reports` :02 · `safety-rules` (C13/C14/C6) :05 · `alerts-inbox` :12 · `smart-hours` :20. Emails sent at a local time check the workspace's hour themselves, as before. The services export their ticks (`notificationsTick`, `reportsTick`, `safetyTick`, `alertsTick`, `hoursTick`, `runApprovalTimeouts`, `syncTick`).
+- **Sync (`sync-scheduler.service.ts`):**
+  - the tick queues each **due** account (not synced within `SYNC_INTERVAL_HOURS`) into `sync-meta` / `sync-google` / `sync-tiktok` / `sync-linkedin`, `SYNC_CONCURRENCY` at a time per platform (default 2); accounts with a job already waiting or running are skipped (a second job would hold up the queue);
+  - checking every 15 minutes makes the interval close to exactly 6 hours (before, a 6-hourly check could leave an account up to 12 hours old);
+  - each job re-checks the account (disconnected, archived, auto-sync off, or synced with **Sync now** since) before syncing;
+  - **retries:** 3, about 1, 2 and 4 minutes apart, for rate limits, timeouts and 5xx; **lost access** (Meta 190/200/10/3, HTTP 401/403, missing setup) isn't retried — the error is already on the account for Connections and sync alerts;
+  - **Sync now** and the first sync after connecting stay direct (the person waits for the result).
+- **`/health`** shows `"jobs": "queue"` or `"timers"`. Job history is in the `pgboss.job` / `pgboss.archive` tables (completed jobs archived after 12 hours, deleted after 7 days).
+- **Not in C10:** exact-time jobs (blackout resume, scheduled budgets or launches at a set minute) — nothing needs sub-hour timing yet; `sendAfter` is ready when something does. A separate worker service and a job-status page are also left for later.
+- **Checks:** API test with 10 groups against a throwaway schema (error classification; timer mode; fallback when off or unreachable; schedules registered, disabled ones not; retry with backoff; one job per key; the sync tick queues due accounts, retries a timeout, doesn't retry lost access; a busy account isn't queued twice and a job re-checks the account; stop; the 7 real jobs' crons). A second test runs a real cron on two pg-boss instances sharing a schema: it fires once per minute. **Still pass:** A13, B4, C2, C4b, C12, C14, C7; A14's email alerts (its billing check is out of date since Stripe billing). Typecheck clean.

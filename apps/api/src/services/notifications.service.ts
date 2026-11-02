@@ -443,7 +443,8 @@ export async function previewBriefing(workspaceId: string, userId: string, now =
 let handle: NodeJS.Timeout | null = null;
 let running = false;
 
-async function tick() {
+/** One pass over every workspace (the "email-alerts" job, or the timer). */
+export async function notificationsTick() {
   if (running || !emailConfigured()) return;
   running = true;
   try {
@@ -464,8 +465,8 @@ async function tick() {
 export function startNotificationScheduler() {
   if ((process.env.NOTIFICATIONS_ENABLED ?? "true").toLowerCase() === "false" || handle) return;
   setTimeout(() => {
-    void tick();
-    handle = setInterval(() => void tick(), 60 * 60 * 1000);
+    void notificationsTick();
+    handle = setInterval(() => void notificationsTick(), 60 * 60 * 1000);
   }, 120_000);
   console.log("[alerts] email alerts scheduled hourly");
 }
