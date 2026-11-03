@@ -1,5 +1,6 @@
 import type { AlertSeverity, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { lockedWorkspaceIds } from "../lib/plans";
 import type { Access } from "../lib/access";
 import { accountStatus } from "./connections.service";
 import { computePacing } from "./pacing.service";
@@ -346,10 +347,12 @@ export async function alertsTick() {
   if (running) return;
   running = true;
   try {
+    const locked = new Set(await lockedWorkspaceIds());
     const workspaces = await prisma.workspace.findMany({ select: { id: true } });
     for (const w of workspaces) {
       try {
-        await refreshAlerts(w.id);
+        // A locked workspace (C15) only gets its trial emails.
+        if (!locked.has(w.id)) await refreshAlerts(w.id);
         // Trial ending / ended emails (C11), once each.
         if (emailConfigured()) await trialReminders(w.id);
       } catch (err) {

@@ -8,6 +8,8 @@ import { useApiClient } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button, Card, Skeleton, Toggle } from "@/components/app/ui";
 import { useAccess } from "@/components/app/team/access";
+import { usePlan } from "@/components/app/billing/plan";
+import { UpgradeCard } from "@/components/app/billing/Upgrade";
 import type { SettingsSaver } from "./types";
 
 /**
@@ -37,6 +39,7 @@ export function SafetyCard({ setSaver, picked }: { setSaver: (s: SettingsSaver |
   const access = useAccess();
   const canEdit = access.can("workspace");
   const q = useApi((c) => c.getSafetySettings(), [], { key: "safety-settings" });
+  const plan = usePlan();
   const s = q.data;
   const initial = useMemo<Form | null>(() => (s ? { maxCutPct: String(s.maxCutPct), autoApplyMaxPct: String(s.autoApplyMaxPct), automationPaused: s.automationPaused, clients: s.clients } : null), [s]);
   const [form, setForm] = useState<Form | null>(null);
@@ -68,6 +71,7 @@ export function SafetyCard({ setSaver, picked }: { setSaver: (s: SettingsSaver |
   }, [form, initial, dirty, canEdit, cutOk, autoOk]);
   useEffect(() => () => setSaver(null), [setSaver]);
 
+  if (!plan.has("automation")) return <UpgradeCard feature="automation" title="Automation" why="Let Advertix apply small budget changes on its own, pause campaigns when a pixel stops and slow spend before a monthly cap runs out." />;
   if (q.error) {
     return (
       <Card className="flex flex-wrap items-center justify-between gap-3">

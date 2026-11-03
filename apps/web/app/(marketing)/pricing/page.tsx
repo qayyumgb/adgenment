@@ -55,7 +55,7 @@ const FAQS = [
   },
   {
     q: "How does the free trial work?",
-    a: "You get 14 days with Team limits (5 clients, 5 seats) and 100 AI credits, no card needed. Pick a plan any time; if you pick one during the trial, you're only charged when the trial ends. If you don't, your data stays and syncing continues, but the AI and automation pause until you choose a plan.",
+    a: "You get 14 days with every feature, including approvals, automation, client portal links and scheduled reports, for up to 5 clients and 5 seats, with 100 AI credits. No card needed. Pick a plan any time; if you pick one during the trial, you're only charged when the trial ends. If you don't, the workspace locks until you choose a plan: your ads keep running on each platform and your data is kept.",
   },
   {
     q: "Do you take a percentage of spend?",

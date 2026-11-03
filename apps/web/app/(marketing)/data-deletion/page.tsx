@@ -211,6 +211,14 @@ function Timeframe() {
           database backups, and email requests are completed.
         </p>
         <p>
+          <strong>Inactive workspaces:</strong> If a free trial ends without a
+          paid plan, the workspace is locked. After 30 days locked we delete its
+          stored ad-platform access tokens. Workspaces locked for 30 days or
+          more may be deleted after at least 7 days&apos; notice by email, and
+          all are deleted automatically after 6 months locked (with emails 10, 5
+          and 2 days before). Choosing a plan before then keeps everything.
+        </p>
+        <p>
           <strong>Up to 90 days:</strong> We retain encrypted, anonymized log
           fragments solely to comply with applicable tax, financial, or legal
           obligations. These contain no personally identifying information and

@@ -1,5 +1,6 @@
 import { Prisma, type AdAccount, type Platform } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { lockedWorkspaceIds } from "../lib/plans";
 import { decryptToken, encryptToken } from "../lib/crypto";
 import { metaService } from "./meta.service";
 import { hh, hourRange } from "../lib/schedule-grid";
@@ -432,6 +433,7 @@ export async function hoursTick(now = new Date()) {
       where: {
         isActive: true,
         archivedAt: null,
+        workspaceId: { notIn: await lockedWorkspaceIds(now) },
         platform: { in: ["META", "GOOGLE", "TIKTOK"] },
         OR: [{ hoursSyncedAt: null }, { hoursSyncedAt: { lt: new Date(now.getTime() - 20 * 3_600_000) } }],
         campaigns: { some: { metrics: { some: { date: { gte: since }, spend: { gt: 0 } } } } },

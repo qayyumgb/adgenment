@@ -415,6 +415,23 @@ export class CreditsExhaustedError extends ApiError {
   }
 }
 
+/* Plans (C15) */
+export const PLAN_LOCKED_MESSAGE = "This workspace's free trial has ended.";
+/** Fired when the API says the workspace is locked; the shell refetches the plan and shows the lock screen. */
+export const PLAN_LOCKED_EVENT = "advertix:plan-locked";
+export class PlanLockedError extends ApiError {
+  constructor() {
+    super(PLAN_LOCKED_MESSAGE, { status: 402 });
+    this.name = "PlanLockedError";
+  }
+}
+/** 402 locked (trial over) → the lock screen takes over; fail the call quietly. */
+function throwIfPlanLocked(status: number, body: { code?: string } | null) {
+  if (status !== 402 || body?.code !== "PLAN_LOCKED") return;
+  window.dispatchEvent(new Event(PLAN_LOCKED_EVENT));
+  throw new PlanLockedError();
+}
+
 /** 402 out of credits → open the upgrade dialog and fail the call quietly. */
 function throwIfOutOfCredits(status: number, body: { code?: string; error?: string; credits?: unknown } | null) {
   if (status !== 402 || body?.code !== "CREDITS_EXHAUSTED") return;
@@ -428,7 +445,7 @@ function throwIfOutOfCredits(status: number, body: { code?: string; error?: stri
 if (typeof window !== "undefined" && !(toast.error as { __approvals?: boolean }).__approvals) {
   const original = toast.error;
   const patched = ((message: Parameters<typeof toast.error>[0], opts?: Parameters<typeof toast.error>[1]) =>
-    message === APPROVAL_PENDING_MESSAGE || message === CREDITS_EXHAUSTED_MESSAGE ? "" : original(message, opts)) as typeof toast.error & { __approvals?: boolean };
+    message === APPROVAL_PENDING_MESSAGE || message === CREDITS_EXHAUSTED_MESSAGE || message === PLAN_LOCKED_MESSAGE ? "" : original(message, opts)) as typeof toast.error & { __approvals?: boolean };
   patched.__approvals = true;
   toast.error = patched;
 }
@@ -453,10 +470,63 @@ export type PlanType = "FREE" | "FOUNDER" | "STARTER" | "PRO" | "ENTERPRISE";
 /* Billing (C11) */
 export type PaidTier = "FOUNDER" | "TEAM" | "AGENCY";
 export type BillingInterval = "month" | "year";
+/** Plan features (C15): Approvals from Team; automation, portal links and scheduled reports from Agency. The trial has all. */
+export type PlanFeature = "approvals" | "automation" | "portal" | "reports";
+/** The plan as /auth/me reports it (C15). */
+export interface PlanInfo {
+  state: BillingStatus["state"];
+  /** Trial over with no plan: only Billing and Settings work. */
+  locked: boolean;
+  features: PlanFeature[];
+  tier: BillingStatus["tier"];
+  trialEndsAt: string | null;
+  trialDaysLeft: number;
+  /** Retention (C15b): the stored ad access was removed after 30 days locked (reconnect after choosing a plan). */
+  accessRemovedAt?: string | null;
+  /** Retention (C15b): the workspace is set to be deleted on this date unless a plan is chosen. */
+  deletionScheduledAt?: string | null;
+}
+
+/* Superadmin (C15b) */
+export interface AdminWorkspace {
+  id: string;
+  name: string;
+  ownerEmail: string | null;
+  createdAt: string;
+  plan: PlanType;
+  state: BillingStatus["state"];
+  locked: boolean;
+  tier: BillingStatus["tier"];
+  trialEndsAt: string | null;
+  lockedSince: string | null;
+  lockedDays: number | null;
+  accessRemovedAt: string | null;
+  deletionScheduledAt: string | null;
+  deletionReason: "superadmin" | "auto" | null;
+  canDelete: boolean;
+  members: number;
+  clients: number;
+  adAccounts: number;
+}
+export interface WorkspaceDeletionRecord {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  ownerEmail: string | null;
+  reason: "superadmin" | "auto";
+  requestedBy: string | null;
+  scheduledFor: string;
+  createdAt: string;
+  deletedAt: string | null;
+  cancelledAt: string | null;
+  cancelledBy: string | null;
+}
 export interface BillingStatus {
   /** Billing works on this server (STRIPE_SECRET_KEY). */
   configured: boolean;
   state: "TRIAL" | "ACTIVE" | "PAST_DUE" | "EXPIRED";
+  locked: boolean;
+  features: PlanFeature[];
   tier: PaidTier | "ENTERPRISE" | null;
   interval: BillingInterval | null;
   trialEndsAt: string | null;
@@ -1544,6 +1614,9 @@ export interface MeResponse {
   access?: { role: WorkspaceRole; clientIds: string[] | null } | null;
   /** Someone without a workspace who has been invited to one. */
   pendingInvite?: { token: string; workspaceName: string } | null;
+  plan?: PlanInfo | null;
+  /** Listed in SUPERADMIN_CLERK_IDS on the server (C15b): sees the Admin page. */
+  superadmin?: boolean;
 }
 
 export interface TeamMember {
@@ -1669,6 +1742,7 @@ export function useApiClient() {
           .json()
           .catch(() => ({ error: `Request failed (${res.status})` }));
         throwIfOutOfCredits(res.status, err);
+        throwIfPlanLocked(res.status, err);
         throw new ApiError(err.error ?? `HTTP ${res.status}`, {
           status: res.status,
           detail: typeof err.detail === "string" ? err.detail : undefined,
@@ -1912,6 +1986,11 @@ export function useApiClient() {
     getSetup: (clientId?: string | null) => apiFetch<SetupChecklist>(`/workspace/setup${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`),
     getCredits: () => apiFetch<CreditStatus>("/workspace/credits"),
     getBillingStatus: () => apiFetch<BillingStatus>("/billing/status"),
+    /* Superadmin (C15b) */
+    getAdminWorkspaces: (filter: "locked" | "all") => apiFetch<{ workspaces: AdminWorkspace[] }>(`/admin/workspaces?filter=${filter}`),
+    getAdminDeletions: () => apiFetch<{ deletions: WorkspaceDeletionRecord[] }>("/admin/deletions"),
+    adminDeleteWorkspace: (id: string, confirmName: string) => apiFetch<{ deletionScheduledAt: string }>(`/admin/workspaces/${id}/delete`, { method: "POST", body: JSON.stringify({ confirmName }) }),
+    adminCancelDeletion: (id: string) => apiFetch<{ cancelled: boolean }>(`/admin/workspaces/${id}/cancel-deletion`, { method: "POST" }),
     /** First plan: returns Stripe Checkout's URL. */
     startCheckout: (tier: PaidTier, interval: BillingInterval) => apiFetch<{ url: string }>("/billing/checkout", { method: "POST", body: JSON.stringify({ tier, interval }) }),
     /** Switch the existing subscription (prorated). */

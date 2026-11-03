@@ -1,6 +1,7 @@
 import path from "path";
 import PDFDocument from "pdfkit";
 import { prisma } from "../lib/prisma";
+import { BILLING_SELECT, hasFeature } from "../lib/plans";
 import { assertClientAccess, type Access } from "../lib/access";
 import { emailConfigured, emailLayout, escapeHtml, sendEmail } from "../lib/email";
 import { clientReport, liveShareUrl, type ClientReport, type Shows } from "./portal.service";
@@ -335,9 +336,11 @@ export async function sendTest(access: Access, userId: string, input: Input, now
 
 /** One pass: send every schedule that is due and hasn't gone out for this period. */
 export async function runScheduledReports(now = new Date()) {
-  const schedules = await prisma.reportSchedule.findMany({ where: { active: true }, include: { workspace: { select: { timezone: true, weekStartsOn: true } } } });
+  const schedules = await prisma.reportSchedule.findMany({ where: { active: true }, include: { workspace: { select: { timezone: true, weekStartsOn: true, ...BILLING_SELECT } } } });
   let sent = 0;
   for (const s of schedules) {
+    // Scheduled reports come with the Agency plan (C15; none while locked). The schedule waits, unchanged.
+    if (!hasFeature(s.workspace, "reports", now)) continue;
     const local = localParts(now, s.workspace.timezone);
     const frequency = s.frequency as Frequency;
     if (!s.recipients.length || !dueToday(frequency, local, s.workspace.weekStartsOn)) continue;

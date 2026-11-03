@@ -93,8 +93,8 @@ export function CreditsCard() {
       </div>
       {c.limit !== null && <Bar c={c} className="h-2" />}
       <span className="text-[13px] text-ink-2">
-        {c.limit === null ? "" : c.exhausted ? "All of this month's credits are used, so AI actions are paused. " : c.warn ? `${c.remaining} left. ` : ""}
-        {c.billingState === "TRIAL" ? `These cover the whole free trial, until ${resetDay(c.resetsAt)}.` : `Credits reset on ${resetDay(c.resetsAt)} and don’t carry over.`} Plans, questions, copy, audience ideas, checks and budget analyses use 1 credit; AI images use 1, 2 or 5 by quality.
+        {c.billingState === "EXPIRED" ? "AI is off until you choose a plan. " : c.limit === null ? "" : c.exhausted ? "All of this month's credits are used, so AI actions are paused. " : c.warn ? `${c.remaining} left. ` : ""}
+        {c.billingState === "EXPIRED" ? "Each plan includes its own credits." : c.billingState === "TRIAL" ? `These cover the whole free trial, until ${resetDay(c.resetsAt)}.` : `Credits reset on ${resetDay(c.resetsAt)} and don’t carry over.`} Plans, questions, copy, audience ideas, checks and budget analyses use 1 credit; AI images use 1, 2 or 5 by quality.
       </span>
       {c.byFeature.length > 0 && (
         <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[13px]">

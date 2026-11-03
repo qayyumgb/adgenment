@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
 import { Button, useConfirm } from "@/components/app/ui";
 import { useAccess } from "@/components/app/team/access";
+import { usePlan } from "@/components/app/billing/plan";
 import { TeamPanel } from "@/components/app/team/TeamPanel";
 import { ClientsTab } from "@/components/app/clients/ClientsTab";
 import { GeneralTab } from "@/components/app/settings/GeneralTab";
@@ -44,8 +45,10 @@ export default function SettingsPage() {
   const access = useAccess();
   const me = useApi((c) => c.getMe(), [], { key: "me" });
   const requested = params.get("tab");
+  const { locked } = usePlan();
   // Client viewers can't see the team or billing (the API refuses them too).
-  const tabs = TABS.filter((t) => access.role !== "CLIENT_VIEWER" || (t.id !== "team" && t.id !== "billing"));
+  // Locked (trial over, C15): only the tabs that work without a plan.
+  const tabs = TABS.filter((t) => (access.role !== "CLIENT_VIEWER" || (t.id !== "team" && t.id !== "billing")) && !(locked && (t.id === "clients" || t.id === "ai")));
   const fromUrl = (LEGACY[requested ?? ""] ?? requested) as Tab | null;
   const tab: Tab = tabs.some((t) => t.id === fromUrl) ? fromUrl! : "general";
   const [saver, setSaver] = useState<SettingsSaver | null>(null);
@@ -98,9 +101,11 @@ export default function SettingsPage() {
         summary={current.summary}
         actions={
           <>
-            <Button variant="secondary" icon={<History size={16} />} onClick={() => setAudit(true)}>
-              Audit log
-            </Button>
+            {!locked && (
+              <Button variant="secondary" icon={<History size={16} />} onClick={() => setAudit(true)}>
+                Audit log
+              </Button>
+            )}
             {tab === "clients" && access.can("clients") && (
               <Button variant="primary" icon={<Plus size={16} />} onClick={() => setAddingClient(true)}>
                 Add client

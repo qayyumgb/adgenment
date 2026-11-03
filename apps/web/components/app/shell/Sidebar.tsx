@@ -13,7 +13,7 @@ import { ConnectDialog } from "@/components/app/connections/ConnectDialog";
 import { PlatformBadge, type PlatformKey } from "@/components/app/ui";
 import { useClientScope } from "./ClientContext";
 import { ClientSwitcherMenu } from "./ClientSwitcher";
-import { ACCOUNT_NAV, SETUP_NAV, WORKSPACE_NAV, isActive, type NavItem } from "./nav";
+import { ACCOUNT_NAV, ADMIN_NAV, SETUP_NAV, WORKSPACE_NAV, isActive, type NavItem } from "./nav";
 import { useSetupChecklist } from "@/components/app/setup/SetupSteps";
 import { ROLE_LABEL } from "@/components/app/team/access";
 import { useApprovalSummary } from "@/components/app/approvals/useApprovals";
@@ -179,6 +179,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   // The sidebar stays mounted across pages, so recount on page changes
   // (campaigns are added by syncs, connects and the wizard elsewhere).
   const approvals = useApprovalSummary();
+  const superadmin = useApi((api) => api.getMe(), [], { key: "me" }).data?.superadmin ?? false;
   useRefreshOnNavigate("campaign-count", campaigns.refetch);
 
   return (
@@ -213,6 +214,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             alert={item.count === "approvals" && Boolean(approvals.data?.overdue)}
           />
         ))}
+        {superadmin && <NavLink item={ADMIN_NAV} onNavigate={onNavigate} />}
       </nav>
 
       <div className="flex-1" />

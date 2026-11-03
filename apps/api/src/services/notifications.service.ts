@@ -1,5 +1,6 @@
 import type { Prisma, WorkspaceRole } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { lockedWorkspaceIds } from "../lib/plans";
 import { normalizeRole, type Role } from "../lib/access";
 import { emailConfigured, emailLayout, escapeHtml, sendEmail } from "../lib/email";
 import { computePacing } from "./pacing.service";
@@ -203,10 +204,10 @@ async function members(workspaceId: string): Promise<Member[]> {
 const visible = (m: Member, clientId: string | null) => !m.clientIds || (clientId !== null && m.clientIds.includes(clientId));
 
 /** Send each member the items they haven't had yet; log every item once per member. */
-async function deliver(workspaceId: string, ms: Member[], event: NotificationEvent, items: Item[], subject: (n: number) => string, intro: string, cta: { label: string; path: string }) {
+async function deliver(workspaceId: string, ms: Member[], event: NotificationEvent, items: Item[], subject: (n: number) => string, intro: string, cta: { label: string; path: string }, always = false) {
   let sent = 0;
   for (const m of ms) {
-    if (!m.prefs.find((p) => p.id === event)?.email) continue;
+    if (!always && !m.prefs.find((p) => p.id === event)?.email) continue;
     const mine = items.filter((i) => visible(m, i.clientId));
     if (!mine.length) continue;
     const already = new Set((await prisma.notificationLog.findMany({ where: { userId: m.userId, event, key: { in: mine.map((i) => i.key) } }, select: { key: true } })).map((r) => r.key));
@@ -219,7 +220,7 @@ async function deliver(workspaceId: string, ms: Member[], event: NotificationEve
         heading: subject(fresh.length),
         body: `<p style="margin:0 0 10px">${intro}</p><ul style="margin:0;padding-left:18px">${fresh.map((i) => `<li style="margin:0 0 6px">${i.line}</li>`).join("")}</ul>`,
         cta: { label: cta.label, url: `${FRONTEND_URL()}${cta.path}` },
-        footer: `You get these because they're on in <a href="${FRONTEND_URL()}/settings?tab=notifications" style="color:#6448f2">Settings › Notifications</a>.`,
+        footer: always ? "This is about your Advertix plan, so it goes to the workspace's owners." : `You get these because they're on in <a href="${FRONTEND_URL()}/settings?tab=notifications" style="color:#6448f2">Settings › Notifications</a>.`,
       })
     );
     await prisma.notificationLog.createMany({ data: fresh.map((i) => ({ workspaceId, userId: m.userId, event, key: i.key, status: r.ok ? "sent" : "failed", error: r.error })), skipDuplicates: true });
@@ -239,10 +240,12 @@ export async function notifyMembers(
   item: Item,
   subject: string,
   intro: string,
-  cta: { label: string; path: string }
+  cta: { label: string; path: string },
+  /** Plan and billing emails (C15) go out whatever the preferences say. */
+  opts: { always?: boolean } = {}
 ) {
   const ms = (await members(workspaceId)).filter(who);
-  return deliver(workspaceId, ms, event, [item], () => subject, intro, cta);
+  return deliver(workspaceId, ms, event, [item], () => subject, intro, cta, opts.always);
 }
 
 /** One pass over a workspace: find and send everything due. Returns the number of emails sent. */
@@ -448,8 +451,11 @@ export async function notificationsTick() {
   if (running || !emailConfigured()) return;
   running = true;
   try {
+    // Locked workspaces (trial over, C15) get no alerts or briefings; billing emails still go out.
+    const locked = new Set(await lockedWorkspaceIds());
     const workspaces = await prisma.workspace.findMany({ select: { id: true } });
     for (const w of workspaces) {
+      if (locked.has(w.id)) continue;
       try {
         await runWorkspaceAlerts(w.id);
       } catch (err) {

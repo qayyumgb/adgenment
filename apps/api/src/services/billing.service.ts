@@ -165,6 +165,8 @@ export async function billingStatus(workspaceId: string) {
   return {
     configured: billingConfigured(),
     state: ent.state,
+    locked: ent.locked,
+    features: ent.features,
     tier: ent.tier,
     interval: ent.interval,
     trialEndsAt: ent.trialEndsAt,
@@ -209,9 +211,22 @@ export async function syncSubscription(sub: Stripe.Subscription) {
   });
 }
 
+/** Plan emails go to every owner, whatever their email preferences (C15): a lock stops their safety rules. */
 async function emailOwners(workspaceId: string, key: string, subject: string, line: string) {
-  await notifyMembers(workspaceId, (m) => m.role === "OWNER", "USAGE", { key, clientId: null, line }, subject, "About your Advertix plan:", { label: "Open billing", path: "/settings?tab=billing" }).catch((err) =>
-    console.error("[billing] email:", err instanceof Error ? err.message : err)
+  return notifyMembers(workspaceId, (m) => m.role === "OWNER", "USAGE", { key, clientId: null, line }, subject, "About your Advertix plan:", { label: "Open billing", path: "/settings?tab=billing" }, { always: true }).catch((err) => {
+    console.error("[billing] email:", err instanceof Error ? err.message : err);
+    return 0;
+  });
+}
+
+/** The rollout email (C15, scripts/start-trials.ts): paid plans are starting and the workspace has a fresh trial. Sent once per trial. */
+export function announceTrial(workspaceId: string, endsAt: Date) {
+  const when = endsAt.toLocaleDateString("en-US", { day: "numeric", month: "long" });
+  return emailOwners(
+    workspaceId,
+    `trial-start:${endsAt.toISOString().slice(0, 10)}`,
+    "Your 14-day Advertix trial has started",
+    `Advertix is moving to paid plans. Your workspace has a free trial with <strong>every feature</strong> until ${when}. Choose a plan any time in Billing; you're only charged when the trial ends. Nothing changes until then. We've also updated our <a href="${FRONTEND_URL()}/privacy">Privacy Policy</a> with how long we keep a workspace that stays locked after its trial.`
   );
 }
 
@@ -261,9 +276,19 @@ export async function trialReminders(workspaceId: string, now = new Date()) {
   const day = ent.trialEndsAt.toISOString().slice(0, 10);
   const when = ent.trialEndsAt.toLocaleDateString("en-US", { day: "numeric", month: "long" });
   if (ent.state === "TRIAL" && ent.trialDaysLeft <= 3) {
-    await emailOwners(workspaceId, `trial:${day}:soon`, `Your Advertix trial ends in ${ent.trialDaysLeft} day${ent.trialDaysLeft === 1 ? "" : "s"}`, `Your free trial ends on ${when}. Choose a plan to keep your AI, automation and reports running; you won't be charged before then.`);
+    await emailOwners(
+      workspaceId,
+      `trial:${day}:soon`,
+      `Your Advertix trial ends in ${ent.trialDaysLeft} day${ent.trialDaysLeft === 1 ? "" : "s"}`,
+      `Your free trial ends on ${when}. Choose a plan to keep using Advertix; you won't be charged before then. If the trial ends without a plan, the workspace locks: syncing, AI and reports stop, and so do your <strong>safety rules and spend caps</strong>. Your ads keep running on the platforms and your data is kept.`
+    );
   } else if (ent.state === "EXPIRED" && now.getTime() - ent.trialEndsAt.getTime() < 7 * 86_400_000) {
-    await emailOwners(workspaceId, `trial:${day}:ended`, "Your Advertix trial has ended", "Your free trial ended. Your data is safe and syncing continues; choose a plan to turn the AI and the rest back on.");
+    await emailOwners(
+      workspaceId,
+      `trial:${day}:ended`,
+      "Your Advertix trial has ended",
+      "Your free trial ended, so the workspace is locked: syncing, AI, reports, safety rules and spend caps have stopped. Your ads keep running on the platforms and your data is safe. Choose a plan to pick up exactly where you left off."
+    );
   }
 }
 

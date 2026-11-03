@@ -11,6 +11,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Users,
+  ShieldAlert,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -48,6 +49,9 @@ export const WORKSPACE_NAV: NavItem[] = [
 
 /** Getting started (C11): shown above the nav for owners until it's hidden from the page. */
 export const SETUP_NAV: NavItem = { label: "Get started", href: "/setup", icon: Rocket };
+
+/** Superadmins only (C15b): locked workspaces and their deletion. */
+export const ADMIN_NAV: NavItem = { label: "Admin", href: "/admin", icon: ShieldAlert };
 
 export const ACCOUNT_NAV: NavItem[] = [
   { label: "Activity", href: "/activity", icon: ClipboardCheck, count: "approvals" },

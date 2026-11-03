@@ -10,6 +10,8 @@ import { timeAgo } from "@/lib/time";
 import { Button, Dialog, Segmented, Skeleton, Toggle, useConfirm } from "@/components/app/ui";
 import { useClientScope } from "@/components/app/shell/ClientContext";
 import { useAccess } from "@/components/app/team/access";
+import { usePlan } from "@/components/app/billing/plan";
+import { UpgradeDialog } from "@/components/app/billing/Upgrade";
 
 /**
  * Schedule report (plan C4b, D5): a weekly or monthly email for one client
@@ -101,6 +103,7 @@ export function ScheduleDialog({ open, onClose, onShare }: { open: boolean; onCl
   const [form, setForm] = useState<Form>(DEFAULTS);
   const [busy, setBusy] = useState<"save" | "test" | "off" | null>(null);
   const { confirm, dialog } = useConfirm();
+  const plan = usePlan();
 
   useEffect(() => {
     if (open) setClientId(scope.clientId ?? (scope.clients.length === 1 ? scope.clients[0].id : null));
@@ -171,6 +174,7 @@ export function ScheduleDialog({ open, onClose, onShare }: { open: boolean; onCl
     { key: "attachPdf", label: "Attach a PDF", sub: "A one-page report they can file or forward" },
   ];
 
+  if (!plan.has("reports")) return <UpgradeDialog open={open} onClose={onClose} feature="reports" title="Schedule report" why="Email each client their numbers and a PDF every week or month, on time." />;
   return (
     <Dialog
       open={open}

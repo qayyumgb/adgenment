@@ -40,8 +40,8 @@ function Usage({ label, value, used, limit, tone = "brand" }: { label: string; v
 }
 
 function statusLine(s: BillingStatus): { label: string; tone: PillTone; text: string } {
-  if (s.state === "TRIAL") return { label: `${s.trialDaysLeft} day${s.trialDaysLeft === 1 ? "" : "s"} left`, tone: "brand", text: `Until ${day(s.trialEndsAt)}. Team limits (5 clients, 5 seats) with 100 AI credits; no card needed.` };
-  if (s.state === "EXPIRED") return { label: "Trial ended", tone: "neg", text: "Your data is safe and syncing continues. Choose a plan to turn the AI and automation back on." };
+  if (s.state === "TRIAL") return { label: `${s.trialDaysLeft} day${s.trialDaysLeft === 1 ? "" : "s"} left`, tone: "brand", text: `Until ${day(s.trialEndsAt)}. Every feature, with Team limits (5 clients, 5 seats) and 100 AI credits; no card needed.` };
+  if (s.state === "EXPIRED") return { label: "Trial ended", tone: "neg", text: "The workspace is locked: syncing, AI, reports and automation are paused. Your ads keep running and your data is safe; choose a plan to pick up where you left off." };
   if (s.state === "PAST_DUE") return { label: "Payment failed", tone: "warn", text: "Stripe couldn't charge your card and will retry. Update it in Manage billing to keep your plan." };
   if (s.cancelAtPeriodEnd) return { label: "Cancelling", tone: "warn", text: `Your plan ends on ${day(s.renewsAt)}. Choose it again below to keep it.` };
   return { label: "Active", tone: "pos", text: s.renewsAt ? `${s.interval === "year" ? "Renews yearly" : "Renews monthly"} on ${day(s.renewsAt)}.` : "Set up by the Advertix team." };
@@ -230,7 +230,7 @@ export function BillingTab() {
                 </span>
                 <span className="text-xs font-medium tracking-[.04em] text-ink-3">{p.limits}</span>
                 <ul className="m-0 flex list-none flex-col gap-1.5 p-0 text-[13px] text-ink-2">
-                  {p.items.slice(0, 4).map((i) => (
+                  {p.items.filter((i) => !i.includes("coming soon")).map((i) => (
                     <li key={i} className="flex gap-1.5">
                       <Check size={14} className="mt-0.5 flex-none text-pos" aria-hidden="true" />
                       {i}

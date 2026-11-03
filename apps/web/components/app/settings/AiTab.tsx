@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { Check } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useAccess } from "@/components/app/team/access";
+import { usePlan } from "@/components/app/billing/plan";
 import { cn } from "@/lib/cn";
 import { Card, Pill, type PillTone } from "@/components/app/ui";
 import { ApprovalsCard } from "./ApprovalsCard";
@@ -53,6 +54,8 @@ export function AiTab({ setSaver }: { setSaver: (s: SettingsSaver | null) => voi
   // Same cache as the Automation card: how many clients auto-apply.
   const automation = useApi((c) => c.getSafetySettings(), [], { key: "safety-settings" }).data;
   const canEdit = useAccess().can("workspace");
+  // Auto-apply comes with the Agency plan (C15).
+  const autoAllowed = usePlan().has("automation");
   const autoClients = automation ? automation.clients.filter((c) => c.autoApply && !c.askFirst).length : 0;
   const total = automation?.clients.length ?? 0;
   const eligible = automation ? automation.clients.filter((c) => !c.askFirst).length : 0;
@@ -88,9 +91,11 @@ export function AiTab({ setSaver }: { setSaver: (s: SettingsSaver | null) => voi
       id: "small",
       name: "Auto-apply small changes",
       desc: "Budget suggestions within your limit apply on their own, one per campaign per day. Everything else still asks.",
-      on: autoOn,
-      onPick: () => pick(true),
-      pill: picked
+      on: autoAllowed && autoOn,
+      onPick: autoAllowed ? () => pick(true) : undefined,
+      pill: !autoAllowed
+        ? { tone: "neutral", label: "Agency plan" }
+        : picked
         ? picked.autoApply
           ? { tone: "brand", label: `Unsaved · ${eligible} client${eligible === 1 ? "" : "s"}` }
           : { tone: "brand", label: "Unsaved · off" }

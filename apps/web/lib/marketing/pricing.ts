@@ -5,7 +5,9 @@
  * Prices confirmed 2026-10-28: Founder $22, Team $79, Agency $199,
  * Enterprise custom. Stripe billing (C11) charges these.
  * Every plan starts with a 14-day free trial (no card; Team limits, 100 AI
- * credits). Limits mirror the API's lib/plans.ts.
+ * credits, every feature). Limits and the feature split (Approvals from
+ * Team; automation, portal links and scheduled reports from Agency) mirror
+ * the API's lib/plans.ts, which enforces them (C15).
  */
 
 export type Plan = {

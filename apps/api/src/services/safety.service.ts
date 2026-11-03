@@ -1,4 +1,5 @@
 import { prisma } from "../lib/prisma";
+import { BILLING_SELECT, hasFeature, lockedWorkspaceIds } from "../lib/plans";
 import { escapeHtml } from "../lib/email";
 import { metaService } from "./meta.service";
 import { changeLog } from "./change-log.service";
@@ -228,9 +229,11 @@ async function autoApply(workspaceId: string, clientId: string, maxPct: number, 
 
 /** One pass over a workspace: safety rules, then auto-apply. Returns what was done (also emailed and logged). */
 export async function runSafetyRules(workspaceId: string, now = new Date()): Promise<Done[]> {
-  const ws = await prisma.workspace.findUniqueOrThrow({ where: { id: workspaceId }, select: { name: true, automationPaused: true, safetyMaxCutPct: true, autoApplyMaxPct: true } });
+  const ws = await prisma.workspace.findUniqueOrThrow({ where: { id: workspaceId }, select: { name: true, automationPaused: true, safetyMaxCutPct: true, autoApplyMaxPct: true, ...BILLING_SELECT } });
   if (ws.automationPaused) return [];
-  const clients = await prisma.client.findMany({ where: { workspaceId, OR: [{ safetyPixel: true }, { safetyCap: true }, { autoApply: true }] }, select: { id: true, safetyPixel: true, safetyCap: true, autoApply: true, askFirst: true } });
+  // Safety rules and auto-apply come with the Agency plan (C15); auto-pause (C6) is on every plan.
+  const rules = hasFeature(ws, "automation");
+  const clients = rules ? await prisma.client.findMany({ where: { workspaceId, OR: [{ safetyPixel: true }, { safetyCap: true }, { autoApply: true }] }, select: { id: true, safetyPixel: true, safetyCap: true, autoApply: true, askFirst: true } }) : [];
   const done: Done[] = [];
   for (const c of clients) {
     try {
@@ -315,7 +318,8 @@ export async function safetyTick() {
   running = true;
   try {
     const workspaces = await prisma.workspace.findMany({
-      where: { automationPaused: false, OR: [{ clients: { some: { OR: [{ safetyPixel: true }, { safetyCap: true }, { autoApply: true }] } } }, { campaigns: autoPauseWorkspaceWhere }] },
+      // Locked workspaces (trial over, C15) are left alone.
+      where: { id: { notIn: await lockedWorkspaceIds() }, automationPaused: false, OR: [{ clients: { some: { OR: [{ safetyPixel: true }, { safetyCap: true }, { autoApply: true }] } } }, { campaigns: autoPauseWorkspaceWhere }] },
       select: { id: true },
     });
     for (const w of workspaces) {

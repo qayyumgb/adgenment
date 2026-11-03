@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { decryptToken, encryptToken } from "../lib/crypto";
 import { assertClientAccess, type Access } from "../lib/access";
 import { computePacing } from "./pacing.service";
+import { BILLING_SELECT, hasFeature } from "../lib/plans";
 
 /**
  * Client portal (plan C4): a read-only link per client that anyone with the
@@ -197,6 +198,9 @@ export async function portalReport(token: string, daysParam: unknown, now = new 
   if (typeof token !== "string" || token.length < 20 || token.length > 100) throw notFound();
   const s = await prisma.clientShare.findUnique({ where: { tokenHash: hash(token) } });
   if (!s || s.revokedAt || (s.expiresAt && s.expiresAt <= now)) throw notFound();
+  // Portal links come with the Agency plan (C15) and pause while the workspace is locked; the link comes back with the plan.
+  const ws = await prisma.workspace.findUnique({ where: { id: s.workspaceId }, select: BILLING_SELECT });
+  if (!ws || !hasFeature(ws, "portal", now)) throw Object.assign(new Error("This report is paused for now. Ask your agency for an update."), { status: 403 });
   const days = DAYS.find((d) => d === Number(daysParam)) ?? 30;
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const report = await clientReport({ workspaceId: s.workspaceId, clientId: s.clientId, shows: s, start: new Date(today.getTime() - (days - 1) * DAY), end: today, pacingAt: now });

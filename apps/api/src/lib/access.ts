@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
-import type { PlanType, WorkspaceRole } from "@prisma/client";
+import type { PlanType, Workspace, WorkspaceRole } from "@prisma/client";
 import { prisma } from "./prisma";
+import { BILLING_SELECT } from "./plans";
 import { requireAuth } from "../middleware/auth";
 
 /**
@@ -42,6 +43,8 @@ export const can = (role: Role, cap: Capability) => CAPS[role].includes(cap);
 export type Access = {
   workspaceId: string;
   plan: PlanType;
+  /** The workspace's billing columns (C15: the plan gate reads them without another query). */
+  billing: Pick<Workspace, keyof typeof BILLING_SELECT>;
   memberId: string;
   role: Role;
   /** null = all clients. */
@@ -64,7 +67,7 @@ export async function getAccess(req: Request): Promise<Access | null> {
   if (!req.dbUserId) return null;
   const m = await prisma.workspaceMember.findFirst({
     where: { userId: req.dbUserId! },
-    include: { workspace: { select: { id: true, plan: true } }, clientAccess: { select: { clientId: true } } },
+    include: { workspace: { select: { id: true, ...BILLING_SELECT } }, clientAccess: { select: { clientId: true } } },
     orderBy: { workspace: { createdAt: "asc" } },
   });
   const role = m ? normalizeRole(m.role) : null;
@@ -72,6 +75,7 @@ export async function getAccess(req: Request): Promise<Access | null> {
     ? {
         workspaceId: m.workspace.id,
         plan: m.workspace.plan,
+        billing: m.workspace,
         memberId: m.id,
         role: role!,
         clientIds: role === "OWNER" || m.clientAccess.length === 0 ? (role === "CLIENT_VIEWER" ? [] : null) : m.clientAccess.map((c) => c.clientId),
@@ -100,7 +104,8 @@ export const deniedMessage = (role: Role, cap: Capability) =>
 
 /** What a request needs (path is relative to /api). Null = no role check (auth flows, invites). */
 export function capabilityFor(method: string, path: string): Capability | null {
-  if (path.startsWith("/auth") || path.startsWith("/invites")) return null;
+  // Superadmin routes (C15b) have their own guard and no workspace role.
+  if (path.startsWith("/auth") || path.startsWith("/invites") || path.startsWith("/admin")) return null;
   const read = method === "GET" || method === "HEAD" || method === "OPTIONS";
   if (path.startsWith("/workspace")) {
     if (read) return "view";

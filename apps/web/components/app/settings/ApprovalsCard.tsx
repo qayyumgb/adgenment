@@ -10,6 +10,8 @@ import { cn } from "@/lib/cn";
 import { Button, Card, Segmented, Skeleton, Toggle } from "@/components/app/ui";
 import { useAccess } from "@/components/app/team/access";
 import { useApprovalSummary, useRefreshApprovals, waited } from "@/components/app/approvals/useApprovals";
+import { usePlan } from "@/components/app/billing/plan";
+import { UpgradeCard } from "@/components/app/billing/Upgrade";
 import type { SettingsSaver } from "./types";
 
 /**
@@ -37,6 +39,7 @@ export function ApprovalsCard({ setSaver }: { setSaver: (s: SettingsSaver | null
   const summary = useApprovalSummary();
   const refresh = useRefreshApprovals();
   const { mutate } = useSWRConfig();
+  const plan = usePlan();
   const s = q.data;
   const initial = useMemo<Form | null>(
     () => (s ? { limitOn: s.budgetPct !== null, budgetPct: String(s.budgetPct ?? 20), timeout: s.timeout, askFirst: s.clients.filter((c) => c.askFirst).map((c) => c.id).sort() } : null),
@@ -67,6 +70,7 @@ export function ApprovalsCard({ setSaver }: { setSaver: (s: SettingsSaver | null
   }, [form, initial, dirty, canEdit, valid]);
   useEffect(() => () => setSaver(null), [setSaver]);
 
+  if (!plan.has("approvals")) return <UpgradeCard feature="approvals" title="Approvals" why="Let media buyers' bigger budget changes, and anything on an Ask first client, wait for an owner." />;
   if (q.error) {
     return (
       <Card className="flex flex-wrap items-center justify-between gap-3">

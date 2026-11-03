@@ -7,7 +7,7 @@ export const metadata = {
     "How Advertix collects, uses, stores, and protects your data when you use our AI-powered ad management platform.",
 };
 
-const EFFECTIVE_DATE = "June 15, 2026";
+const EFFECTIVE_DATE = "November 2, 2026";
 const CONTACT_EMAIL = "support@advertix.io";
 
 export default function PrivacyPage() {
@@ -202,6 +202,19 @@ export default function PrivacyPage() {
             data for as long as your Advertix account is active. When you
             delete your account, we delete your data within 30 days, except
             where retention is required by law.
+          </p>
+          <p className="mt-2">
+            If a workspace&apos;s free trial ends without a paid plan, the
+            workspace is locked and stops syncing. After 30 days locked, we
+            delete its stored ad platform access tokens (the synced data is
+            kept so you can pick up where you left off). We may delete a
+            workspace that has been locked for 30 days or more after emailing
+            its owners at least 7 days in advance, and we delete workspaces
+            automatically after 6 months locked, with reminder emails 10, 5
+            and 2 days before. Choosing a plan at any time before then stops
+            the deletion. Deleting a workspace removes its data, not your
+            login; billing records are kept by our payment provider as the law
+            requires.
           </p>
           <p className="mt-2">
             You can revoke any ad platform integration at any time from

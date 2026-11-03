@@ -1,9 +1,10 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { requireAuth } from "../middleware/auth";
 import { prisma } from "../lib/prisma";
-import { trialEnd } from "../lib/plans";
+import { planOf, trialEnd } from "../lib/plans";
 import { getUserWorkspace } from "../lib/workspace";
 import { getAccess } from "../lib/access";
+import { isSuperadmin } from "../services/retention.service";
 import { pendingInviteFor } from "../services/team.service";
 import { myNotifications, saveNotifications, sendBriefingNow, sendTestEmail } from "../services/notifications.service";
 
@@ -30,10 +31,26 @@ router.get("/me", async (req: Request, res: Response, next: NextFunction) => {
     // Role and client access (B6), or a pending invite for someone with no workspace yet.
     const access = workspace ? await getAccess(req) : null;
     const invite = workspace ? null : await pendingInviteFor(req.user?.email ?? "");
+    // The plan (C15): the app locks itself and marks plan features from this.
+    const ent = workspaceWithCount ? planOf(workspaceWithCount) : null;
     res.json({
       user: req.user,
       workspace: workspaceWithCount,
       access: access ? { role: access.role, clientIds: access.clientIds } : null,
+      plan: ent
+        ? {
+            state: ent.state,
+            locked: ent.locked,
+            features: ent.features,
+            tier: ent.tier,
+            trialEndsAt: ent.trialEndsAt,
+            trialDaysLeft: ent.trialDaysLeft,
+            // Retention (C15b), for the lock screen.
+            accessRemovedAt: workspaceWithCount!.accessRemovedAt,
+            deletionScheduledAt: workspaceWithCount!.deletionScheduledAt,
+          }
+        : null,
+      superadmin: isSuperadmin(req.user),
       pendingInvite: invite ? { token: invite.token, workspaceName: invite.workspace.name } : null,
     });
   } catch (err) {

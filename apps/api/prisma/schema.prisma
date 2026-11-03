@@ -145,6 +145,14 @@ model Workspace {
   currentPeriodStart   DateTime?
   currentPeriodEnd     DateTime?
   cancelAtPeriodEnd    Boolean   @default(false)
+  /// C15b retention: when the workspace was first seen locked (trial over, no plan). Cleared when it unlocks.
+  lockedSince          DateTime?
+  /// C15b: when the stored ad platform access was removed (30 days locked). The accounts need reconnecting.
+  accessRemovedAt      DateTime?
+  /// C15b: when the workspace will be deleted (superadmin: 7 days' notice; automatic: 6 months locked). Paying cancels it.
+  deletionScheduledAt  DateTime?
+  /// C15b: "superadmin" | "auto"
+  deletionReason       String?
   ownerId      String
   plan         PlanType @default(FREE)
   createdAt    DateTime @default(now())
@@ -1134,4 +1142,25 @@ model AiUsage {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, createdAt])
+}
+
+/// C15b: every workspace deletion the superadmin or the 6-month rule scheduled. No foreign key, so the
+/// record outlives the workspace (who, when, which workspace, and whether it was deleted or cancelled).
+model WorkspaceDeletion {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  workspaceName String
+  ownerEmail    String?
+  /// "superadmin" | "auto"
+  reason        String
+  /// The superadmin's email; null for the automatic rule.
+  requestedBy   String?
+  scheduledFor  DateTime
+  createdAt     DateTime  @default(now())
+  deletedAt     DateTime?
+  cancelledAt   DateTime?
+  /// The superadmin's email, or "paid" when choosing a plan cancelled it.
+  cancelledBy   String?
+
+  @@index([workspaceId])
 }

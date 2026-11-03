@@ -22,6 +22,7 @@ import { prisma } from "../lib/prisma";
 import { enqueue, pendingKeys, queueRunning, type WorkQueue } from "../lib/jobs";
 import { isMetaError } from "../lib/meta-errors";
 import { syncService } from "./sync.service";
+import { BILLING_SELECT, isLocked, lockedWorkspaceIds } from "../lib/plans";
 
 const LOG_PREFIX = "[sync-scheduler]";
 /** The platforms with a sync connector. */
@@ -54,6 +55,8 @@ async function dueAccounts(now = new Date()): Promise<AdAccount[]> {
       isActive: true,
       archivedAt: null,
       OR: [{ lastSyncedAt: null }, { lastSyncedAt: { lt: cutoff } }],
+      // Locked workspaces (trial over, C15) don't sync until they choose a plan.
+      workspaceId: { notIn: await lockedWorkspaceIds(now) },
     },
     include: { workspace: { select: { autoSyncOff: true } } },
   });
@@ -119,8 +122,8 @@ export async function syncTick(): Promise<void> {
  * was queued. A temporary failure throws, so the queue retries it.
  */
 export async function syncAccountJob({ accountId }: { accountId: string }): Promise<void> {
-  const acct = await prisma.adAccount.findUnique({ where: { id: accountId }, include: { workspace: { select: { autoSyncOff: true } } } });
-  if (!acct || !acct.isActive || acct.archivedAt || acct.workspace.autoSyncOff.includes(acct.platform)) return;
+  const acct = await prisma.adAccount.findUnique({ where: { id: accountId }, include: { workspace: { select: { autoSyncOff: true, ...BILLING_SELECT } } } });
+  if (!acct || !acct.isActive || acct.archivedAt || acct.workspace.autoSyncOff.includes(acct.platform) || isLocked(acct.workspace)) return;
   if (acct.lastSyncedAt && acct.lastSyncedAt.getTime() > Date.now() - INTERVAL_MS) return;
   const { workspace: _w, ...account } = acct;
   try {

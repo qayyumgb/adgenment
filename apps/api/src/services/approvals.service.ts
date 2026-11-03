@@ -17,6 +17,7 @@ import type { NextFunction, Request, Response, Router } from "express";
 import { Prisma, type ApprovalRequest, type ApprovalTimeout } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { getAccess, type Access } from "../lib/access";
+import { hasFeature, lockedWorkspaceIds } from "../lib/plans";
 import { money } from "../lib/format";
 import { approvalContext } from "../lib/approval-context";
 import { allocatable } from "./allocator.service";
@@ -226,6 +227,8 @@ export async function approvalGate(req: Request, res: Response, next: NextFuncti
     if (req.approvalReplay || !WATCHED.some((w) => w.method === req.method && w.re.test(req.path))) return next();
     const access = await getAccess(req);
     if (!access || access.role !== "MEDIA_BUYER") return next();
+    // Approvals come with the Team plan (C15); without them changes apply directly.
+    if (!hasFeature(access.billing, "approvals")) return next();
     const body = (req.body ?? {}) as Record<string, unknown>;
     const held = await evaluate(access.workspaceId, req.method, req.path, body);
     if (!held) return next();
@@ -466,7 +469,8 @@ async function notifyDecided(a: ApprovalRequest & { decidedBy?: { name: string |
 /** One pass of the 24-hour rule (exported for tests). */
 export async function runApprovalTimeouts() {
   const due = await prisma.approvalRequest.findMany({
-    where: { status: "PENDING", createdAt: { lt: new Date(Date.now() - APPROVAL_TIMEOUT_MS) }, workspace: { approvalTimeout: { not: "KEEP" } } },
+    // A locked workspace (C15) changes nothing until it chooses a plan.
+    where: { status: "PENDING", createdAt: { lt: new Date(Date.now() - APPROVAL_TIMEOUT_MS) }, workspace: { approvalTimeout: { not: "KEEP" } }, workspaceId: { notIn: await lockedWorkspaceIds() } },
     include: { workspace: { select: { approvalTimeout: true } } },
     take: 50,
   });

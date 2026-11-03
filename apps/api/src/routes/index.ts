@@ -31,13 +31,17 @@ import reportsRouter from "./reports";
 import billingRouter from "./billing";
 import calendarRouter from "./calendar";
 import experimentsRouter, { campaignExperimentsRouter } from "./experiments";
+import adminRouter from "./admin";
 import { roleGuard } from "../lib/access";
+import { planGate } from "../lib/plan-gate";
 import { approvalGate, registerApprovalReplay } from "../services/approvals.service";
 
 const router = Router();
 
 // Team roles (B6): every request with a token is checked here first.
 router.use(roleGuard);
+// Plans (C15): a locked workspace only reaches Billing and Settings; plan features are checked here.
+router.use(planGate);
 // Approvals (C1): a Media buyer's spend change may wait for an owner instead of running.
 router.use(approvalGate);
 
@@ -75,6 +79,8 @@ router.use("/billing", billingRouter);
 router.use("/calendar", calendarRouter);
 router.use("/hours", hoursRouter);
 router.use("/experiments", experimentsRouter);
+// Superadmin (C15b): locked workspaces and their deletion; its own guard.
+router.use("/admin", adminRouter);
 // Public (C4): the client portal; the token in the link is the only key.
 router.use("/portal", publicPortalRouter);
 

@@ -9,6 +9,8 @@ import { timeAgo } from "@/lib/time";
 import { Button, Dialog, Segmented, Skeleton, Toggle, useConfirm } from "@/components/app/ui";
 import { useClientScope } from "@/components/app/shell/ClientContext";
 import { useAccess } from "@/components/app/team/access";
+import { usePlan } from "@/components/app/billing/plan";
+import { UpgradeDialog } from "@/components/app/billing/Upgrade";
 
 /**
  * Share report (plan C4): one read-only portal link per client. Anyone with
@@ -56,6 +58,7 @@ export function ShareDialog({ open, onClose }: { open: boolean; onClose: () => v
   const [expiry, setExpiry] = useState(0);
   const [busy, setBusy] = useState(false);
   const { confirm, dialog } = useConfirm();
+  const plan = usePlan();
 
   // The client in scope, or the only one; with "All clients", pick below.
   useEffect(() => {
@@ -119,6 +122,7 @@ export function ShareDialog({ open, onClose }: { open: boolean; onClose: () => v
     }
   };
 
+  if (!plan.has("portal")) return <UpgradeDialog open={open} onClose={onClose} feature="portal" title="Share report" why="Give each client a read-only link to their results, no login needed." />;
   return (
     <Dialog
       open={open}

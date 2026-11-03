@@ -40,7 +40,7 @@ export function PricingPlans() {
           <div data-reveal="up" className="flex max-w-[400px] flex-[1_1_300px] flex-col gap-4">
             <p className="m-0 text-mk-ink2">
               Flat monthly plans. Ad spend is billed by each platform, as it is today. Every plan starts with a 14-day free
-              trial, no card needed.
+              trial with every feature, no card needed.
             </p>
             <SegmentedControl
               label="Billing period"

@@ -485,6 +485,24 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-02 — C15b Retention and superadmin
+
+- **Locked workspaces (trial over, no plan):** ad access tokens removed after 30 days (data kept; reconnect after choosing a plan); deleted automatically after 6 months with emails 10, 5 and 2 days before; choosing a plan cancels any deletion. Daily job `retention` (`RETENTION_ENABLED`).
+- **Superadmin page `/admin`** (Clerk ids in `SUPERADMIN_CLERK_IDS`): locked workspaces, delete from 30 days locked with 7 days' notice (owners emailed), cancel, and a deletion history (`WorkspaceDeletion`).
+- Logins are never deleted; Stripe keeps invoices; nothing changes on the ad platforms (no remote revoke, so a person's other workspaces keep working).
+- Privacy Policy §7 and the data-deletion page updated; the rollout email links to the policy.
+- **Schema:** `Workspace.lockedSince / accessRemovedAt / deletionScheduledAt / deletionReason`, `WorkspaceDeletion` → `prisma db push` on production.
+- **Files:** [retention.service.ts](apps/api/src/services/retention.service.ts), [routes/admin.ts](apps/api/src/routes/admin.ts), [jobs.service.ts](apps/api/src/services/jobs.service.ts), [lib/access.ts](apps/api/src/lib/access.ts), [routes/auth.ts](apps/api/src/routes/auth.ts); web [admin/page.tsx](apps/web/app/(dashboard)/admin/page.tsx), lock screen, sidebar, [lib/api.ts](apps/web/lib/api.ts), legal pages.
+
+### 2026-11-02 — C15a Plans: features, trial and lock
+
+- **Features by plan:** Approvals from Team; auto-apply + safety rules, client portal links and scheduled reports from Agency. Enforced in the API (`lib/plan-gate.ts`, 403 PLAN_FEATURE) with upgrade cards and dialogs in the app. Turning things off always works.
+- **Trial:** every feature for 14 days (Team limits, 100 AI credits), with a closable banner for owners.
+- **Lock after an unpaid trial:** only Billing and Settings (402 PLAN_LOCKED → lock screen). No syncing, emails or automation; ads on the platforms untouched; data kept; paying restores everything. Nothing locks without Stripe configured.
+- **Rollout:** `scripts/start-trials.ts` gives existing unpaid workspaces a fresh trial (dry run first; `--comp` for your own and the Meta reviewer's workspace; `--email`). **Run it before deploying.**
+- Plan emails go to every owner whatever their preferences. Spend limits (soft) wait on currency conversion. C15b (retention, superadmin delete) is next.
+- **Files:** [lib/plans.ts](apps/api/src/lib/plans.ts), [lib/plan-gate.ts](apps/api/src/lib/plan-gate.ts), [lib/access.ts](apps/api/src/lib/access.ts), [scripts/start-trials.ts](apps/api/scripts/start-trials.ts), approvals/safety/reports/portal/sync/alerts/notifications/hours/billing services, [routes/auth.ts](apps/api/src/routes/auth.ts); web [billing/plan.ts](apps/web/components/app/billing/plan.ts), [billing/Upgrade.tsx](apps/web/components/app/billing/Upgrade.tsx), [AppShell.tsx](apps/web/components/app/shell/AppShell.tsx), BillingBanner, settings cards, Share/Schedule dialogs, pricing copy. No schema change.
+
 ### 2026-11-02 — C10 Job queue (pg-boss)
 
 - **Background work moved to a job queue** on the existing Postgres (pg-boss 10.4, schema `pgboss`, created on first start; no Redis, no extra service). The 7 timers (sync, approval timeouts, email alerts, client reports, safety rules, alerts inbox, smart hours) are scheduled jobs: once per slot across every API instance, never overlapping, retried with backoff, and retried after a deploy cuts them off.
