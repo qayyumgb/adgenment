@@ -498,6 +498,8 @@ export interface DesignSummary {
   creativeId: string | null;
   /** Bumped on every save; sent back so a save from an older copy is refused (409). */
   revision: number;
+  /** False until Save draft or Save to Creatives; a never-saved design left for a day is deleted with its images. */
+  kept: boolean;
   previewUrl: string | null;
   createdAt: string;
   updatedAt: string;
@@ -507,6 +509,8 @@ export interface DesignDoc extends DesignSummary {
   data: Record<string, unknown>;
   /** Signed links for the design's files, by asset id. */
   assets: Record<string, string>;
+  /** Every image uploaded to this design, newest first ("Your uploads"). */
+  uploads?: DesignImage[];
 }
 export interface DesignImage {
   id: string;
@@ -1759,18 +1763,34 @@ export function useApiClient() {
   // useEffect / useCallback dependency arrays without causing infinite loops.
   // `getToken` from Clerk is itself stable across renders.
   return useMemo(() => {
-    /** A multipart image upload (field "image") for the creative editor. */
-    async function uploadDesignFile<T>(path: string, file: Blob): Promise<T> {
+    /** A multipart image upload (field "image") for the creative editor; `onProgress` gets 0–1 as it uploads. */
+    async function uploadDesignFile<T>(path: string, file: Blob, onProgress?: (share: number) => void): Promise<T> {
       const token = await getToken();
       const form = new FormData();
       form.append("image", file, "image.png");
-      const res = await fetch(`${API_BASE}/api${path}`, { method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `Upload failed (${res.status})` }));
-        throwIfPlanLocked(res.status, err);
-        throw new ApiError(err.error ?? `HTTP ${res.status}`, { status: res.status });
-      }
-      return res.json() as Promise<T>;
+      return new Promise<T>((resolve, reject) => {
+        const x = new XMLHttpRequest();
+        x.open("POST", `${API_BASE}/api${path}`);
+        if (token) x.setRequestHeader("Authorization", `Bearer ${token}`);
+        if (onProgress) x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+        x.onload = () => {
+          let body: { error?: string; code?: string } = {};
+          try {
+            body = JSON.parse(x.responseText || "{}");
+          } catch {
+            /* not JSON */
+          }
+          if (x.status >= 200 && x.status < 300) return resolve(body as T);
+          try {
+            throwIfPlanLocked(x.status, body);
+            reject(new ApiError(body.error ?? `Upload failed (${x.status})`, { status: x.status }));
+          } catch (err) {
+            reject(err);
+          }
+        };
+        x.onerror = () => reject(new ApiError("The upload didn't go through. Check your connection and try again.", { status: 0 }));
+        x.send(form);
+      });
     }
 
     async function apiFetch<T>(
@@ -2040,10 +2060,10 @@ export function useApiClient() {
     getDesigns: (clientId?: string | null) => apiFetch<{ designs: DesignSummary[] }>(`/designs${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`),
     getDesign: (id: string) => apiFetch<DesignDoc>(`/designs/${id}`),
     createDesign: (data: { name?: string; width: number; height: number; clientId?: string | null; data?: Record<string, unknown> }) => apiFetch<DesignDoc>("/designs", { method: "POST", body: JSON.stringify(data) }),
-    saveDesign: (id: string, data: { name?: string; width?: number; height?: number; data?: Record<string, unknown>; revision?: number }) => apiFetch<DesignSummary>(`/designs/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    saveDesign: (id: string, data: { name?: string; width?: number; height?: number; data?: Record<string, unknown>; revision?: number; keep?: boolean }) => apiFetch<DesignSummary>(`/designs/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     deleteDesign: (id: string) => apiFetch<{ ok: boolean }>(`/designs/${id}`, { method: "DELETE" }),
     importDesignImage: (id: string, creativeId: string) => apiFetch<DesignImage>(`/designs/${id}/images/from-creative`, { method: "POST", body: JSON.stringify({ creativeId }) }),
-    uploadDesignImage: (id: string, file: Blob) => uploadDesignFile<DesignImage>(`/designs/${id}/images`, file),
+    uploadDesignImage: (id: string, file: Blob, onProgress?: (share: number) => void) => uploadDesignFile<DesignImage>(`/designs/${id}/images`, file, onProgress),
     saveDesignPreview: (id: string, png: Blob) => uploadDesignFile<{ previewUrl: string }>(`/designs/${id}/preview`, png),
     exportDesign: (id: string, png: Blob) => uploadDesignFile<DesignExport>(`/designs/${id}/export`, png),
     getAdminWorkspaces: (filter: "locked" | "all") => apiFetch<{ workspaces: AdminWorkspace[] }>(`/admin/workspaces?filter=${filter}`),

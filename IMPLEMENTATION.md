@@ -485,6 +485,21 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-06 — C19a editor: leaving without saving, cleanup, Your designs
+
+- **Where a saved ad lives (decided 2026-11-06):** the finished PNG goes to Meta (for publishing) and a compressed copy plus the design's working images stay in R2 (for Creatives, Edit design, other accounts and platforms). R2 copies are **not** deleted after the Meta upload: Meta only gives expiring, per-account links.
+- **Leaving without saving:** a design counts as saved after **Save draft** (or Ctrl+S) or **Save to Creatives** (`Design.kept`, false for new designs; existing designs count as saved). Leaving a never-saved design through any link inside Advertix (Back, the sidebar) asks: **Keep as draft** / **Delete** (the design and its images, from R2 too) / Cancel. Closing or reloading the tab shows the browser's own prompt.
+- **Cleanup job `design-cleanup`** (hourly, `DESIGN_CLEANUP_ENABLED`): never-saved designs untouched for 24 hours are deleted with their files; uploads no longer used on their design are deleted from R2 after 30 days.
+- **Your designs:** saved designs (drafts and ones in Creatives) are listed in Creatives → Design an ad, to continue editing.
+- **Schema:** `Design.kept`.
+
+### 2026-11-06 — C19a editor: undo keeps images, upload progress, "Your uploads", R2 id fix
+
+- **Undo lost images (fixed):** history snapshots were the saved form (images as `asset:<id>`), which can't be loaded back, so undo dropped every image and auto-save then saved that. History now keeps live image links; a step that can't be restored leaves the canvas as it was.
+- **Upload progress:** the upload goes over XHR with progress ("Uploading image… 45%", then "Preparing image…" while the server compresses it, then "Adding to the design…"), for Upload image, drop onto the canvas or a frame, and From Creatives.
+- **Your uploads:** every image uploaded to a design is listed under Images (click to add again, into the selected frame if one is selected); `GET /designs/:id` returns `uploads`.
+- **R2:** `R2_ACCOUNT_ID` also accepts the full endpoint URL; path-style requests; a storage failure gives a clear message (real reason in the log, `[assets] storage upload failed`).
+
 ### 2026-11-06 — C19a editor: colour picker with opacity, edit-conflict guard
 
 - **Colour picker** ([ColorPicker.tsx](apps/web/components/app/editor/ColorPicker.tsx)) for text, fill, outline and background: colour area, hue, a separate **opacity** slider, hex and opacity % inputs, the eyedropper (where the browser has one) and swatches incl. none. Solid colours save as hex, see-through ones as rgba(). Dragging previews live; one undo step per change.

@@ -46,6 +46,7 @@ function view(base: string, d: Prisma.DesignGetPayload<object>) {
     clientId: d.clientId,
     creativeId: d.creativeId,
     revision: d.revision,
+    kept: d.kept,
     previewUrl: d.previewAssetId ? assetUrl(base, d.previewAssetId) : null,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
@@ -53,7 +54,8 @@ function view(base: string, d: Prisma.DesignGetPayload<object>) {
 }
 
 export async function listDesigns(access: Access, base: string, clientId: string | null) {
-  const where: Prisma.DesignWhereInput = { workspaceId: access.workspaceId };
+  // Only designs someone saved (never-saved ones are on their way to the cleanup).
+  const where: Prisma.DesignWhereInput = { workspaceId: access.workspaceId, kept: true };
   if (clientId) where.OR = [{ clientId }, { clientId: null }];
   else if (access.clientIds) where.OR = [{ clientId: { in: access.clientIds } }, { clientId: null }];
   const rows = await prisma.design.findMany({ where, orderBy: { updatedAt: "desc" }, take: 200 });
@@ -62,7 +64,8 @@ export async function listDesigns(access: Access, base: string, clientId: string
 
 export async function getDesign(access: Access, base: string, id: string) {
   const d = await load(access, id);
-  return { ...view(base, d), data: d.data, assets: await assetLinks(base, d.id) };
+  const uploads = await prisma.asset.findMany({ where: { designId: d.id, kind: "upload" }, orderBy: { createdAt: "desc" }, select: { id: true, width: true, height: true } });
+  return { ...view(base, d), data: d.data, assets: await assetLinks(base, d.id), uploads: uploads.map((u) => ({ ...u, url: assetUrl(base, u.id) })) };
 }
 
 export async function createDesign(access: Access, userId: string, base: string, body: Json) {
@@ -75,7 +78,8 @@ export async function createDesign(access: Access, userId: string, base: string,
     if (!c) throw assetError(404, "Client not found");
     assertClientAccess(access, clientId);
   } else if (access.clientIds) throw assetError(400, "Pick one of your clients for this design.");
-  const d = await prisma.design.create({ data: { workspaceId: access.workspaceId, clientId, name, width: size.width, height: size.height, data: (isObj(body.data) ? body.data : {}) as Prisma.InputJsonValue, createdById: userId } });
+  // Not kept until someone saves it (Save draft / Save to Creatives); abandoned, it's cleaned up after a day.
+  const d = await prisma.design.create({ data: { workspaceId: access.workspaceId, clientId, name, width: size.width, height: size.height, data: (isObj(body.data) ? body.data : {}) as Prisma.InputJsonValue, createdById: userId, kept: false } });
   return { ...view(base, d), data: d.data, assets: {} };
 }
 
@@ -83,6 +87,8 @@ export async function saveDesign(access: Access, base: string, id: string, body:
   const d = await load(access, id);
   const data: Prisma.DesignUpdateInput = {};
   if (typeof body.name === "string" && body.name.trim()) data.name = body.name.trim().slice(0, 120);
+  // Save draft: the design is kept (no longer cleaned up when left alone).
+  if (body.keep === true) data.kept = true;
   if (body.width !== undefined || body.height !== undefined) {
     const size = validSize(body.width, body.height);
     if (!size) throw assetError(400, "Pick one of the ad sizes: 1080×1080, 1200×628 or 1080×1920.");
@@ -179,7 +185,7 @@ export async function exportDesign(access: Access, userId: string, base: string,
   const saved = creative ?? (await prisma.creative.create({ data: { workspaceId: access.workspaceId, clientId: d.clientId, name: d.name, type: "IMAGE", status: "DRAFT", content: content as Prisma.InputJsonValue } }));
 
   const old = [d.exportAssetId, d.previewAssetId].filter((x): x is string => Boolean(x) && x !== a.id);
-  await prisma.design.update({ where: { id: d.id }, data: { exportAssetId: a.id, previewAssetId: a.id, creativeId: saved.id } });
+  await prisma.design.update({ where: { id: d.id }, data: { exportAssetId: a.id, previewAssetId: a.id, creativeId: saved.id, kept: true } });
   if (old.length) await deleteAssets({ id: { in: old } });
   return { creativeId: saved.id, imageUrl: assetUrl(base, a.id), metaUploaded: Boolean(meta), metaError };
 }
@@ -204,6 +210,48 @@ export async function onCreativeDeleted(workspaceId: string, content: unknown) {
     }
   }
   if (typeof c.assetId === "string") await deleteAssets({ id: { in: [c.assetId] } });
+}
+
+const DAY = 86_400_000;
+export const ABANDONED_AFTER_MS = DAY;
+export const UNUSED_UPLOAD_AFTER_MS = 30 * DAY;
+
+/**
+ * Designs cleanup (hourly job): designs never saved and untouched for a day
+ * are deleted with their files (someone left without saving: a closed tab,
+ * the browser's back button); images uploaded to a design but no longer on
+ * it are deleted from R2 after 30 days ("Your uploads" keeps them till then).
+ */
+export async function cleanupDesigns(now = new Date()) {
+  const stale = await prisma.design.findMany({ where: { kept: false, updatedAt: { lt: new Date(now.getTime() - ABANDONED_AFTER_MS) } }, select: { id: true, creativeId: true } });
+  for (const d of stale) {
+    try {
+      await deleteAssets({ designId: d.id });
+      if (d.creativeId) await prisma.creative.deleteMany({ where: { id: d.creativeId } });
+      await prisma.design.deleteMany({ where: { id: d.id } });
+    } catch (err) {
+      console.error(`[designs] cleanup of ${d.id}:`, err instanceof Error ? err.message : err);
+    }
+  }
+  const old = await prisma.asset.findMany({ where: { kind: "upload", designId: { not: null }, createdAt: { lt: new Date(now.getTime() - UNUSED_UPLOAD_AFTER_MS) } }, select: { id: true, designId: true } });
+  const byDesign = new Map<string, string[]>();
+  for (const a of old) byDesign.set(a.designId!, [...(byDesign.get(a.designId!) ?? []), a.id]);
+  let uploads = 0;
+  for (const [designId, ids] of byDesign) {
+    const d = await prisma.design.findUnique({ where: { id: designId }, select: { data: true } });
+    const text = JSON.stringify(d?.data ?? {});
+    const unused = ids.filter((id) => !text.includes(`asset:${id}`));
+    if (unused.length) uploads += await deleteAssets({ id: { in: unused } });
+  }
+  if (stale.length || uploads) console.log(`[designs] cleanup: ${stale.length} unsaved design(s), ${uploads} unused upload(s)`);
+  return { designs: stale.length, uploads };
+}
+
+let cleanupHandle: NodeJS.Timeout | null = null;
+/** Hourly timer fallback (when the job queue isn't running). Disable with DESIGN_CLEANUP_ENABLED=false. */
+export function startDesignCleanupScheduler() {
+  if (cleanupHandle) return;
+  cleanupHandle = setInterval(() => void cleanupDesigns().catch((e) => console.error("[designs] cleanup", e)), 3_600_000);
 }
 
 /** Library creatives made in the editor: a fresh signed link in place of a stored URL (in memory only). */

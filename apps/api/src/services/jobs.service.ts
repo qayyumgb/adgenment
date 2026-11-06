@@ -6,6 +6,7 @@ import { notificationsTick, startNotificationScheduler } from "./notifications.s
 import { reportsTick, startReportScheduler } from "./reports.service";
 import { safetyTick, startSafetyScheduler } from "./safety.service";
 import { retentionTick, startRetentionScheduler } from "./retention.service";
+import { cleanupDesigns, startDesignCleanupScheduler } from "./designs.service";
 import { startSyncScheduler, syncQueues, syncSchedulerEnabled, syncTick } from "./sync-scheduler.service";
 
 /**
@@ -37,6 +38,8 @@ export const RECURRING: Recurring[] = [
   { name: "smart-hours", cron: "20 * * * *", enabled: on("SMART_HOURS_ENABLED"), run: () => hoursTick(), timer: startHoursScheduler, expireInMinutes: 45 },
   // Locked workspaces (C15b): access removed at 30 days, deletion emails and deletions. Daily.
   { name: "retention", cron: "40 3 * * *", enabled: on("RETENTION_ENABLED"), run: () => retentionTick(), timer: startRetentionScheduler, expireInMinutes: 60 },
+  // Creative editor (C19): unsaved designs left for a day, and uploads unused for 30 days (files deleted from R2).
+  { name: "design-cleanup", cron: "47 * * * *", enabled: on("DESIGN_CLEANUP_ENABLED"), run: () => cleanupDesigns(), timer: startDesignCleanupScheduler, expireInMinutes: 30 },
 ];
 
 /** Start the background jobs: the queue, or the in-process timers if it can't start. */

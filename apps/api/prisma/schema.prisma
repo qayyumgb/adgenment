@@ -1208,6 +1208,9 @@ model Design {
   creativeId  String?  @unique
   /// Bumped on every save of the document: a save based on an older revision is refused (two tabs or teammates).
   revision    Int      @default(0)
+  /// False until someone clicks Save draft or Save to Creatives. A design never saved and untouched
+  /// for 24 hours is deleted with its files (designs cleanup job). Existing designs count as saved.
+  kept        Boolean  @default(true)
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

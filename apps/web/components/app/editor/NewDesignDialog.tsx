@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { useApiClient } from "@/lib/api";
+import { useApi } from "@/hooks/useApi";
 import { useAppRouter } from "@/hooks/useAppRouter";
 import { cn } from "@/lib/cn";
 import { Button, Dialog } from "@/components/app/ui";
@@ -34,6 +35,9 @@ export function NewDesignDialog({ open, onClose, fromCreativeId, fromName, initi
   const [pick, setPick] = useState(initialSize);
   const [clientId, setClientId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Saved designs to continue (drafts, and ads already in Creatives); not when starting from a library image.
+  const mine = useApi((c) => (open && !fromCreativeId ? c.getDesigns(scope.clientId) : new Promise<never>(() => {})), [open, fromCreativeId, scope.clientId], { key: "my-designs" });
+  const designs = mine.data?.designs ?? [];
   useEffect(() => {
     if (!open) return;
     setPick(initialSize);
@@ -95,6 +99,36 @@ export function NewDesignDialog({ open, onClose, fromCreativeId, fromName, initi
             </button>
           ))}
         </div>
+        {designs.length > 0 && (
+          <div className="flex flex-col gap-2 border-t border-line pt-4">
+            <span className="text-[13px] font-semibold">Your designs</span>
+            <div className="grid max-h-[220px] grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-2 overflow-y-auto pr-1">
+              {designs.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    router.push(`/creatives/design/${d.id}`);
+                  }}
+                  className="group flex flex-col gap-1 rounded-ctl border border-line p-1.5 text-left hover:border-brand"
+                  title={`Continue ${d.name}`}
+                >
+                  <span className="flex aspect-square w-full items-center justify-center overflow-hidden rounded-md bg-surface-2">
+                    {d.previewUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={d.previewUrl} alt="" loading="lazy" className="max-h-full max-w-full object-contain" />
+                    ) : (
+                      <span className="text-[11px] text-ink-3">{d.width}×{d.height}</span>
+                    )}
+                  </span>
+                  <span className="truncate text-xs font-medium text-ink group-hover:text-brand-ink">{d.name}</span>
+                  <span className="text-[11px] text-ink-3">{d.creativeId ? "In Creatives" : "Draft"}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {!scope.clientId && scope.clients.length > 1 && (
           <label className="flex flex-col gap-1.5 text-[13px]">
             <span className="font-medium">Client</span>

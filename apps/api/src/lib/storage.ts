@@ -17,12 +17,20 @@ const r2On = () => Boolean(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KE
 const localOn = () => !r2On() && process.env.NODE_ENV !== "production";
 export const storageConfigured = () => r2On() || localOn();
 
+/** The account id, also when the whole endpoint URL was pasted ("https://<id>.r2.cloudflarestorage.com"). */
+export function r2AccountId(raw = process.env.R2_ACCOUNT_ID ?? "") {
+  const v = raw.trim();
+  return v.match(/[0-9a-f]{32}/i)?.[0] ?? v.replace(/^https?:\/\//, "").split(/[./]/)[0];
+}
+
 let client: S3Client | null = null;
 function r2() {
   if (!client) {
     client = new S3Client({
       region: "auto",
-      endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      endpoint: `https://${r2AccountId()}.r2.cloudflarestorage.com`,
+      // Bucket in the path, not the host name (no per-bucket DNS).
+      forcePathStyle: true,
       credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID!, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY! },
     });
   }

@@ -45,13 +45,13 @@ import {
   Unlock,
   Wallpaper,
 } from "lucide-react";
-import { useApiClient, type Creative, type DesignDoc } from "@/lib/api";
+import { useApiClient, type Creative, type DesignDoc, type DesignImage } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
 import { Button, Dialog, IconButton, Menu, MenuItem, Skeleton, useConfirm } from "@/components/app/ui";
 import { useAccess } from "@/components/app/team/access";
 import { DEFAULT_FONT, FONTS, addFontStylesheet, loadFont } from "./fonts";
-import { alignTo, dataUrlToBlob, fitScale, fontsIn, hydrate, isLocked, layerName, serialize, setLocked, snap, type Align, type Guides } from "./canvas";
+import { EXTRA_PROPS, alignTo, dataUrlToBlob, fitScale, fontsIn, hydrate, isLocked, layerName, serialize, setLocked, snap, type Align, type Guides } from "./canvas";
 import { FRAME_SHAPES, SHAPES, ShapeIcon, makeShape, type ShapeKind } from "./shapes";
 import { FrameImage, isFrame, makeFrame } from "./frames";
 import { ColorPicker } from "./ColorPicker";
@@ -169,6 +169,10 @@ export default function Editor({ designId }: { designId: string }) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The revision this editor's copy is based on (a save from an older copy is refused).
   const revisionRef = useRef(0);
+  // Saved at least once (Save draft / Save to Creatives)? Until then, leaving asks whether to keep it.
+  const keptRef = useRef(true);
+  const [leaving, setLeaving] = useState<string | null>(null);
+  const [leaveBusy, setLeaveBusy] = useState<"keep" | "delete" | null>(null);
 
   const [doc, setDoc] = useState<DesignDoc | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -197,6 +201,10 @@ export default function Editor({ designId }: { designId: string }) {
   const [height, setHeight] = useState<number | null>(null);
   const [manualSave, setManualSave] = useState(false);
   const [adjusting, setAdjusting] = useState<FrameImage | null>(null);
+  // An image on its way in: upload progress, then the server preparing it, then placing it.
+  const [uploads, setUploads] = useState<DesignImage[]>([]);
+  const [incoming, setIncoming] = useState<{ stage: "uploading" | "preparing" | "adding"; share: number } | null>(null);
+  const onUploadProgress = (share: number) => setIncoming({ stage: share >= 1 ? "preparing" : "uploading", share });
 
   const bump = () => setRev((r) => r + 1);
   const W = size.width;
@@ -215,6 +223,8 @@ export default function Editor({ designId }: { designId: string }) {
       .then((d) => {
         if (!alive) return;
         setDoc(d);
+        keptRef.current = d.kept !== false;
+        setUploads(d.uploads ?? []);
         revisionRef.current = d.revision ?? 0;
         setName(d.name);
         setSize({ width: d.width, height: d.height });
@@ -234,13 +244,14 @@ export default function Editor({ designId }: { designId: string }) {
   }, []);
 
   const save = useCallback(
-    async (opts: { preview?: boolean; quiet?: boolean } = {}) => {
+    async (opts: { preview?: boolean; quiet?: boolean; keep?: boolean } = {}) => {
       const c = canvasRef.current;
       if (!c || !canEdit || statusRef.current === "conflict") return;
       if (saveTimer.current) clearTimeout(saveTimer.current);
       setStatus("saving");
       try {
-        const saved = await api.saveDesign(designId, { data: serialize(c), name: name.trim() || "Untitled design", width: W, height: H, revision: revisionRef.current });
+        const saved = await api.saveDesign(designId, { data: serialize(c), name: name.trim() || "Untitled design", width: W, height: H, revision: revisionRef.current, ...(opts.keep ? { keep: true } : {}) });
+        if (opts.keep) keptRef.current = true;
         revisionRef.current = saved.revision;
         if (opts.preview) {
           c.discardActiveObject();
@@ -269,7 +280,8 @@ export default function Editor({ designId }: { designId: string }) {
     const c = canvasRef.current;
     const h = history.current;
     if (!c || h.quiet) return;
-    const snapshot = JSON.stringify(serialize(c));
+    // Undo keeps the live image links; the saved form (asset references) can't be loaded back directly.
+    const snapshot = JSON.stringify(c.toObject(EXTRA_PROPS));
     if (h.stack[h.at] === snapshot) return;
     h.stack = h.stack.slice(0, h.at + 1);
     h.stack.push(snapshot);
@@ -405,7 +417,7 @@ export default function Editor({ designId }: { designId: string }) {
         if (typeof json.background === "string") c.backgroundColor = json.background;
         history.current.quiet = false;
       }
-      history.current.stack = [JSON.stringify(serialize(c))];
+      history.current.stack = [JSON.stringify(c.toObject(EXTRA_PROPS))];
       history.current.at = 0;
       refreshLayers();
       // Opened from a library image ("Open in editor"): place it as the background.
@@ -461,14 +473,50 @@ export default function Editor({ designId }: { designId: string }) {
     };
   }, [narrow, loadError]);
 
-  // Leaving with unsaved changes.
+  // Leaving: the browser's own prompt for closing / reloading (a never-saved design is cleaned up after a day)…
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
-      if (status === "dirty" || status === "saving") e.preventDefault();
+      if (!canEdit) return;
+      if (!keptRef.current || status === "dirty" || status === "saving") e.preventDefault();
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [status]);
+  }, [status, canEdit]);
+
+  // …and for any link inside Advertix (sidebar, Back), our own question when it was never saved.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (!canEdit || keptRef.current || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = (e.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+      const url = new URL(a.href, window.location.href);
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setLeaving(url.pathname + url.search + url.hash);
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, [canEdit]);
+
+  /** Go where the person was heading: after saving any pending change. */
+  const leaveTo = async (href: string, how: "keep" | "delete") => {
+    setLeaveBusy(how);
+    try {
+      if (how === "keep") await save({ preview: true, keep: true, quiet: true });
+      else {
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        await api.deleteDesign(designId);
+        keptRef.current = true; // gone: nothing left to ask about
+      }
+      setLeaving(null);
+      router.push(href);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : how === "keep" ? "Couldn't save the draft." : "Couldn't delete it.");
+    } finally {
+      setLeaveBusy(null);
+    }
+  };
 
   /* ── actions ─────────────────────────────────────────────────────────── */
   const c = () => canvasRef.current!;
@@ -515,8 +563,11 @@ export default function Editor({ designId }: { designId: string }) {
     const p = cv.getScenePoint(e.nativeEvent as unknown as MouseEvent);
     const under = (cv.getObjects().filter((o) => isFrame(o) && o.visible !== false) as unknown as FrameImage[]).reverse().find((fr) => fr.containsPoint(p));
     setBusy("upload");
+    setIncoming({ stage: "uploading", share: 0 });
     try {
-      const img = await api.uploadDesignImage(designId, file);
+      const img = await api.uploadDesignImage(designId, file, onUploadProgress);
+      setUploads((u) => [img, ...u]);
+      setIncoming({ stage: "adding", share: 1 });
       if (under) await fillFrame(under, img);
       else {
         cv.discardActiveObject();
@@ -526,6 +577,7 @@ export default function Editor({ designId }: { designId: string }) {
       toast.error(err instanceof Error ? err.message : "Couldn't add the image.");
     } finally {
       setBusy(null);
+      setIncoming(null);
     }
   };
 
@@ -595,24 +647,34 @@ export default function Editor({ designId }: { designId: string }) {
   const upload = async (file: File | undefined, mode: "image" | "background") => {
     if (!file) return;
     setBusy("upload");
+    setIncoming({ stage: "uploading", share: 0 });
     try {
-      await placeImage(await api.uploadDesignImage(designId, file), mode);
+      const img = await api.uploadDesignImage(designId, file, onUploadProgress);
+      setUploads((u) => [img, ...u]);
+      setIncoming({ stage: "adding", share: 1 });
+      await placeImage(img, mode);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't add the image.");
     } finally {
       setBusy(null);
+      setIncoming(null);
     }
   };
 
   const addFromCreative = async (creativeId: string, mode: "image" | "background" = "image") => {
     setPicker(false);
     setBusy("upload");
+    setIncoming({ stage: "preparing", share: 1 });
     try {
-      await placeImage(await api.importDesignImage(designId, creativeId), mode);
+      const img = await api.importDesignImage(designId, creativeId);
+      setUploads((u) => [img, ...u]);
+      setIncoming({ stage: "adding", share: 1 });
+      await placeImage(img, mode);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't add that image.");
     } finally {
       setBusy(null);
+      setIncoming(null);
     }
   };
 
@@ -723,9 +785,16 @@ export default function Editor({ designId }: { designId: string }) {
     const h = history.current;
     const to = h.at + dir;
     if (to < 0 || to >= h.stack.length) return;
-    h.at = to;
     c().discardActiveObject();
-    await loadJson(JSON.parse(h.stack[to]));
+    try {
+      await loadJson(JSON.parse(h.stack[to]));
+    } catch {
+      // Couldn't restore that step (e.g. an image didn't load): keep what's on the canvas.
+      await loadJson(JSON.parse(h.stack[h.at])).catch(() => undefined);
+      toast.error("Couldn't undo that step. Your design is unchanged.");
+      return;
+    }
+    h.at = to;
     setCanUndo(h.at > 0);
     setCanRedo(h.at < h.stack.length - 1);
     setSelected(null);
@@ -763,7 +832,8 @@ export default function Editor({ designId }: { designId: string }) {
       if (r.metaUploaded) toast.success("Saved to Creatives, and uploaded to Meta: ready to publish.");
       else if (r.metaError) toast(`Saved to Creatives. Meta didn't take the image yet (${r.metaError}); it uploads when you publish.`, { icon: "⚠️", duration: 7000 });
       else toast.success("Saved to Creatives.");
-      setDoc((d) => (d ? { ...d, creativeId: r.creativeId } : d));
+      keptRef.current = true;
+      setDoc((d) => (d ? { ...d, creativeId: r.creativeId, kept: true } : d));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't save to Creatives.");
     } finally {
@@ -804,7 +874,7 @@ export default function Editor({ designId }: { designId: string }) {
         void duplicate();
       } else if (mod && k === "s") {
         e.preventDefault();
-        void save({ preview: true });
+        void save({ preview: true, keep: true });
       } else if (k === "delete" || k === "backspace") {
         if (cv.getActiveObject()) {
           e.preventDefault();
@@ -915,7 +985,7 @@ export default function Editor({ designId }: { designId: string }) {
               size="sm"
               onClick={async () => {
                 setManualSave(true);
-                await save({ preview: true });
+                await save({ preview: true, keep: true });
                 setManualSave(false);
               }}
               loading={manualSave}
@@ -949,6 +1019,19 @@ export default function Editor({ designId }: { designId: string }) {
             <PanelButton icon={<ImageIcon size={16} />} label={busy === "upload" ? "Adding…" : "Upload image"} onClick={() => fileRef.current?.click()} disabled={!doc || !canEdit || busy === "upload"} />
             <PanelButton icon={<Images size={16} />} label="From Creatives" onClick={() => setPicker(true)} disabled={!doc || !canEdit || busy === "upload"} />
             <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={(e) => { void upload(e.target.files?.[0], "image"); e.target.value = ""; }} />
+            {uploads.length > 0 && (
+              <div className="flex flex-col gap-1.5 pt-1">
+                <span className="text-[11px] font-medium text-ink-3">Your uploads · click to add again</span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {uploads.slice(0, 12).map((u) => (
+                    <button key={u.id} type="button" title="Add to the design (into the selected frame, if one is selected)" onClick={() => void placeImage(u, "image")} disabled={!canEdit} className="overflow-hidden rounded-md border border-line bg-surface-2 hover:border-brand">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={u.url} alt="" loading="lazy" className="aspect-square w-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </Section>
           <Section title="Shapes">
             <div className="grid grid-cols-5 gap-1">
@@ -1131,6 +1214,17 @@ export default function Editor({ designId }: { designId: string }) {
           </div>
 
           <div ref={wrapRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden" onDragOver={(e) => canEdit && e.preventDefault()} onDrop={(e) => void onDrop(e)}>
+            {incoming && (
+              <div role="status" aria-live="polite" className="absolute left-1/2 top-4 z-20 flex w-[260px] -translate-x-1/2 flex-col gap-2 rounded-card border border-line bg-surface px-4 py-3 shadow-pop">
+                <span className="flex items-center gap-2.5 text-[13px] font-medium text-ink">
+                  <span className="h-4 w-4 flex-none animate-spin rounded-full border-2 border-brand-soft-2 border-t-brand motion-reduce:animate-none" aria-hidden="true" />
+                  {incoming.stage === "uploading" ? `Uploading image… ${Math.round(incoming.share * 100)}%` : incoming.stage === "preparing" ? "Preparing image…" : "Adding to the design…"}
+                </span>
+                <span className="h-1.5 overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
+                  <span className={cn("block h-full rounded-full bg-brand transition-[width] duration-200", incoming.stage !== "uploading" && "animate-pulse")} style={{ width: `${incoming.stage === "uploading" ? Math.max(4, incoming.share * 100) : 100}%` }} />
+                </span>
+              </div>
+            )}
             {!doc ? (
               <Skeleton className="h-[60%] w-[40%] rounded-card" />
             ) : (
@@ -1200,6 +1294,28 @@ export default function Editor({ designId }: { designId: string }) {
       </div>
       <LibraryPicker open={picker} onClose={() => setPicker(false)} onPick={(cr) => void addFromCreative(cr.id)} />
       {dialog}
+      <Dialog
+        open={leaving !== null}
+        onClose={() => leaveBusy === null && setLeaving(null)}
+        title="You haven't saved this design"
+        sub="Keep it as a draft to finish later, or delete it together with the images you uploaded to it."
+        width={480}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setLeaving(null)} disabled={leaveBusy !== null}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={() => leaving && void leaveTo(leaving, "delete")} loading={leaveBusy === "delete"} disabled={leaveBusy !== null}>
+              Delete
+            </Button>
+            <Button variant="primary" onClick={() => leaving && void leaveTo(leaving, "keep")} loading={leaveBusy === "keep"} disabled={leaveBusy !== null}>
+              Keep as draft
+            </Button>
+          </>
+        }
+      >
+        <p className="m-0 text-[13px] text-ink-2">Drafts are in Creatives → Design an ad → Your designs. A design that&apos;s never saved is deleted automatically after a day.</p>
+      </Dialog>
     </div>
   );
 }

@@ -69,7 +69,13 @@ export async function createAsset(opts: { workspaceId: string; designId?: string
   const { data, width, height } = await compress(opts.input, opts.quality ?? 90);
   const id = randomBytes(12).toString("hex");
   const key = `ws/${opts.workspaceId}/${id}.webp`;
-  await putObject(key, data, "image/webp");
+  try {
+    await putObject(key, data, "image/webp");
+  } catch (err) {
+    // The real reason goes to the log; people get something they can act on.
+    console.error("[assets] storage upload failed:", err instanceof Error ? err.message : err);
+    throw assetError(502, "Couldn't save the image to file storage. Try again; if it keeps failing, check the R2 settings on the server.");
+  }
   try {
     return await prisma.asset.create({ data: { id, workspaceId: opts.workspaceId, designId: opts.designId ?? null, key, mime: "image/webp", width, height, bytes: data.length, kind: opts.kind, createdById: opts.createdById ?? null } });
   } catch (err) {
