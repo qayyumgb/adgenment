@@ -7,6 +7,40 @@ const clerk = createClerkClient({
   secretKey: process.env.CLERK_SECRET_KEY,
 });
 
+type ClerkUser = Awaited<ReturnType<typeof clerk.users.getUser>>;
+
+/**
+ * The Advertix user for a Clerk id: found by id, else (C16b) relinked by
+ * verified primary email, else created.
+ *
+ * Relinking covers a new Clerk instance (switching to production keys gives
+ * everyone a new id) and a login deleted and made again: the person keeps
+ * their workspaces, roles and plan instead of hitting the unique email.
+ * Only a **verified** email relinks, so nobody can claim an account by
+ * signing up with someone else's address.
+ */
+export async function userForClerkId(clerkId: string, getClerkUser: (id: string) => Promise<ClerkUser> = (id) => clerk.users.getUser(id)) {
+  const found = await prisma.user.findUnique({ where: { clerkId } });
+  if (found) return { user: found, displayName: found.name };
+
+  const clerkUser = await getClerkUser(clerkId);
+  const primary = clerkUser.emailAddresses.find((e) => e.id === clerkUser.primaryEmailAddressId) ?? clerkUser.emailAddresses[0];
+  const email = primary?.emailAddress ?? "";
+  const fullName = `${clerkUser.firstName ?? ""} ${clerkUser.lastName ?? ""}`.trim();
+  const displayName = fullName || clerkUser.username || null;
+
+  const existing = email ? await prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } } }) : null;
+  if (existing) {
+    if (primary?.verification?.status !== "verified") throw new Error(`Email ${email} isn't verified, so it can't be linked to the existing account.`);
+    const user = await prisma.user.update({ where: { id: existing.id }, data: { clerkId } });
+    console.log(`[auth] relinked user ${existing.id} to a new Clerk id (same verified email)`);
+    return { user, displayName: user.name ?? displayName };
+  }
+
+  const user = await prisma.user.create({ data: { clerkId, email, name: displayName, plan: "FREE" } });
+  return { user, displayName };
+}
+
 async function loadUserFromToken(token: string) {
   const payload = await verifyToken(token, {
     secretKey: process.env.CLERK_SECRET_KEY,
@@ -19,25 +53,7 @@ async function loadUserFromToken(token: string) {
     clockSkewInMs: 60_000,
   });
   const clerkId = payload.sub;
-
-  let user = await prisma.user.findUnique({ where: { clerkId } });
-  let displayName: string | null = user?.name ?? null;
-
-  if (!user) {
-    const clerkUser = await clerk.users.getUser(clerkId);
-    const email = clerkUser.emailAddresses[0]?.emailAddress ?? "";
-    const fullName =
-      `${clerkUser.firstName ?? ""} ${clerkUser.lastName ?? ""}`.trim();
-    displayName = fullName || clerkUser.username || null;
-    user = await prisma.user.create({
-      data: {
-        clerkId,
-        email,
-        name: displayName,
-        plan: "FREE",
-      },
-    });
-  }
+  const { user, displayName } = await userForClerkId(clerkId);
 
   // Auto-create a default workspace on first authenticated request so every
   // user can use the app without a separate onboarding step. Owner can rename

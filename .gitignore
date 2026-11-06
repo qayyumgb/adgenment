@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+# Creative editor files in local development (C19; production uses R2)
+apps/api/.storage/
 .pnp
 .pnp.js
 

@@ -487,6 +487,41 @@ export interface PlanInfo {
   deletionScheduledAt?: string | null;
 }
 
+/* Creative editor (C19) */
+export interface DesignSummary {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  clientId: string | null;
+  /** The Creative "Save to Creatives" made (or updates). */
+  creativeId: string | null;
+  /** Bumped on every save; sent back so a save from an older copy is refused (409). */
+  revision: number;
+  previewUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface DesignDoc extends DesignSummary {
+  /** Fabric.js JSON; images are "asset:<id>" references. */
+  data: Record<string, unknown>;
+  /** Signed links for the design's files, by asset id. */
+  assets: Record<string, string>;
+}
+export interface DesignImage {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+}
+export interface DesignExport {
+  creativeId: string;
+  imageUrl: string;
+  /** Also uploaded to the workspace's Meta ad account (ready to publish). */
+  metaUploaded: boolean;
+  metaError: string | null;
+}
+
 /* Superadmin (C15b) */
 export interface AdminWorkspace {
   id: string;
@@ -1724,6 +1759,20 @@ export function useApiClient() {
   // useEffect / useCallback dependency arrays without causing infinite loops.
   // `getToken` from Clerk is itself stable across renders.
   return useMemo(() => {
+    /** A multipart image upload (field "image") for the creative editor. */
+    async function uploadDesignFile<T>(path: string, file: Blob): Promise<T> {
+      const token = await getToken();
+      const form = new FormData();
+      form.append("image", file, "image.png");
+      const res = await fetch(`${API_BASE}/api${path}`, { method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `Upload failed (${res.status})` }));
+        throwIfPlanLocked(res.status, err);
+        throw new ApiError(err.error ?? `HTTP ${res.status}`, { status: res.status });
+      }
+      return res.json() as Promise<T>;
+    }
+
     async function apiFetch<T>(
       path: string,
       options: RequestInit = {}
@@ -1987,6 +2036,16 @@ export function useApiClient() {
     getCredits: () => apiFetch<CreditStatus>("/workspace/credits"),
     getBillingStatus: () => apiFetch<BillingStatus>("/billing/status"),
     /* Superadmin (C15b) */
+    /* Creative editor (C19) */
+    getDesigns: (clientId?: string | null) => apiFetch<{ designs: DesignSummary[] }>(`/designs${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`),
+    getDesign: (id: string) => apiFetch<DesignDoc>(`/designs/${id}`),
+    createDesign: (data: { name?: string; width: number; height: number; clientId?: string | null; data?: Record<string, unknown> }) => apiFetch<DesignDoc>("/designs", { method: "POST", body: JSON.stringify(data) }),
+    saveDesign: (id: string, data: { name?: string; width?: number; height?: number; data?: Record<string, unknown>; revision?: number }) => apiFetch<DesignSummary>(`/designs/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    deleteDesign: (id: string) => apiFetch<{ ok: boolean }>(`/designs/${id}`, { method: "DELETE" }),
+    importDesignImage: (id: string, creativeId: string) => apiFetch<DesignImage>(`/designs/${id}/images/from-creative`, { method: "POST", body: JSON.stringify({ creativeId }) }),
+    uploadDesignImage: (id: string, file: Blob) => uploadDesignFile<DesignImage>(`/designs/${id}/images`, file),
+    saveDesignPreview: (id: string, png: Blob) => uploadDesignFile<{ previewUrl: string }>(`/designs/${id}/preview`, png),
+    exportDesign: (id: string, png: Blob) => uploadDesignFile<DesignExport>(`/designs/${id}/export`, png),
     getAdminWorkspaces: (filter: "locked" | "all") => apiFetch<{ workspaces: AdminWorkspace[] }>(`/admin/workspaces?filter=${filter}`),
     getAdminDeletions: () => apiFetch<{ deletions: WorkspaceDeletionRecord[] }>("/admin/deletions"),
     adminDeleteWorkspace: (id: string, confirmName: string) => apiFetch<{ deletionScheduledAt: string }>(`/admin/workspaces/${id}/delete`, { method: "POST", body: JSON.stringify({ confirmName }) }),

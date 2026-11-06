@@ -32,6 +32,7 @@ import billingRouter from "./billing";
 import calendarRouter from "./calendar";
 import experimentsRouter, { campaignExperimentsRouter } from "./experiments";
 import adminRouter from "./admin";
+import { assetsRouter, designsRouter } from "./designs";
 import { roleGuard } from "../lib/access";
 import { planGate } from "../lib/plan-gate";
 import { approvalGate, registerApprovalReplay } from "../services/approvals.service";
@@ -81,6 +82,9 @@ router.use("/hours", hoursRouter);
 router.use("/experiments", experimentsRouter);
 // Superadmin (C15b): locked workspaces and their deletion; its own guard.
 router.use("/admin", adminRouter);
+// Creative editor (C19): designs, and their files by signed link.
+router.use("/designs", designsRouter);
+router.use("/assets", assetsRouter);
 // Public (C4): the client portal; the token in the link is the only key.
 router.use("/portal", publicPortalRouter);
 

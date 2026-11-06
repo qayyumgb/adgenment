@@ -8,6 +8,7 @@ import { createInvites, listTeam, removeMember, resendInvite, revokeInvite, seat
 import { createClerkClient } from "@clerk/backend";
 import { dismissSetup, setupChecklist, skipSetupStep } from "../services/setup.service";
 import { creditStatus } from "../services/credits.service";
+import { deleteWorkspaceFiles } from "../services/assets.service";
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -210,6 +211,8 @@ router.delete("/", async (req: Request, res: Response, next: NextFunction) => {
     }
     const user = await prisma.user.findUniqueOrThrow({ where: { id: req.dbUserId! } });
     await prisma.workspace.delete({ where: { id: workspace.id } });
+    // Its editor files in R2 (C19).
+    await deleteWorkspaceFiles(workspace.id);
 
     // The login goes too when it no longer belongs anywhere.
     const elsewhere = await prisma.workspaceMember.count({ where: { userId: user.id } });

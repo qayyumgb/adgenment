@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownUp, LayoutGrid, Grid3x3, Sparkles, Upload } from "lucide-react";
+import { ArrowDownUp, LayoutGrid, Grid3x3, PenTool, Sparkles, Upload } from "lucide-react";
 import { useApi } from "@/hooks/useApi";
 import { useAccess } from "@/components/app/team/access";
 import type { Creative, CreativeBoardItem } from "@/lib/api";
@@ -15,6 +15,7 @@ import { CreativeDrawer } from "@/components/app/creatives/CreativeDrawer";
 import { EditCreativeDialog } from "@/components/app/creatives/EditCreativeDialog";
 import { Studio, type StudioHandle } from "@/components/app/creatives/Studio";
 import { UploadDialog } from "@/components/app/creatives/UploadDialog";
+import { NewDesignDialog, closestSize } from "@/components/app/editor/NewDesignDialog";
 import { toView } from "@/components/app/creatives/media";
 import { FORMAT_LABEL, SORTS, inTab, sortItems, type SortKey, type StatusTab } from "@/components/app/creatives/board";
 
@@ -72,6 +73,8 @@ export default function CreativesPage() {
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [editing, setEditing] = useState<CreativeBoardItem | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  // Creative editor (C19): a new design, or one from a library image.
+  const [designFrom, setDesignFrom] = useState<{ creativeId: string | null; name?: string; size: number } | null>(null);
   const studioRef = useRef<StudioHandle>(null);
   const studioBox = useRef<HTMLDivElement>(null);
 
@@ -126,6 +129,9 @@ export default function CreativesPage() {
           <>
             <Button variant="secondary" icon={<Upload size={16} />} onClick={() => setUploadOpen(true)} disabled={!canEdit} title={canEdit ? undefined : access.why("edit")}>
               Upload
+            </Button>
+            <Button variant="secondary" icon={<PenTool size={16} />} onClick={() => setDesignFrom({ creativeId: null, size: 0 })} disabled={!canEdit} title={canEdit ? "Design an ad with text, shapes and images" : access.why("edit")}>
+              Design an ad
             </Button>
             <Button variant="primary" icon={<Sparkles size={16} />} onClick={showStudio} disabled={!canEdit} title={canEdit ? undefined : access.why("edit")}>
               Creative studio
@@ -255,7 +261,12 @@ export default function CreativesPage() {
         onEdit={(i) => setEditing(i)}
         onVariants={variantsFrom}
         onChanged={() => void board.refetch()}
+        onOpenInEditor={(i) => {
+          const c = (i.content ?? {}) as { width?: number; height?: number };
+          setDesignFrom({ creativeId: i.creativeId, name: i.name, size: closestSize(c.width, c.height) });
+        }}
       />
+      <NewDesignDialog open={designFrom !== null} onClose={() => setDesignFrom(null)} fromCreativeId={designFrom?.creativeId} fromName={designFrom?.name} initialSize={designFrom?.size ?? 0} />
       {editing && editing.creativeId && (
         <EditCreativeDialog
           open

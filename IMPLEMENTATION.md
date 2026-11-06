@@ -485,6 +485,30 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-06 — C19a editor: colour picker with opacity, edit-conflict guard
+
+- **Colour picker** ([ColorPicker.tsx](apps/web/components/app/editor/ColorPicker.tsx)) for text, fill, outline and background: colour area, hue, a separate **opacity** slider, hex and opacity % inputs, the eyedropper (where the browser has one) and swatches incl. none. Solid colours save as hex, see-through ones as rgba(). Dragging previews live; one undo step per change.
+- **Two copies of one design** (two tabs, or two teammates): `Design.revision` is bumped on every save, and a save from an older copy is refused (409 DESIGN_CHANGED) instead of silently overwriting; the editor stops saving and offers Reload. Schema: `Design.revision`.
+
+### 2026-11-06 — C19a editor: steadier layout, 15 shapes, photo frames
+
+- **Jerking fixed:** the top bar wrapped to two lines, and the auto-save status and spinner changed its width, so it jumped between one and two lines and the canvas re-fitted every few seconds. Both bars are now one fixed-height line (the selection toolbar scrolls sideways), the status has a fixed width, the spinner shows only on manual saves, the editor sizes itself to the window (no page scroll under the trial banner), and dragging no longer re-renders the editor on every mouse move.
+- **Shapes:** rectangle, button, circle, oval, triangle, diamond, pentagon, hexagon, star, heart, arch, arrow, slanted banner, line, diagonal line ([shapes.tsx](apps/web/components/app/editor/shapes.tsx)); the panel previews are drawn from the same geometry.
+- **Frames (Canva-style), replacing "crop to shape":** a Frames section adds an empty frame in any of 13 shapes ("Drop an image"). Drag an image layer onto it (the frame highlights) or drop a file from the computer, or select it and use Add image / From Creatives. The photo always covers the frame without stretching; resizing the frame, even to a new aspect, re-fills it. Double-click (or Reposition) to drag the photo inside; Zoom slider; Remove image keeps the frame; Shape switches the frame's shape. A frame is one custom Fabric object (`FrameImage` in [frames.ts](apps/web/components/app/editor/frames.ts), registered for save / load) that draws its own photo and folds every resize into its box.
+
+### 2026-11-04 — C19a Creative editor
+
+- **Creatives → Design an ad:** a Fabric.js editor for the three Meta sizes (1:1, 1.91:1, 9:16) with text (17 Google Fonts), images, shapes and backgrounds; layers, undo / redo, snapping, shortcuts, the Stories / Reels safe zone; auto-saved drafts. **Save to Creatives** exports the PNG into the library (and to Meta when connected); **Edit design** / **Open in editor** from the drawer.
+- **Files in Cloudflare R2**, compressed (WebP q90, alpha kept), private, served by signed links; deleted from R2 with the design, its Creative or the workspace. Local development falls back to `apps/api/.storage`.
+- **Schema:** `Asset`, `Design` → `prisma db push` on production. **New env (API):** `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (optional `API_PUBLIC_URL`, `ASSET_URL_SECRET`). **New dependencies:** `@aws-sdk/client-s3` (API), `fabric` 7 (web).
+- **Files:** [lib/storage.ts](apps/api/src/lib/storage.ts), [assets.service.ts](apps/api/src/services/assets.service.ts), [designs.service.ts](apps/api/src/services/designs.service.ts), [routes/designs.ts](apps/api/src/routes/designs.ts); web [editor/](apps/web/components/app/editor/), [creatives/design/[id]](apps/web/app/(dashboard)/creatives/design/[id]/page.tsx), Creatives page and drawer.
+
+### 2026-11-03 — Sign-in relink by verified email (C16b prep) + C15 fixes from testing
+
+- **Relink:** a Clerk id Advertix doesn't know, whose **verified** primary email matches an existing user, now updates that user's Clerk id instead of failing on the unique email. Needed before switching Clerk to production keys (new ids for everyone); also fixes re-sign-up after a deleted login. Unverified emails are refused. [middleware/auth.ts](apps/api/src/middleware/auth.ts) (`userForClerkId`).
+- **Superadmins by email:** `SUPERADMIN_EMAILS` (verified Clerk email) alongside `SUPERADMIN_CLERK_IDS`. Only inboxes you alone can read.
+- **Billing copy (locked):** the Billing tab and AI credits no longer say syncing continues or credits reset; plan cards list every included feature (not just the first four).
+
 ### 2026-11-02 — C15b Retention and superadmin
 
 - **Locked workspaces (trial over, no plan):** ad access tokens removed after 30 days (data kept; reconnect after choosing a plan); deleted automatically after 6 months with emails 10, 5 and 2 days before; choosing a plan cancels any deletion. Daily job `retention` (`RETENTION_ENABLED`).

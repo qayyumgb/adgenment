@@ -179,6 +179,8 @@ model Workspace {
   budgetRecommendations BudgetRecommendation[]
   insights              Insight[]
   clients               Client[]
+  assets                Asset[]
+  designs               Design[]
   suggestions           Suggestion[]
   plans                 Plan[]
   changeLogs            ChangeLog[]
@@ -1163,4 +1165,55 @@ model WorkspaceDeletion {
   cancelledBy   String?
 
   @@index([workspaceId])
+}
+
+/// C19 creative editor: one image file in Cloudflare R2 (lib/storage.ts), stored compressed
+/// (WebP, quality 90). Belongs to a design (its photos, logos, backgrounds, preview and
+/// exported ad); deleting the design deletes its files from R2 too.
+model Asset {
+  id          String   @id @default(cuid())
+  workspaceId String
+  designId    String?
+  /// The R2 object key: ws/<workspaceId>/<assetId>.webp
+  key         String   @unique
+  mime        String
+  width       Int
+  height      Int
+  bytes       Int
+  /// upload | preview | export
+  kind        String   @default("upload")
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  design    Design?   @relation(fields: [designId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([designId])
+}
+
+/// C19 creative editor: a design document (Fabric.js JSON; images are referenced as
+/// "asset:<id>", never embedded). Saving to Creatives exports a PNG and makes or
+/// updates its Creative (creativeId).
+model Design {
+  id          String   @id @default(cuid())
+  workspaceId String
+  clientId    String?
+  name        String
+  width       Int
+  height      Int
+  data        Json
+  previewAssetId String?
+  exportAssetId  String?
+  creativeId  String?  @unique
+  /// Bumped on every save of the document: a save based on an older revision is refused (two tabs or teammates).
+  revision    Int      @default(0)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assets    Asset[]
+
+  @@index([workspaceId, updatedAt])
 }

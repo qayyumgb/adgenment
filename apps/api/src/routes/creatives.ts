@@ -11,6 +11,8 @@ import { requireWorkspace } from "../lib/workspace";
 import { ownedOrSharedWhere, parseBodyClientId, parseClientScope } from "../lib/clients";
 import { refreshExpiredMetaMedia } from "../services/meta-media-refresh.service";
 import { creativeBoard } from "../services/creative-board.service";
+import { onCreativeDeleted, withAssetUrls } from "../services/designs.service";
+import { apiBase } from "../services/assets.service";
 
 const router = Router();
 router.use(requireAuth);
@@ -96,6 +98,8 @@ router.get("/", async (req: Request, res: Response, next: NextFunction) => {
     // Meta CDN preview URLs expire after a few days; re-resolve stale ones
     // from the stored imageHash / videoId (no-op when nothing is stale).
     await refreshExpiredMetaMedia(workspace.id, creatives);
+    // Made in the editor (C19): a fresh signed link to the file in R2.
+    withAssetUrls(apiBase(req), creatives);
 
     res.json({
       creatives,
@@ -117,7 +121,7 @@ router.get("/board", async (req: Request, res: Response, next: NextFunction) => 
     const workspace = await requireWorkspace(req.dbUserId!);
     const clientScope = await parseClientScope(req, workspace.id);
     const days = Math.min(90, Math.max(1, parseInt(String(req.query.days ?? "30"), 10) || 30));
-    res.json(await creativeBoard(workspace.id, clientScope, days));
+    res.json(await creativeBoard(workspace.id, clientScope, days, apiBase(req)));
   } catch (err) {
     next(err);
   }
@@ -226,6 +230,8 @@ router.delete(
         return res.status(404).json({ error: "Creative not found" });
       }
       await prisma.creative.delete({ where: { id: existing.id } });
+      // Made in the editor (C19): its design and its files in R2 go too.
+      await onCreativeDeleted(workspace.id, existing.content).catch((err) => console.error("[creatives] file cleanup:", err instanceof Error ? err.message : err));
       res.json({ success: true });
     } catch (err) {
       next(err);

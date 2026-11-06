@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma";
 import { BILLING_SELECT, isLocked, planOf } from "../lib/plans";
 import { emailLayout, escapeHtml, sendEmail } from "../lib/email";
 import { notifyMembers } from "./notifications.service";
+import { deleteWorkspaceFiles } from "./assets.service";
 
 /**
  * Data retention for locked workspaces (plan C15b). "Locked" = the trial
@@ -85,6 +86,7 @@ async function remind(w: Ws, due: Date, now: Date) {
 async function deleteNow(w: Ws, now: Date) {
   const owners = await prisma.workspaceMember.findMany({ where: { workspaceId: w.id, role: "OWNER" }, select: { user: { select: { email: true } } } });
   await prisma.workspace.delete({ where: { id: w.id } });
+  await deleteWorkspaceFiles(w.id);
   await prisma.workspaceDeletion.updateMany({ where: { workspaceId: w.id, deletedAt: null, cancelledAt: null }, data: { deletedAt: now } });
   console.log(`[retention] ${w.id} (${w.name}) deleted`);
   const html = emailLayout({

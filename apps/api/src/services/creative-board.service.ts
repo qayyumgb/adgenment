@@ -4,6 +4,7 @@ import { campaignClientWhere, ownedOrSharedWhere } from "../lib/clients";
 import { adResults, ctrOf, zero, type FatigueRead, type Totals } from "../lib/ad-metrics";
 import { ownStatus } from "./campaign-actions.service";
 import { refreshExpiredMetaMedia } from "./meta-media-refresh.service";
+import { withAssetUrls } from "./designs.service";
 
 /**
  * The Creatives board (plan A8): library creatives and the ads synced from
@@ -105,7 +106,7 @@ function blockerFor(ad: AdRow): string | null {
   return null;
 }
 
-export async function creativeBoard(workspaceId: string, clientId: string | null, days: number) {
+export async function creativeBoard(workspaceId: string, clientId: string | null, days: number, assetBase?: string) {
   const [library, ads] = await Promise.all([
     prisma.creative.findMany({
       where: { workspaceId, ...ownedOrSharedWhere(clientId) },
@@ -125,6 +126,8 @@ export async function creativeBoard(workspaceId: string, clientId: string | null
   ]);
   // Meta CDN preview URLs expire; re-resolve stale ones (no-op when fresh).
   await refreshExpiredMetaMedia(workspaceId, library);
+  // Made in the editor (C19): a fresh signed link to the file in R2.
+  if (assetBase) withAssetUrls(assetBase, library);
   const results = await adResults(ads.map((a) => a.id), days);
 
   // Library creative ↔ the ad Advertix published it as.

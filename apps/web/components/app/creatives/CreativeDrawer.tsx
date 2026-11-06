@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { Archive, ArchiveRestore, Download, ExternalLink, MoreHorizontal, Pencil, Sparkles, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Download, ExternalLink, MoreHorizontal, Pencil, PenTool, Sparkles, Trash2 } from "lucide-react";
 import { useApiClient, type CreativeBoardItem } from "@/lib/api";
 import { fmtMoney } from "@/lib/money";
 import { AiNote, Button, ButtonLink, Drawer, IconButton, Menu, MenuItem, MenuSeparator, Pill, PlatformBadge, Toggle, useConfirm, type PlatformKey } from "@/components/app/ui";
@@ -27,6 +27,7 @@ export function CreativeDrawer({
   onEdit,
   onVariants,
   onChanged,
+  onOpenInEditor,
 }: {
   item: CreativeBoardItem | null;
   all: CreativeBoardItem[];
@@ -35,6 +36,8 @@ export function CreativeDrawer({
   onEdit: (item: CreativeBoardItem) => void;
   onVariants: (item: CreativeBoardItem) => void;
   onChanged: () => void;
+  /** Creative editor (C19): start a design from this image. */
+  onOpenInEditor?: (item: CreativeBoardItem) => void;
 }) {
   const api = useApiClient();
   const [busy, setBusy] = useState(false);
@@ -45,6 +48,8 @@ export function CreativeDrawer({
   const c = ctrOf(item);
   // Read-only roles (B6) see everything but get no edit actions.
   const library = item.source === "library" && canEdit;
+  // Made in the editor (C19): reopen the design rather than the copy editor.
+  const designId = typeof (item.content as { designId?: unknown } | null)?.designId === "string" ? ((item.content as { designId: string }).designId) : null;
 
   const run = async (fn: () => Promise<unknown>, done: string, close = false) => {
     setBusy(true);
@@ -163,6 +168,16 @@ export function CreativeDrawer({
           {library && (
             <Button variant="secondary" icon={<Pencil size={16} />} onClick={() => onEdit(item)} disabled={busy}>
               {item.needsMedia ? `Add ${item.format === "VIDEO" ? "video" : "image"}` : "Edit"}
+            </Button>
+          )}
+          {library && designId && (
+            <ButtonLink href={`/creatives/design/${designId}`} variant="secondary" icon={<PenTool size={16} />}>
+              Edit design
+            </ButtonLink>
+          )}
+          {library && !designId && item.format === "IMAGE" && item.imageUrl && item.creativeId && onOpenInEditor && (
+            <Button variant="secondary" icon={<PenTool size={16} />} onClick={() => onOpenInEditor(item)}>
+              Open in editor
             </Button>
           )}
           {item.source === "library" && item.imageUrl && !item.imageUrl.startsWith("data:") && (
