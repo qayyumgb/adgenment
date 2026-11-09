@@ -516,6 +516,14 @@ model Ad {
   body               String?
   callToAction       String?
   linkUrl            String?
+  /// Link description under the headline.
+  description        String?
+  /// Meta video id (video ads), so the preview can play it.
+  videoId            String?
+  /// The Facebook Page the ad runs as (preview header).
+  pageName           String?
+  /// Carousel cards: [{ imageHash, imageUrl, headline, description, link }], refreshed every sync.
+  cards              Json?
   reach30d           Int            @default(0)
   frequency30d       Float          @default(0)
   createdAt          DateTime       @default(now())

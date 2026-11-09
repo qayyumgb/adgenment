@@ -120,22 +120,47 @@ export function metaResults(row: {
   return { spend, impressions, clicks, conversions, revenue, roas };
 }
 
-/** What an ad's creative shows, from whichever of Meta's creative shapes it uses. */
-function creativeFields(c: MetaAdCreativeInfo | undefined) {
+/** Carousel card hashes in a creative (Meta gives card images as hashes only). */
+function cardHashes(c: MetaAdCreativeInfo | undefined): string[] {
+  return (c?.object_story_spec?.link_data?.child_attachments ?? []).map((x) => x.image_hash).filter((h): h is string => !!h);
+}
+
+/**
+ * What an ad's creative shows, from whichever of Meta's creative shapes it uses.
+ * `images` resolves carousel card hashes to URLs; `pages` maps Page id → name.
+ */
+export function creativeFields(c: MetaAdCreativeInfo | undefined, images: Map<string, string> = new Map(), pages: Map<string, string> = new Map()) {
   const ld = c?.object_story_spec?.link_data;
   const vd = c?.object_story_spec?.video_data;
   const af = c?.asset_feed_spec;
-  const cards = ld?.child_attachments ?? [];
-  const format = !c ? "UNKNOWN" : c.video_id || vd || af?.videos?.length || c.object_type === "VIDEO" ? "VIDEO" : cards.length > 1 ? "CAROUSEL" : "IMAGE";
+  const children = ld?.child_attachments ?? [];
+  const format = !c ? "UNKNOWN" : c.video_id || vd || af?.videos?.length || c.object_type === "VIDEO" ? "VIDEO" : children.length > 1 ? "CAROUSEL" : "IMAGE";
   const pick = (...v: (string | undefined | null)[]) => v.find((x) => typeof x === "string" && x.trim() !== "") ?? null;
+  const cards =
+    format === "CAROUSEL"
+      ? children.map((x) => ({
+          imageHash: x.image_hash ?? null,
+          imageUrl: pick(x.picture, x.image_hash ? images.get(x.image_hash) : null),
+          headline: x.name ?? "",
+          description: x.description ?? "",
+          link: pick(x.link, ld?.link) ?? "",
+        }))
+      : null;
+  const pageId = c?.object_story_spec?.page_id;
   return {
     creativeExternalId: c?.id ?? null,
     format,
-    imageUrl: pick(c?.image_url, ld?.picture, cards[0]?.picture, vd?.image_url, af?.images?.[0]?.url, af?.videos?.[0]?.thumbnail_url, c?.thumbnail_url),
-    headline: pick(c?.title, ld?.name, vd?.title, af?.titles?.[0]?.text, cards[0]?.name),
+    // For carousels, the creative's own image / thumbnail is a tiny render (often the Page picture): use the first card.
+    imageUrl: format === "CAROUSEL" ? pick(cards?.[0]?.imageUrl, c?.thumbnail_url) : pick(c?.image_url, ld?.picture, vd?.image_url, af?.images?.[0]?.url, af?.videos?.[0]?.thumbnail_url, c?.thumbnail_url),
+    // `title` on a carousel creative is the Page name, not a headline.
+    headline: format === "CAROUSEL" ? pick(cards?.[0]?.headline, ld?.name) : pick(ld?.name, vd?.title, af?.titles?.[0]?.text, c?.title),
     body: pick(c?.body, ld?.message, vd?.message, af?.bodies?.[0]?.text),
     callToAction: pick(c?.call_to_action_type, ld?.call_to_action?.type, vd?.call_to_action?.type, af?.call_to_action_types?.[0]),
-    linkUrl: pick(ld?.link, vd?.call_to_action?.value?.link, af?.link_urls?.[0]?.website_url, cards[0]?.link),
+    linkUrl: pick(ld?.link, vd?.call_to_action?.value?.link, af?.link_urls?.[0]?.website_url, children[0]?.link),
+    description: format === "CAROUSEL" ? pick(cards?.[0]?.description) : pick(ld?.description, vd?.link_description),
+    videoId: format === "VIDEO" ? pick(c?.video_id, vd?.video_id) : null,
+    pageName: pageId ? pages.get(pageId) ?? null : null,
+    cards: cards ? (cards as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
   };
 }
 
@@ -555,17 +580,29 @@ class SyncService {
 
     // Ads.
     const metaAds = await metaService.getAds(token, accountId, onlyCampaign);
+    // For previews: carousel card images (Meta lists them as hashes only) and Page names. Best-effort.
+    const ours = metaAds.filter((a) => adSetMap[a.adset_id] && idMap[a.campaign_id]);
+    const hashes = [...new Set(ours.flatMap((a) => cardHashes(a.creative)))];
+    const pageIds = [...new Set(ours.map((a) => a.creative?.object_story_spec?.page_id).filter((p): p is string => !!p))];
+    const [cardImages, pageNames] = await Promise.all([
+      hashes.length
+        ? metaService
+            .getAdImagesByHash(token, accountId, hashes)
+            .then((m) => new Map([...m].filter(([, v]) => v.url).map(([h, v]) => [h, v.url as string])))
+            .catch(() => new Map<string, string>())
+        : Promise.resolve(new Map<string, string>()),
+      pageIds.length ? metaService.getPageNames(token, pageIds).catch(() => new Map<string, string>()) : Promise.resolve(new Map<string, string>()),
+    ]);
     const adMap: Record<string, string> = {}; // Meta ad id → our id
-    for (const a of metaAds) {
+    for (const a of ours) {
       const adSetId = adSetMap[a.adset_id];
       const campaignId = idMap[a.campaign_id];
-      if (!adSetId || !campaignId) continue;
       const data = {
         campaignId,
         name: a.name,
         status: mapMetaStatus(a.status, a.effective_status, undefined),
         effectiveStatus: a.effective_status ?? null,
-        ...creativeFields(a.creative),
+        ...creativeFields(a.creative, cardImages, pageNames),
       };
       const row = await prisma.ad.upsert({
         where: { adSetId_externalId: { adSetId, externalId: a.id } },

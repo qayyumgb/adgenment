@@ -485,6 +485,13 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-09 — Campaign Ads tab: real carousel cards and the wizard's preview
+
+- **Bug:** carousel ads showed Meta's tiny auto-render (usually the Page picture) and the Page name as the headline: Meta lists carousel card images as hashes only, and a carousel creative's `title` is the Page name.
+- **Sync** now stores per ad: `cards` (image resolved from its hash, headline, description, link), `description`, `videoId` and `pageName` (one `?fields=name` read per Page, best-effort). Carousel `imageUrl` / `headline` come from the first card.
+- **Ads tab tile:** carousels step through their cards (arrows, dots, "Carousel · 1 of 4"); clicking the creative opens the campaign wizard's live preview (Facebook / Instagram / Reels tabs, plays videos), loaded only when opened.
+- **Schema:** `Ad.description`, `Ad.videoId`, `Ad.pageName`, `Ad.cards` (all nullable). **Production needs `prisma db push` before or with this deploy**, or ad sync fails on the missing columns.
+
 ### 2026-11-09 — C16: Meta Graph API v19.0 → v26.0
 
 - **Why:** Marketing API v19.0 expired in Feb 2025; Meta had been running our calls on the oldest version it still supports, so behaviour could change without warning. v26.0 (July 2026) is the current stable version; v27.0 (Nov 4, 2026) is skipped for now.

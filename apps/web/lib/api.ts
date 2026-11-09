@@ -901,6 +901,14 @@ export interface CampaignAd {
   body: string | null;
   callToAction: string | null;
   linkUrl: string | null;
+  /** Link description under the headline. */
+  description?: string | null;
+  /** Meta video id (video ads), for playing it in the preview. */
+  videoId?: string | null;
+  /** The Page the ad runs as (falls back to the ad account name). */
+  pageName?: string | null;
+  /** Carousel cards, in order. */
+  cards?: Array<{ imageUrl: string | null; headline: string; description: string; link: string }> | null;
   reach30d: number;
   frequency30d: number;
   totals: StructureTotals;

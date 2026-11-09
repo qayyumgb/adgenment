@@ -245,15 +245,19 @@ export interface MetaAdCreativeInfo {
   object_type?: string;
   video_id?: string;
   object_story_spec?: {
+    page_id?: string;
     link_data?: {
       name?: string;
       message?: string;
+      description?: string;
       link?: string;
       picture?: string;
+      image_hash?: string;
       call_to_action?: { type?: string };
-      child_attachments?: Array<{ name?: string; picture?: string; link?: string }>;
+      /** Carousel cards: Meta returns each image as a hash only (no URL). */
+      child_attachments?: Array<{ name?: string; description?: string; picture?: string; image_hash?: string; link?: string }>;
     };
-    video_data?: { title?: string; message?: string; image_url?: string; call_to_action?: { type?: string; value?: { link?: string } } };
+    video_data?: { title?: string; message?: string; link_description?: string; video_id?: string; image_url?: string; call_to_action?: { type?: string; value?: { link?: string } } };
   };
   asset_feed_spec?: {
     titles?: Array<{ text?: string }>;
@@ -1539,6 +1543,22 @@ class MetaAdsService {
         if (r.hash) out.set(r.hash, { url: r.url ?? null, permalinkUrl: r.permalink_url ?? null });
       }
     }
+    return out;
+  }
+
+  /** Page id → name, for ad previews (one request per Page, usually 1–2 per account). Unreadable Pages are left out. */
+  async getPageNames(accessToken: string, pageIds: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    await Promise.all(
+      [...new Set(pageIds)].slice(0, 20).map(async (id) => {
+        try {
+          const p = await this.graphFetch<{ name?: string }>(`${GRAPH_BASE}/${encodeURIComponent(id)}?fields=name&access_token=${encodeURIComponent(accessToken)}`);
+          if (p?.name) out.set(id, p.name);
+        } catch {
+          // best-effort: the preview falls back to the ad account name
+        }
+      })
+    );
     return out;
   }
 

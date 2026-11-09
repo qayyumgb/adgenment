@@ -1,17 +1,28 @@
 "use client";
 
 import { useState } from "react";
-import { TrendingUp } from "lucide-react";
+import dynamic from "next/dynamic";
+import { ChevronLeft, ChevronRight, Eye, TrendingUp } from "lucide-react";
 import type { CampaignAd } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { fmtMoney } from "@/lib/money";
-import { Card, Pill, Toggle } from "@/components/app/ui";
+import { Button, Card, Dialog, Pill, Toggle } from "@/components/app/ui";
 import { DELIVERY_TONE, FORMAT_LABEL, FREQ_CEILING, ctrOf, deliveryLabel, roasOf } from "./structure";
+
+// The wizard's live preview (Facebook / Instagram / Reels mock-ups), loaded only when opened.
+const MetaAdPreview = dynamic(() => import("@/components/app/new-campaign/MetaAdPreview").then((m) => m.MetaAdPreview), {
+  ssr: false,
+  loading: () => <div className="h-[420px] animate-pulse rounded-2xl bg-surface-2" />,
+});
+
+/** "GET_QUOTE" → "Get Quote", the way Meta labels the button. */
+const ctaLabel = (v: string | null) => (v && v !== "NO_BUTTON" ? v.toLowerCase().split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") : "");
 
 /**
  * One ad (guide §5.3 ad tiles): creative, ROAS / CTR / spend and a
  * frequency bar against 5.0 with the fatigue read. `full` (Ads tab) adds the
- * headline, primary text and the pause switch.
+ * headline, primary text and the pause switch. Carousels step through their
+ * cards; the creative opens the same preview as the campaign wizard.
  */
 export function AdTile({
   ad,
@@ -28,14 +39,20 @@ export function AdTile({
   busy?: boolean;
   onToggle?: () => void;
 }) {
-  const [broken, setBroken] = useState(false);
+  const [brokenSrc, setBrokenSrc] = useState<string | null>(null);
+  const [card, setCard] = useState(0);
+  const [previewing, setPreviewing] = useState(false);
+  const cards = ad.format === "CAROUSEL" && ad.cards && ad.cards.length > 1 ? ad.cards : null;
+  const current = cards ? cards[Math.min(card, cards.length - 1)] : null;
+  const src = current ? current.imageUrl ?? ad.imageUrl : ad.imageUrl;
+  const headline = current?.headline || ad.headline;
   const r = roasOf(ad.totals);
   const c = ctrOf(ad.totals);
   const status = deliveryLabel(ad);
   const fatigued = ad.fatigue.level === "fatigued";
   const freq = ad.frequency30d;
   const freqColor = fatigued ? "bg-neg" : ad.fatigue.level === "watch" ? "bg-warn" : "bg-brand";
-  const img = ad.imageUrl && !broken ? ad.imageUrl : null;
+  const img = src && src !== brokenSrc ? src : null;
   const ended = ad.status === "ENDED";
   // The frequency is already on the line above; keep only the rest of the read.
   const rest = ad.fatigue.reason?.replace(/^Frequency [\d.]+(: | and )/, "") ?? null;
@@ -43,12 +60,45 @@ export function AdTile({
 
   return (
     <Card padded={false} className="flex min-w-0 flex-col overflow-hidden">
-      <div className="relative flex aspect-[4/5] items-end bg-[repeating-linear-gradient(135deg,var(--surface-2)_0_10px,var(--surface-3)_10px_12px)] p-3">
-        {img && (
-          /* eslint-disable-next-line @next/next/no-img-element -- Meta CDN URLs, not optimisable */
-          <img src={img} alt="" loading="lazy" onError={() => setBroken(true)} className="absolute inset-0 h-full w-full object-cover" />
+      <div className="group relative flex aspect-[4/5] items-end bg-[repeating-linear-gradient(135deg,var(--surface-2)_0_10px,var(--surface-3)_10px_12px)] p-3">
+        <button type="button" onClick={() => setPreviewing(true)} className="absolute inset-0 cursor-zoom-in" aria-label={`Preview ${ad.name}`}>
+          {img && (
+            /* eslint-disable-next-line @next/next/no-img-element -- Meta CDN URLs, not optimisable */
+            <img src={img} alt="" loading="lazy" onError={() => setBrokenSrc(img)} className="h-full w-full object-cover" />
+          )}
+        </button>
+        <span className="pointer-events-none relative rounded-md bg-surface/95 px-2 py-0.5 text-xs font-medium text-ink-2 shadow-sm">
+          {cards ? `Carousel · ${card + 1} of ${cards.length}` : FORMAT_LABEL[ad.format]}
+        </span>
+        <span className="pointer-events-none absolute right-3 top-3 flex items-center gap-1 rounded-full bg-surface/95 px-2 py-[3px] text-xs font-medium text-ink opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
+          <Eye size={12} aria-hidden="true" />
+          Preview
+        </span>
+        {cards && (
+          <>
+            <button
+              type="button"
+              onClick={() => setCard((i) => (i - 1 + cards.length) % cards.length)}
+              className="absolute left-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-surface/95 text-ink shadow-sm hover:bg-surface"
+              aria-label="Previous card"
+            >
+              <ChevronLeft size={16} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCard((i) => (i + 1) % cards.length)}
+              className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-surface/95 text-ink shadow-sm hover:bg-surface"
+              aria-label="Next card"
+            >
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+            <span className="pointer-events-none absolute bottom-3.5 right-3 flex gap-1" aria-hidden="true">
+              {cards.map((_, i) => (
+                <span key={i} className={cn("h-1.5 w-1.5 rounded-full shadow-sm", i === card ? "bg-white" : "bg-white/50")} />
+              ))}
+            </span>
+          </>
         )}
-        <span className="relative rounded-md bg-surface px-2 py-0.5 font-mono text-xs text-ink-2">{FORMAT_LABEL[ad.format].toLowerCase()}</span>
         {fatigued && (
           <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-neg px-2.5 py-[3px] text-xs font-semibold text-white">
             <TrendingUp size={12} strokeWidth={2.5} aria-hidden="true" />
@@ -67,9 +117,9 @@ export function AdTile({
           {status !== "Active" && <Pill tone={DELIVERY_TONE[status] ?? "neutral"}>{status}</Pill>}
         </div>
 
-        {full && (ad.headline || ad.body) && (
+        {full && (headline || ad.body) && (
           <div className="flex flex-col gap-1 rounded-ctl bg-surface-2 px-3 py-2.5 text-sm">
-            {ad.headline && <span className="font-semibold">{ad.headline}</span>}
+            {headline && <span className="font-semibold">{headline}</span>}
             {ad.body && <span className="line-clamp-3 text-ink-2">{ad.body}</span>}
           </div>
         )}
@@ -100,6 +150,34 @@ export function AdTile({
             {reason && <span className={cn("text-xs", fatigued ? "text-neg" : "text-ink-2")}>{reason}</span>}
           </div>
         )}
+
+        <Dialog
+          open={previewing}
+          onClose={() => setPreviewing(false)}
+          title={ad.name}
+          sub="How the ad looks on Meta. Switch between Facebook, Instagram and Reels / Stories."
+          width={560}
+          footer={
+            <Button variant="secondary" onClick={() => setPreviewing(false)}>
+              Close
+            </Button>
+          }
+        >
+          {previewing && (
+            <MetaAdPreview
+              pageName={ad.pageName || "Your Page"}
+              imageUrl={ad.format === "VIDEO" ? null : ad.imageUrl}
+              videoThumbnailUrl={ad.format === "VIDEO" ? ad.imageUrl : null}
+              videoId={ad.format === "VIDEO" ? ad.videoId ?? null : null}
+              carouselCards={cards ? cards.map((c) => ({ imageUrl: c.imageUrl, headline: c.headline, description: c.description, link: c.link })) : null}
+              message={ad.body ?? ""}
+              headline={ad.headline ?? ""}
+              description={ad.description ?? ""}
+              linkUrl={ad.linkUrl ?? ""}
+              callToAction={ctaLabel(ad.callToAction)}
+            />
+          )}
+        </Dialog>
 
         {full && onToggle && !ended && (
           <div className="flex items-center justify-between gap-3 border-t border-line pt-3 text-[13px]">
