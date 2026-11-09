@@ -485,6 +485,15 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-09 — C16: Meta Graph API v19.0 → v26.0
+
+- **Why:** Marketing API v19.0 expired in Feb 2025; Meta had been running our calls on the oldest version it still supports, so behaviour could change without warning. v26.0 (July 2026) is the current stable version; v27.0 (Nov 4, 2026) is skipped for now.
+- **One version everywhere:** `META_API_VERSION` in `meta.service.ts` (default `v26.0`, env override for trying a newer one) drives Graph calls, the OAuth dialog and A/B tests (`META_STUDIES_API_VERSION` still overrides the latter).
+- **Instagram Explore placement retired (v26):** removed from the wizard's Feeds placement and the types; `withoutRetiredPlacements` strips Explore and Messenger Stories from any targeting before an ad set is created (drafts, duplicates of Ads Manager ad sets); a platform left with no positions is dropped, nothing left → automatic placements.
+- **Video thumbnails:** the refresh used the root `GET /?ids=` request, which Meta rejects on every version since Oct 2026 (thumbnails quietly stopped refreshing). Now one request per video, 5 at a time.
+- **Checked, unchanged:** insights fields / attribution, hourly breakdown, OAuth and `/me` calls, pages, pixels, custom / saved audiences, search, image / video upload, ad studies.
+- **Known, not acted on:** v26 defaults eligible creatives to `WEBSITE_AND_SHOP` when the advertiser has a checkout-enabled Meta shop (the opt-out's request shape isn't documented); lookalike `country` is ignored by Meta since Sept 2026 and rejected from v27.
+
 ### 2026-11-09 — Meta: ads_read dropped after App Review
 
 - **App Review result (2026-11-08):** ads_management, business_management, pages_show_list, pages_read_engagement and public_profile approved; Marketing API Access Tier renewed; **ads_read not approved**.

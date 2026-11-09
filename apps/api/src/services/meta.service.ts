@@ -1,5 +1,5 @@
 /**
- * Meta Marketing API v19.0 wrapper.
+ * Meta Graph / Marketing API wrapper (v26.0, plan C16).
  *
  * OAuth 2.0 flow, ad-account + campaign + insights fetching, campaign
  * creation, and AES-256-CBC encryption of stored access tokens.
@@ -8,15 +8,62 @@
 import { encryptToken, decryptToken } from "../lib/crypto";
 import { createOAuthState } from "../lib/oauth-state";
 
-const GRAPH_BASE = "https://graph.facebook.com/v19.0";
 /**
- * A/B tests (Experiments, C9) use a newer Graph version than the rest: Meta
- * documents creative tests (SPLIT_TEST_V2) with current versions only. One
- * app may call different versions per request. Override with
- * META_STUDIES_API_VERSION (e.g. "v24.0").
+ * One version for every call (C16, 2026-11-09: v19.0 → v26.0). Meta keeps a
+ * Marketing API version for about a year, then silently runs old calls on the
+ * oldest supported one, so check the changelog and move up yearly. Override
+ * with META_API_VERSION (e.g. "v27.0") to try a newer one without a deploy.
+ * Before moving past v26: v27 rejects `country` in a lookalike_spec, turns on
+ * "other mobile devices" and Product showcase by default.
  */
-const STUDIES_BASE = `https://graph.facebook.com/${process.env.META_STUDIES_API_VERSION || "v25.0"}`;
-const FB_DIALOG = "https://www.facebook.com/v19.0/dialog/oauth";
+export const META_API_VERSION = /^v\d+\.\d+$/.test(process.env.META_API_VERSION ?? "") ? process.env.META_API_VERSION! : "v26.0";
+const GRAPH_BASE = `https://graph.facebook.com/${META_API_VERSION}`;
+/** A/B tests (Experiments, C9): same version unless META_STUDIES_API_VERSION pins another. */
+const STUDIES_BASE = `https://graph.facebook.com/${process.env.META_STUDIES_API_VERSION || META_API_VERSION}`;
+const FB_DIALOG = `https://www.facebook.com/${META_API_VERSION}/dialog/oauth`;
+
+/**
+ * Placements Meta no longer accepts: Instagram Explore errors from v26.0, and
+ * Messenger Stories is silently dropped on every version since Oct 2026.
+ * Stripped from any targeting before it's sent (wizard, drafts, duplicates of
+ * ad sets synced from Ads Manager).
+ */
+const RETIRED_POSITIONS: Record<string, string[]> = {
+  instagram_positions: ["explore", "explore_home"],
+  messenger_positions: ["story"],
+};
+const POSITION_PLATFORM: Record<string, string> = {
+  facebook_positions: "facebook",
+  instagram_positions: "instagram",
+  messenger_positions: "messenger",
+  audience_network_positions: "audience_network",
+};
+
+/** Remove retired placements; a platform left with no positions is dropped; none left → automatic placements. */
+export function withoutRetiredPlacements<T extends object>(targeting: T): T {
+  const t = { ...(targeting as Record<string, unknown>) };
+  let platforms = Array.isArray(t.publisher_platforms) ? [...(t.publisher_platforms as string[])] : null;
+  for (const [key, retired] of Object.entries(RETIRED_POSITIONS)) {
+    const list = t[key];
+    if (!Array.isArray(list)) continue;
+    const kept = (list as string[]).filter((p) => !retired.includes(p));
+    if (kept.length === list.length) continue;
+    if (kept.length) t[key] = kept;
+    else {
+      delete t[key];
+      if (platforms) platforms = platforms.filter((p) => p !== POSITION_PLATFORM[key]);
+    }
+  }
+  if (platforms) {
+    if (platforms.length) t.publisher_platforms = platforms;
+    else {
+      // Nothing explicit left: let Meta place it everywhere eligible.
+      delete t.publisher_platforms;
+      for (const key of Object.keys(POSITION_PLATFORM)) delete t[key];
+    }
+  }
+  return t as T;
+}
 
 /** Matches the multer cap on the device-upload route so both paths agree. */
 const MAX_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -396,10 +443,10 @@ export interface MetaTargeting {
     | "facebook_reels"
     | "video_feeds"
   >;
+  /** No "explore": Meta retired the Explore placement in v26.0. */
   instagram_positions?: Array<
     | "stream"
     | "story"
-    | "explore"
     | "reels"
     | "igtv"
     | "shop"
@@ -1496,21 +1543,33 @@ class MetaAdsService {
   }
 
   /**
-   * Fresh poster-image URLs for several videos in one request (`?ids=`).
-   * Like image URLs, video `picture` URLs expire, so they're re-fetched.
+   * Fresh poster-image URLs for several videos. Like image URLs, video
+   * `picture` URLs expire, so they're re-fetched.
+   *
+   * One request per video, 5 at a time: Meta stopped accepting the root
+   * `GET /?ids=a,b,c` form on every version (Oct 2026). A video that can't be
+   * read (deleted, another account's) is just left out of the map.
    */
   async getVideoPictures(accessToken: string, videoIds: string[]): Promise<Map<string, string>> {
     const out = new Map<string, string>();
-    for (let i = 0; i < videoIds.length; i += 50) {
-      const chunk = videoIds.slice(i, i + 50);
-      const url =
-        `${GRAPH_BASE}/?ids=${encodeURIComponent(chunk.join(","))}` +
-        `&fields=picture&access_token=${encodeURIComponent(accessToken)}`;
-      const data = await this.graphFetch<Record<string, { picture?: string }>>(url);
-      for (const [id, v] of Object.entries(data)) {
-        if (v?.picture) out.set(id, v.picture);
-      }
+    const ids = [...new Set(videoIds)].slice(0, 200);
+    let failures = 0;
+    let lastError: unknown = null;
+    for (let i = 0; i < ids.length; i += 5) {
+      await Promise.all(
+        ids.slice(i, i + 5).map(async (id) => {
+          try {
+            const v = await this.graphFetch<{ picture?: string }>(`${GRAPH_BASE}/${encodeURIComponent(id)}?fields=picture&access_token=${encodeURIComponent(accessToken)}`);
+            if (v?.picture) out.set(id, v.picture);
+          } catch (err) {
+            failures++;
+            lastError = err;
+          }
+        })
+      );
     }
+    // Every one failed (bad token, rate limit): let the caller log it rather than look like "no pictures".
+    if (ids.length && failures === ids.length && lastError) throw lastError;
     return out;
   }
 
@@ -1613,7 +1672,7 @@ class MetaAdsService {
     // audience the user assembled in the wizard is honoured exactly; letting
     // Meta expand past it would quietly make the targeting step decorative.
     const targeting: MetaTargeting = {
-      ...params.targeting,
+      ...withoutRetiredPlacements(params.targeting),
       targeting_automation: {
         advantage_audience:
           params.targeting.targeting_automation?.advantage_audience ?? 0,

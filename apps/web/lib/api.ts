@@ -2541,10 +2541,10 @@ export interface MetaTargetingSpec {
     | "facebook_reels"
     | "video_feeds"
   >;
+  /** No "explore": Meta retired the Instagram Explore placement (Graph API v26.0). */
   instagram_positions?: Array<
     | "stream"
     | "story"
-    | "explore"
     | "reels"
     | "igtv"
     | "shop"

@@ -202,7 +202,8 @@ export function placementToTargeting(
       return {
         publisher_platforms: ["facebook", "instagram"],
         facebook_positions: ["feed", "video_feeds"],
-        instagram_positions: ["stream", "explore"],
+        // No "explore": Meta retired the Instagram Explore placement (Graph API v26.0).
+        instagram_positions: ["stream"],
       };
     case "reels_stories":
       return {
