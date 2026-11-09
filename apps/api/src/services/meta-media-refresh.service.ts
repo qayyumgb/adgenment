@@ -28,6 +28,10 @@ const EXPIRY_MARGIN_MS = 60 * 60 * 1000;
 const MISS_TTL_MS = 30 * 60 * 1000;
 const misses = new Map<string, number>();
 const recentlyMissed = (key: string) => (misses.get(key) ?? 0) > Date.now();
+/** After a (re)connect, retry this workspace's images right away: the misses were likely the old, dead token. */
+export function clearMediaMisses(workspaceId: string) {
+  for (const key of misses.keys()) if (key.slice(2).startsWith(`${workspaceId}:`)) misses.delete(key);
+}
 const markMissed = (key: string) => {
   if (misses.size > 10_000) misses.clear();
   misses.set(key, Date.now() + MISS_TTL_MS);

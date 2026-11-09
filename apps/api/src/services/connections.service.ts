@@ -2,6 +2,7 @@ import type { AdAccount, Platform, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { ensureClients } from "../lib/clients";
 import { healthForAdAccount } from "./meta-health.service";
+import { clearMediaMisses } from "./meta-media-refresh.service";
 import { syncService } from "./sync.service";
 import { AUTO_SYNC_PLATFORMS, SYNC_INTERVAL_HOURS_SETTING } from "./sync-scheduler.service";
 
@@ -54,8 +55,12 @@ export async function stageConnection(workspaceId: string, userId: string, platf
       },
     });
   }
-  // Renewed Meta accounts: re-check health so the page clears token warnings.
-  if (platform === "META") await Promise.all(existing.map((e) => healthForAdAccount(e.id, true).catch(() => undefined)));
+  // Renewed Meta accounts: re-check health so the page clears token warnings,
+  // and retry library images that failed to refresh with the old token.
+  if (platform === "META") {
+    clearMediaMisses(workspaceId);
+    await Promise.all(existing.map((e) => healthForAdAccount(e.id, true).catch(() => undefined)));
+  }
 
   const fresh = discovered.filter((x) => !known.has(x.accountId));
   await prisma.pendingConnection.deleteMany({ where: { OR: [{ expiresAt: { lt: new Date() } }, { workspaceId, userId, platform }] } });
@@ -117,6 +122,7 @@ export async function acceptPending(workspaceId: string, id: string, picks: { ac
     );
   }
   await prisma.pendingConnection.delete({ where: { id: p.id } });
+  if (p.platform === "META") clearMediaMisses(workspaceId);
   // First sync (and Meta health) in the background; the page shows "Syncing…" until lastSyncedAt is set.
   for (const acct of created.filter((x) => x.isActive)) {
     void (async () => {
