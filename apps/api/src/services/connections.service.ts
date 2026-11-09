@@ -143,7 +143,8 @@ const PIXEL_CODES = /^(NO_PIXEL|PIXEL_NEVER_FIRED)$/;
 export function accountStatus(a: Pick<AdAccount, "archivedAt" | "isActive" | "tokenExpiresAt" | "clientId" | "metadata"> & Partial<Pick<AdAccount, "platform" | "lastHealthCheck" | "createdAt">>, hasClients: boolean, now = Date.now()): { status: AccountStatus; detail: string | null } {
   if (a.archivedAt) return { status: "ARCHIVED", detail: null };
   if (!a.isActive) return { status: "INACTIVE", detail: "Paused or disabled on the platform" };
-  const problems = ((a.metadata as StoredReport | null)?.checks ?? []).filter((c) => c.status === "error" || c.status === "warning");
+  // A "missing ads_read" saved by an older health check no longer counts (ads_read isn't required any more).
+  const problems = ((a.metadata as StoredReport | null)?.checks ?? []).filter((c) => (c.status === "error" || c.status === "warning") && c.code !== "MISSING_PERMISSION_ADS_READ");
   const tokenProblem = problems.find((c) => TOKEN_CODES.test(c.code ?? ""));
   const expires = a.tokenExpiresAt ? a.tokenExpiresAt.getTime() : null;
   if ((expires !== null && expires <= now) || tokenProblem) return { status: "TOKEN_EXPIRED", detail: tokenProblem?.title ?? "Access expired" };

@@ -75,8 +75,10 @@ function sniffImageMime(buf: Buffer): string | null {
 // `pages_read_engagement` reads the Page's name, category and picture for the
 //   Page picker and ad preview; App Review requires it alongside
 //   ads_management.
+// `ads_read` is NOT requested: Meta declined it in App Review (2026-11-08) and
+//   ads_management already covers reading campaigns and insights. Asking for it
+//   only made every non-tester connection look like it was missing a permission.
 const SCOPES = [
-  "ads_read",
   "ads_management",
   "business_management",
   "pages_show_list",

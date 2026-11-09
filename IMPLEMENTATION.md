@@ -485,6 +485,12 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-09 — Meta: ads_read dropped after App Review
+
+- **App Review result (2026-11-08):** ads_management, business_management, pages_show_list, pages_read_engagement and public_profile approved; Marketing API Access Tier renewed; **ads_read not approved**.
+- **Bug it caused:** Meta doesn't grant ads_read to people without a role on the app, so the health check flagged `MISSING_PERMISSION_ADS_READ` and every such connection showed **Access expired** (plus the Connections banner). Accounts of app admins/testers looked fine.
+- **Fix:** ads_read removed from the OAuth scopes (`meta.service.ts`) and from the health check's required permissions (`meta-health.service.ts`); `accountStatus` ignores a stored `MISSING_PERMISSION_ADS_READ` from older checks, so affected accounts clear without reconnecting. ads_management covers reading campaigns and insights.
+
 ### 2026-11-06 — C19a editor: leaving without saving, cleanup, Your designs
 
 - **Where a saved ad lives (decided 2026-11-06):** the finished PNG goes to Meta (for publishing) and a compressed copy plus the design's working images stay in R2 (for Creatives, Edit design, other accounts and platforms). R2 copies are **not** deleted after the Meta upload: Meta only gives expiring, per-account links.

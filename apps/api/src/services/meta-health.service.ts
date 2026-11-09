@@ -29,8 +29,8 @@ export interface MetaHealthReport {
   readyForBeta: boolean;
 }
 
+// ads_management covers reads (campaigns, insights) too; ads_read isn't requested any more.
 const REQUIRED_PERMISSIONS = [
-  "ads_read",
   "ads_management",
   "business_management",
 ] as const;
