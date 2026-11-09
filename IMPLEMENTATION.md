@@ -485,6 +485,12 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-09 — Security review of the Meta connection (after the owner's Facebook account was hijacked)
+
+- **Finding: no path from Advertix to sending messages.** The token only carries ads_management, business_management, pages_show_list, pages_read_engagement and public_profile; none can send Messenger messages, and Facebook has no API for messaging a person's friends. Tokens are AES-256-CBC encrypted at rest (random IV), never logged, never returned by the API; the OAuth `state` is HMAC-signed, expiring and single-use.
+- **Fixed: Page access tokens reached the browser.** `GET /meta/pages` returned each Page's access token (unused anywhere). They are no longer requested from Meta at all.
+- **Added: appsecret_proof on every Graph call** (`withAppSecretProof` in `graphFetch`). Verified: Meta accepts the correct proof and refuses a wrong one. **Follow-up for the owner:** Meta app → App settings → Advanced → **Require App Secret: On**, after this deploy, so a token copied out of Advertix can't be used anywhere else.
+
 ### 2026-11-09 — Campaign Ads tab: real carousel cards and the wizard's preview
 
 - **Bug:** carousel ads showed Meta's tiny auto-render (usually the Page picture) and the Page name as the headline: Meta lists carousel card images as hashes only, and a carousel creative's `title` is the Page name.

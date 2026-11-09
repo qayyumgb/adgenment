@@ -5,8 +5,39 @@
  * creation, and AES-256-CBC encryption of stored access tokens.
  */
 
+import { createHmac } from "node:crypto";
 import { encryptToken, decryptToken } from "../lib/crypto";
 import { createOAuthState } from "../lib/oauth-state";
+
+/**
+ * appsecret_proof (security, 2026-11-09): every Graph call carries
+ * HMAC-SHA256(access_token, app secret). With "Require App Secret" switched on
+ * in the Meta app's Advanced settings, a token copied out of Advertix is
+ * useless on its own: Meta refuses calls without the matching proof, and only
+ * our server has the secret.
+ */
+export function withAppSecretProof(url: string, init?: RequestInit): string {
+  const secret = process.env.META_APP_SECRET;
+  if (!secret || /[?&]appsecret_proof=/.test(url)) return url;
+  let token: string | null = null;
+  try {
+    token = new URL(url).searchParams.get("access_token");
+  } catch {
+    return url;
+  }
+  const body = init?.body;
+  if (!token && body instanceof URLSearchParams) token = body.get("access_token");
+  if (!token && typeof FormData !== "undefined" && body instanceof FormData) {
+    const v = body.get("access_token");
+    token = typeof v === "string" ? v : null;
+  }
+  if (!token) return url; // OAuth code / token exchange: no user token yet
+  const proof = createHmac("sha256", secret).update(token).digest("hex");
+  if (new URL(url).searchParams.has("access_token")) return `${url}${url.includes("?") ? "&" : "?"}appsecret_proof=${proof}`;
+  if (body instanceof URLSearchParams) body.set("appsecret_proof", proof);
+  else if (body instanceof FormData) body.set("appsecret_proof", proof);
+  return url;
+}
 
 /**
  * One version for every call (C16, 2026-11-09: v19.0 → v26.0). Meta keeps a
@@ -339,9 +370,7 @@ export interface MetaPage {
   name: string;
   category?: string;
   pictureUrl?: string;
-  /** Page-scoped access token. Some Marketing API calls require this
-   *  rather than the user's token. */
-  accessToken?: string;
+  // No Page access token: never fetched, never sent to the browser.
 }
 
 export interface MetaPixel {
@@ -1056,12 +1085,15 @@ class MetaAdsService {
 
   /**
    * Facebook Pages the user manages. Required for ad creatives — every ad
-   * has to "originate" from a Page. Returns `access_token` per page so
-   * caller can switch contexts for Page-scoped Marketing API calls.
+   * has to "originate" from a Page.
+   *
+   * Security (2026-11-09): Page access tokens are NOT requested. They used to
+   * be fetched and sent to the browser through GET /meta/pages although
+   * nothing used them; ads are created with the user's token.
    */
   async getPages(accessToken: string): Promise<MetaPage[]> {
     const params = new URLSearchParams({
-      fields: "id,name,category,picture{url},access_token,tasks",
+      fields: "id,name,category,picture{url},tasks",
       access_token: accessToken,
       limit: "100",
     });
@@ -1071,7 +1103,6 @@ class MetaAdsService {
         name: string;
         category?: string;
         picture?: { data?: { url?: string } };
-        access_token?: string;
         tasks?: string[];
       }>;
     }>(`${GRAPH_BASE}/me/accounts?${params.toString()}`);
@@ -1083,7 +1114,6 @@ class MetaAdsService {
         name: p.name,
         category: p.category,
         pictureUrl: p.picture?.data?.url,
-        accessToken: p.access_token,
       }));
   }
 
@@ -2075,7 +2105,8 @@ class MetaAdsService {
     return items;
   }
 
-  private async graphFetch<T>(url: string, init?: RequestInit): Promise<T> {
+  private async graphFetch<T>(rawUrl: string, init?: RequestInit): Promise<T> {
+    const url = withAppSecretProof(rawUrl, init);
     let res: Response;
     try {
       res = await fetch(url, {
