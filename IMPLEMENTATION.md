@@ -485,6 +485,13 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-10 — Superadmin › Users (sign-ups as leads)
+
+- **Admin page** now has **Users | Workspaces** tabs (Users first). Users: funnel tiles (sign-ups and last 7 days, active this week, connected an ad account, published a campaign, paying), search (name, email, workspace), stage filter, sortable grid (signed up, last active, workspace + role, plan / trial days left, stage, platforms, campaigns + published, changes) and **Export CSV**. A row opens a drawer: details, Email button, journey (signed up, workspace created / joined, each ad account connected, first publishes), latest 25 changes (undone ones struck through) and AI features used.
+- **API:** `GET /admin/users` and `GET /admin/users/:id/activity` (`services/admin-users.service.ts`), superadmin only like the rest of `/admin`. All counts come from grouped queries (5 queries for any number of users). "Published" also counts `campaign.publish` change-log entries, so publishes survive a re-import.
+- **Last active:** new `User.lastSeenAt`, written by `requireAuth` at most every 10 minutes, without blocking the request. Empty for users until they next use Advertix.
+- **Schema:** `User.lastSeenAt` (nullable). **Production needs `prisma db push` before or with this deploy:** without the column every signed-in request fails.
+
 ### 2026-11-10 — Sign-in and sign-up pages redesigned
 
 - **Layout (`components/auth/AuthShell.tsx`):** two columns on desktop. Left: a clean white panel, centred: colour logo, headline per page, three stacked product cards (thin brand border). Right: the Clerk form on the grey page background. Phones show only the form under the logo. Uses the app tokens, so dark mode works.

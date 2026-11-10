@@ -526,6 +526,44 @@ export interface DesignExport {
   metaError: string | null;
 }
 
+/* Superadmin: Users (leads) */
+export type LeadStage = "SIGNED_UP" | "CONNECTED" | "PUBLISHED" | "PAYING";
+export interface AdminUser {
+  id: string;
+  name: string | null;
+  email: string;
+  createdAt: string;
+  /** Last request (updated at most every 10 minutes); null before the field existed. */
+  lastSeenAt: string | null;
+  daysSinceSignup: number;
+  stage: LeadStage;
+  workspace: {
+    id: string;
+    name: string;
+    role: WorkspaceRole;
+    owner: boolean;
+    state: BillingStatus["state"];
+    tier: BillingStatus["tier"];
+    locked: boolean;
+    trialEndsAt: string | null;
+    paying: boolean;
+  } | null;
+  otherWorkspaces: number;
+  platforms: Platform[];
+  adAccounts: number;
+  campaigns: number;
+  published: number;
+  changes: number;
+  lastChangeAt: string | null;
+  aiCredits: number;
+}
+export interface AdminUserActivity {
+  user: { id: string; name: string | null; email: string; createdAt: string; lastSeenAt: string | null };
+  milestones: { at: string; kind: "signup" | "workspace" | "connected" | "published"; label: string }[];
+  changes: { id: string; summary: string; campaignName: string; action: string; createdAt: string; undoneAt: string | null }[];
+  ai: { feature: string; uses: number; credits: number }[];
+}
+
 /* Superadmin (C15b) */
 export interface AdminWorkspace {
   id: string;
@@ -2076,6 +2114,8 @@ export function useApiClient() {
     exportDesign: (id: string, png: Blob) => uploadDesignFile<DesignExport>(`/designs/${id}/export`, png),
     getAdminWorkspaces: (filter: "locked" | "all") => apiFetch<{ workspaces: AdminWorkspace[] }>(`/admin/workspaces?filter=${filter}`),
     getAdminDeletions: () => apiFetch<{ deletions: WorkspaceDeletionRecord[] }>("/admin/deletions"),
+    getAdminUsers: () => apiFetch<{ users: AdminUser[] }>("/admin/users"),
+    getAdminUserActivity: (id: string) => apiFetch<AdminUserActivity>(`/admin/users/${encodeURIComponent(id)}/activity`),
     adminDeleteWorkspace: (id: string, confirmName: string) => apiFetch<{ deletionScheduledAt: string }>(`/admin/workspaces/${id}/delete`, { method: "POST", body: JSON.stringify({ confirmName }) }),
     adminCancelDeletion: (id: string) => apiFetch<{ cancelled: boolean }>(`/admin/workspaces/${id}/cancel-deletion`, { method: "POST" }),
     /** First plan: returns Stripe Checkout's URL. */

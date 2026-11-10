@@ -7,13 +7,16 @@ import { useApi } from "@/hooks/useApi";
 import { useApiClient, type AdminWorkspace, type WorkspaceDeletionRecord } from "@/lib/api";
 import { PageBody, PageHeader } from "@/components/app/shell/PageHeader";
 import { Button, Card, Dialog, EmptyState, Pill, Segmented, Skeleton, useConfirm, type PillTone } from "@/components/app/ui";
+import { UsersPanel } from "@/components/app/admin/UsersPanel";
 
 /**
- * Superadmin (plan C15b): locked workspaces and their deletion. Only users
- * listed in SUPERADMIN_CLERK_IDS on the server see it (the API answers 404 to
- * everyone else). The rules are the API's (services/retention.service.ts):
- * access removed at 30 days locked, deletion from 30 days with 7 days'
- * notice, automatic at 6 months; choosing a plan cancels any deletion.
+ * Superadmin: Users (everyone who signed up: leads, how far they got, what
+ * they did) and Workspaces (plan C15b: locked workspaces and their deletion).
+ * Only users listed in SUPERADMIN_EMAILS / SUPERADMIN_CLERK_IDS on the server
+ * see it (the API answers 404 to everyone else). The retention rules are the
+ * API's (services/retention.service.ts): access removed at 30 days locked,
+ * deletion from 30 days with 7 days' notice, automatic at 6 months; choosing
+ * a plan cancels any deletion.
  */
 
 const date = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
@@ -156,9 +159,11 @@ export default function AdminPage() {
   const api = useApiClient();
   const me = useApi((c) => c.getMe(), [], { key: "me" });
   const allowed = me.data?.superadmin === true;
+  const [view, setView] = useState<"users" | "workspaces">("users");
   const [filter, setFilter] = useState<"locked" | "all">("locked");
-  const q = useApi((c) => (allowed ? c.getAdminWorkspaces(filter) : new Promise<never>(() => {})), [allowed, filter], { key: "admin-workspaces", keepPrevious: true });
-  const h = useApi((c) => (allowed ? c.getAdminDeletions() : new Promise<never>(() => {})), [allowed], { key: "admin-deletions" });
+  const wsOn = allowed && view === "workspaces";
+  const q = useApi((c) => (wsOn ? c.getAdminWorkspaces(filter) : new Promise<never>(() => {})), [wsOn, filter], { key: "admin-workspaces", keepPrevious: true });
+  const h = useApi((c) => (wsOn ? c.getAdminDeletions() : new Promise<never>(() => {})), [wsOn], { key: "admin-deletions" });
   const [deleting, setDeleting] = useState<AdminWorkspace | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
@@ -189,13 +194,31 @@ export default function AdminPage() {
     }
   };
 
+  const tabs = <Segmented<"users" | "workspaces"> label="View" value={view} onChange={setView} options={[{ value: "users", label: "Users" }, { value: "workspaces", label: "Workspaces" }]} />;
+
+  if (view === "users") {
+    return (
+      <>
+        <PageHeader kicker="Superadmin" title="Users" summary="Everyone who signed up, how far they got and what they did." actions={tabs} />
+        <PageBody className="max-w-[1280px] gap-4">
+          <UsersPanel />
+        </PageBody>
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
         kicker="Superadmin"
         title="Workspaces"
         summary={filter === "locked" ? `${list.length} locked${scheduled ? ` · ${scheduled} set to be deleted` : ""}` : `${list.length} workspaces`}
-        actions={<Segmented<"locked" | "all"> label="Show" value={filter} onChange={setFilter} options={[{ value: "locked", label: "Locked" }, { value: "all", label: "All" }]} />}
+        actions={
+          <span className="flex flex-wrap items-center gap-2">
+            {tabs}
+            <Segmented<"locked" | "all"> label="Show" value={filter} onChange={setFilter} options={[{ value: "locked", label: "Locked" }, { value: "all", label: "All" }]} />
+          </span>
+        }
       />
       <PageBody className="max-w-[1080px] gap-4">
         <div className="flex items-start gap-3 rounded-card border border-line bg-surface-2 px-4 py-3 text-[13px] text-ink-2">

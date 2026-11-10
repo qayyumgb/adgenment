@@ -9,6 +9,8 @@ const clerk = createClerkClient({
 
 type ClerkUser = Awaited<ReturnType<typeof clerk.users.getUser>>;
 
+const SEEN_EVERY_MS = 10 * 60_000;
+
 /**
  * The Advertix user for a Clerk id: found by id, else (C16b) relinked by
  * verified primary email, else created.
@@ -99,6 +101,11 @@ export async function requireAuth(
     }
 
     const { clerkId, user } = await loadUserFromToken(token);
+
+    // "Last active" for the superadmin Users list: at most one write per user every 10 minutes, never blocking.
+    if (!user.lastSeenAt || Date.now() - user.lastSeenAt.getTime() > SEEN_EVERY_MS) {
+      void prisma.user.update({ where: { id: user.id }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
+    }
 
     req.userId = clerkId;
     req.clerkId = clerkId;

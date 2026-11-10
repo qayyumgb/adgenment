@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { requireAuth } from "../middleware/auth";
 import { adminCancelDeletion, adminScheduleDeletion, adminWorkspaces, deletionHistory, isSuperadmin } from "../services/retention.service";
+import { adminUserActivity, adminUsers } from "../services/admin-users.service";
 
 /**
  * Superadmin (plan C15b): locked workspaces and their deletion. Only users
@@ -37,6 +38,26 @@ router.post("/workspaces/:id/delete", async (req: Request, res: Response, next: 
 router.post("/workspaces/:id/cancel-deletion", async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await adminCancelDeletion(req.params.id, by(req)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /admin/users — everyone who signed up (leads), newest first, with how far they got. */
+router.get("/users", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json({ users: await adminUsers() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /admin/users/:id/activity — one user's milestones and latest changes. */
+router.get("/users/:id/activity", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const r = await adminUserActivity(req.params.id);
+    if (!r) return res.status(404).json({ error: "User not found" });
+    res.json(r);
   } catch (err) {
     next(err);
   }
