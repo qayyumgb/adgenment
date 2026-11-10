@@ -49,3 +49,9 @@ export async function loadFont(family: string, weight: number | string = 400, it
     /* draw with the fallback rather than fail */
   }
 }
+
+/** The weight closest to `want` that the family has (Anton has only 400, so 800 → 400). */
+export function nearestWeight(family: string, want: number) {
+  const ws = FONTS.find((f) => f.family === family)?.weights ?? [want];
+  return ws.reduce((best, w) => (Math.abs(w - want) < Math.abs(best - want) ? w : best), ws[0]);
+}

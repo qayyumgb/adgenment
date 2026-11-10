@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { assertClientAccess, type Access } from "../lib/access";
 import { metaService } from "./meta.service";
 import { assetError, assetUrl, createAsset, deleteAssets, readAsset } from "./assets.service";
+import { cleanupBrandFiles, copyLogoIntoDesign } from "./brand.service";
 
 /**
  * Creative editor designs (plan C19a). A design is a Fabric.js document whose
@@ -127,6 +128,12 @@ export async function addImage(access: Access, userId: string, base: string, id:
   return { id: a.id, url: assetUrl(base, a.id), width: a.width, height: a.height };
 }
 
+/** A logo from a brand kit, copied into the design (C19b). */
+export async function addBrandLogo(access: Access, userId: string, base: string, id: string, assetId: string) {
+  const d = await load(access, id);
+  return copyLogoIntoDesign(access.workspaceId, d.id, userId, base, assetId);
+}
+
 /**
  * An image from the Creatives library, copied into the design (fetched by the
  * server, so links that the browser can't read onto a canvas still work).
@@ -243,8 +250,9 @@ export async function cleanupDesigns(now = new Date()) {
     const unused = ids.filter((id) => !text.includes(`asset:${id}`));
     if (unused.length) uploads += await deleteAssets({ id: { in: unused } });
   }
-  if (stale.length || uploads) console.log(`[designs] cleanup: ${stale.length} unsaved design(s), ${uploads} unused upload(s)`);
-  return { designs: stale.length, uploads };
+  const brandFiles = await cleanupBrandFiles(now).catch((err) => (console.error("[designs] brand file cleanup:", err instanceof Error ? err.message : err), 0));
+  if (stale.length || uploads || brandFiles) console.log(`[designs] cleanup: ${stale.length} unsaved design(s), ${uploads} unused upload(s), ${brandFiles} orphaned brand file(s)`);
+  return { designs: stale.length, uploads, brandFiles };
 }
 
 let cleanupHandle: NodeJS.Timeout | null = null;

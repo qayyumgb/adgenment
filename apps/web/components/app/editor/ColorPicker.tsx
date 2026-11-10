@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { Pipette } from "lucide-react";
+import { Pipette, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 /**
@@ -84,7 +84,12 @@ function useDrag(onMove: (x: number, y: number, final: boolean) => void) {
   };
 }
 
-export function ColorPicker({ value, onChange, label, kind = "fill", disabled }: { value: string | null | undefined; onChange: (color: string, final: boolean) => void; label: string; kind?: "fill" | "outline"; disabled?: boolean }) {
+/** C19b: the design's brand colours, shown first in every colour picker (provided by the editor). */
+export const BrandColors = createContext<string[]>([]);
+
+/** `kind` "add": the button is a "+" (adding a brand colour) instead of a swatch of the current colour. */
+export function ColorPicker({ value, onChange, label, kind = "fill", disabled }: { value: string | null | undefined; onChange: (color: string, final: boolean) => void; label: string; kind?: "fill" | "outline" | "add"; disabled?: boolean }) {
+  const brand = useContext(BrandColors);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const [c, setC] = useState<Hsva>(() => parseColor(value));
@@ -163,15 +168,25 @@ export function ColorPicker({ value, onChange, label, kind = "fill", disabled }:
         aria-expanded={open}
         disabled={disabled}
         onClick={() => (open ? setOpen(false) : show())}
-        className={cn("relative inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-surface-2 disabled:opacity-40", open && "bg-surface-2")}
+        className={cn(
+          kind === "add"
+            ? "inline-flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-line-2 text-ink-2 hover:border-brand hover:text-brand disabled:opacity-40"
+            : "relative inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-surface-2 disabled:opacity-40",
+          open && kind !== "add" && "bg-surface-2",
+          open && kind === "add" && "border-brand text-brand"
+        )}
       >
-        <span className="relative h-4 w-4 overflow-hidden rounded border border-line-2" style={{ background: CHECKER }}>
-          {kind === "outline" ? (
-            <span className="absolute inset-0 rounded-[3px] border-[3px]" style={{ borderColor: value || "transparent" }} />
-          ) : (
-            <span className="absolute inset-0" style={{ background: value || "transparent" }} />
-          )}
-        </span>
+        {kind === "add" ? (
+          <Plus size={14} aria-hidden="true" />
+        ) : (
+          <span className="relative h-4 w-4 overflow-hidden rounded border border-line-2" style={{ background: CHECKER }}>
+            {kind === "outline" ? (
+              <span className="absolute inset-0 rounded-[3px] border-[3px]" style={{ borderColor: value || "transparent" }} />
+            ) : (
+              <span className="absolute inset-0" style={{ background: value || "transparent" }} />
+            )}
+          </span>
+        )}
       </button>
       {open &&
         createPortal(
@@ -235,6 +250,16 @@ export function ColorPicker({ value, onChange, label, kind = "fill", disabled }:
                 </span>
               </label>
             </div>
+            {brand.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[11px] font-medium text-ink-3">Brand</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {brand.map((s) => (
+                    <button key={s} type="button" title={s} aria-label={`Brand colour ${s}`} onClick={() => emit(parseColor(s), true)} className="h-6 w-6 rounded-full border border-line-2" style={{ background: s }} />
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex flex-wrap gap-1.5">
               {SWATCHES.map((s) => (
                 <button key={s} type="button" title={s === "transparent" ? "None (transparent)" : s} aria-label={s === "transparent" ? "No colour" : `Colour ${s}`} onClick={() => emit(parseColor(s), true)} className="relative h-6 w-6 overflow-hidden rounded-full border border-line-2" style={{ background: CHECKER }}>

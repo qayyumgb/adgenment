@@ -518,6 +518,16 @@ export interface DesignImage {
   width: number;
   height: number;
 }
+/** C19b: a client's brand (clientId null = the workspace's shared kit). */
+export interface BrandKit {
+  clientId: string | null;
+  /** Hex colours, in order. */
+  colors: string[];
+  headingFont: string | null;
+  bodyFont: string | null;
+  logos: DesignImage[];
+  updatedAt: string | null;
+}
 export interface DesignExport {
   creativeId: string;
   imageUrl: string;
@@ -2110,6 +2120,13 @@ export function useApiClient() {
     deleteDesign: (id: string) => apiFetch<{ ok: boolean }>(`/designs/${id}`, { method: "DELETE" }),
     importDesignImage: (id: string, creativeId: string) => apiFetch<DesignImage>(`/designs/${id}/images/from-creative`, { method: "POST", body: JSON.stringify({ creativeId }) }),
     uploadDesignImage: (id: string, file: Blob, onProgress?: (share: number) => void) => uploadDesignFile<DesignImage>(`/designs/${id}/images`, file, onProgress),
+    /** A brand-kit logo copied into the design. */
+    addDesignBrandLogo: (id: string, assetId: string) => apiFetch<DesignImage>(`/designs/${id}/images/from-brand`, { method: "POST", body: JSON.stringify({ assetId }) }),
+    getBrandKit: (clientId: string | null) => apiFetch<BrandKit>(`/brand-kit?clientId=${encodeURIComponent(clientId ?? "shared")}`),
+    updateBrandKit: (clientId: string | null, data: { colors?: string[]; headingFont?: string | null; bodyFont?: string | null }) =>
+      apiFetch<BrandKit>("/brand-kit", { method: "PUT", body: JSON.stringify({ clientId: clientId ?? "shared", ...data }) }),
+    addBrandLogo: (clientId: string | null, file: Blob, onProgress?: (share: number) => void) => uploadDesignFile<BrandKit>(`/brand-kit/logos?clientId=${encodeURIComponent(clientId ?? "shared")}`, file, onProgress),
+    removeBrandLogo: (clientId: string | null, assetId: string) => apiFetch<BrandKit>(`/brand-kit/logos/${encodeURIComponent(assetId)}?clientId=${encodeURIComponent(clientId ?? "shared")}`, { method: "DELETE" }),
     saveDesignPreview: (id: string, png: Blob) => uploadDesignFile<{ previewUrl: string }>(`/designs/${id}/preview`, png),
     exportDesign: (id: string, png: Blob) => uploadDesignFile<DesignExport>(`/designs/${id}/export`, png),
     getAdminWorkspaces: (filter: "locked" | "all") => apiFetch<{ workspaces: AdminWorkspace[] }>(`/admin/workspaces?filter=${filter}`),

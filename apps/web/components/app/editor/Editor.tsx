@@ -44,17 +44,23 @@ import {
   Undo2,
   Unlock,
   Wallpaper,
+  LayoutTemplate,
 } from "lucide-react";
-import { useApiClient, type Creative, type DesignDoc, type DesignImage } from "@/lib/api";
+import { useApiClient, type BrandKit, type Creative, type DesignDoc, type DesignImage } from "@/lib/api";
+import { useClientScope } from "@/components/app/shell/ClientContext";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
 import { Button, Dialog, IconButton, Menu, MenuItem, Skeleton, useConfirm } from "@/components/app/ui";
 import { useAccess } from "@/components/app/team/access";
-import { DEFAULT_FONT, FONTS, addFontStylesheet, loadFont } from "./fonts";
+import { DEFAULT_FONT, FONTS, addFontStylesheet, loadFont, nearestWeight } from "./fonts";
 import { EXTRA_PROPS, alignTo, dataUrlToBlob, fitScale, fontsIn, hydrate, isLocked, layerName, serialize, setLocked, snap, type Align, type Guides } from "./canvas";
 import { FRAME_SHAPES, SHAPES, ShapeIcon, makeShape, type ShapeKind } from "./shapes";
 import { FrameImage, isFrame, makeFrame } from "./frames";
-import { ColorPicker } from "./ColorPicker";
+import { BrandColors, ColorPicker } from "./ColorPicker";
+import { BrandPanel } from "./BrandPanel";
+import { TemplateGallery } from "./TemplateGallery";
+import { aspectOf, fontsFor, paletteFor, type Template } from "./templates";
+import { loadTemplateFonts, renderTemplate } from "./templateRender";
 
 /**
  * Creative editor (plan C19a): finish ads in the three Meta sizes. Images,
@@ -73,6 +79,7 @@ const SIZES = [
 const SAFE_TOP = 0.14;
 const SAFE_BOTTOM = 0.2;
 const SWATCHES = ["#ffffff", "#111827", "#6448f2", "#0ea5e9", "#16a34a", "#f59e0b", "#ef4444", "#f3f4f6", "#1e3a8a", "#fde68a"];
+const EMPTY_COLORS: string[] = [];
 const HISTORY_MAX = 60;
 
 type Obj = FabricObject & { name?: string; assetId?: string; locked?: boolean };
@@ -203,6 +210,24 @@ export default function Editor({ designId }: { designId: string }) {
   const [adjusting, setAdjusting] = useState<FrameImage | null>(null);
   // An image on its way in: upload progress, then the server preparing it, then placing it.
   const [uploads, setUploads] = useState<DesignImage[]>([]);
+  // C19b: the design client's brand kit (or the workspace's shared one), and the template gallery.
+  const [kit, setKit] = useState<BrandKit | null>(null);
+  const [gallery, setGallery] = useState(false);
+  const scope = useClientScope();
+  const kitClient = doc ? doc.clientId ?? "shared" : null;
+  const kitOwner = doc?.clientId ? scope.clients.find((x) => x.id === doc.clientId)?.name ?? "This client" : "Shared";
+  useEffect(() => {
+    if (!kitClient) return;
+    let live = true;
+    api
+      .getBrandKit(kitClient === "shared" ? null : kitClient)
+      .then((k) => live && setKit(k))
+      .catch(() => live && setKit({ clientId: kitClient === "shared" ? null : kitClient, colors: [], headingFont: null, bodyFont: null, logos: [], updatedAt: null }));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when the design's client changes
+  }, [kitClient]);
   const [incoming, setIncoming] = useState<{ stage: "uploading" | "preparing" | "adding"; share: number } | null>(null);
   const onUploadProgress = (share: number) => setIncoming({ stage: share >= 1 ? "preparing" : "uploading", share });
 
@@ -423,6 +448,8 @@ export default function Editor({ designId }: { designId: string }) {
       // Opened from a library image ("Open in editor"): place it as the background.
       const from = params.get("import");
       if (from && c.getObjects().length === 0) await addFromCreative(from, "background");
+      // A brand-new, empty design: offer the templates first (C19b).
+      else if (!from && doc.kept === false && c.getObjects().length === 0 && canEdit) setGallery(true);
     })();
     return () => {
       void c.dispose();
@@ -527,11 +554,15 @@ export default function Editor({ designId }: { designId: string }) {
   };
 
   const addText = async (kind: "heading" | "subheading" | "body") => {
-    const preset = {
-      heading: { text: "Your headline", size: 0.085, weight: 800, family: "Poppins", name: "Heading" },
-      subheading: { text: "A short line that explains the offer", size: 0.045, weight: 600, family: DEFAULT_FONT, name: "Subheading" },
-      body: { text: "Add more details here", size: 0.032, weight: 400, family: DEFAULT_FONT, name: "Text" },
+    // Brand fonts when the kit has them (C19b); the weight falls back to one the font has.
+    const headingFamily = kit?.headingFont ?? "Poppins";
+    const bodyFamily = kit?.bodyFont ?? DEFAULT_FONT;
+    const base = {
+      heading: { text: "Your headline", size: 0.085, weight: 800, family: headingFamily, name: "Heading" },
+      subheading: { text: "A short line that explains the offer", size: 0.045, weight: 600, family: bodyFamily, name: "Subheading" },
+      body: { text: "Add more details here", size: 0.032, weight: 400, family: bodyFamily, name: "Text" },
     }[kind];
+    const preset = { ...base, weight: nearestWeight(base.family, base.weight) };
     await loadFont(preset.family, preset.weight);
     add(new Textbox(preset.text, { left: W / 2, top: H * (kind === "heading" ? 0.3 : kind === "subheading" ? 0.45 : 0.55), width: W * 0.8, fontSize: Math.round(Math.min(W, H) * preset.size * (W > H ? 1.3 : 1)), fontWeight: preset.weight, fontFamily: preset.family, fill: "#111827", textAlign: "center", lineHeight: 1.15, name: preset.name } as Partial<Textbox>));
   };
@@ -626,14 +657,16 @@ export default function Editor({ designId }: { designId: string }) {
   };
 
   /** Put a stored image on the canvas: in the selected frame, fitted in the middle (or at a point), or as a background. */
-  const placeImage = async (img: { id: string; url: string }, mode: "image" | "background", at?: { x: number; y: number }) => {
+  const placeImage = async (img: { id: string; url: string }, mode: "image" | "background" | "logo", at?: { x: number; y: number }) => {
     const active = c().getActiveObject();
     if (mode === "image" && isFrame(active)) return fillFrame(active, img);
     const fi = await FabricImage.fromURL(img.url, { crossOrigin: "anonymous" });
     const iw = fi.width ?? 1;
     const ih = fi.height ?? 1;
-    const scale = mode === "background" ? fitScale(iw, ih, W, H, "cover") : fitScale(iw, ih, W * 0.6, H * 0.6, "contain");
-    fi.set({ left: at?.x ?? W / 2, top: at?.y ?? H / 2, scaleX: scale, scaleY: scale, assetId: img.id, name: mode === "background" ? "Background" : "Image" } as Partial<FabricImage>);
+    // Logos: about a quarter of the width, near the top; photos: up to 60% of the ad.
+    const scale = mode === "background" ? fitScale(iw, ih, W, H, "cover") : mode === "logo" ? fitScale(iw, ih, W * 0.28, H * 0.14, "contain") : fitScale(iw, ih, W * 0.6, H * 0.6, "contain");
+    const top = mode === "logo" ? Math.max(ih * scale * 0.5 + H * 0.05, H * 0.1) : H / 2;
+    fi.set({ left: at?.x ?? W / 2, top: at?.y ?? top, scaleX: scale, scaleY: scale, assetId: img.id, name: mode === "background" ? "Background" : mode === "logo" ? "Logo" : "Image" } as Partial<FabricImage>);
     if (mode === "background") {
       c().getObjects().filter((o) => (o as Obj).name === "Background").forEach((o) => c().remove(o));
       setLocked(fi, true);
@@ -659,6 +692,66 @@ export default function Editor({ designId }: { designId: string }) {
       setBusy(null);
       setIncoming(null);
     }
+  };
+
+  /** Replace the canvas with a template (C19b): one undo step; the kit's first logo is copied into the design. */
+  const applyTemplate = async (tpl: Template) => {
+    const cv = c();
+    if (cv.getObjects().length && !(await confirm({ title: `Use “${tpl.name}”?`, body: "It replaces everything on the canvas. You can undo it with Ctrl+Z.", confirmLabel: "Use template" }))) return;
+    setGallery(false);
+    setBusy("template");
+    try {
+      const els = tpl.build(aspectOf(W, H));
+      let logo: DesignImage | null = null;
+      if (kit?.logos[0] && els.some((e) => e.t === "logo")) {
+        logo = await api.addDesignBrandLogo(designId, kit.logos[0].id);
+        setUploads((u) => [logo!, ...u]);
+      }
+      const fonts = fontsFor(tpl, kit);
+      await loadTemplateFonts(els, fonts);
+      const h = history.current;
+      h.quiet = true;
+      try {
+        cv.discardActiveObject();
+        cv.getObjects().forEach((o) => cv.remove(o));
+        await renderTemplate(cv, els, { W, H, pal: paletteFor(kit), fonts, logo });
+      } finally {
+        h.quiet = false;
+      }
+      cv.requestRenderAll();
+      recordRef.current();
+      bump();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't use that template.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** A brand-kit logo: copied into the design (so it stays even if the kit changes), placed near the top. */
+  const placeBrandLogo = async (logo: DesignImage) => {
+    try {
+      const img = await api.addDesignBrandLogo(designId, logo.id);
+      setUploads((u) => [img, ...u]);
+      await placeImage(img, "logo");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't add the logo.");
+    }
+  };
+
+  /** A brand colour: text colour or shape fill of the selection; the background when nothing is selected. */
+  const applyBrandColor = (hex: string) => {
+    const o = c().getActiveObject();
+    if (!o) return setBackgroundColor(hex);
+    if (isFrame(o) || o.type === "image") return void toast("Select text or a shape to colour it, or click empty space to colour the background.");
+    if (o.type === "activeselection") {
+      (o as unknown as { getObjects: () => FabricObject[] }).getObjects().forEach((x) => !isFrame(x) && x.type !== "image" && x.set({ fill: hex }));
+      c().requestRenderAll();
+      recordRef.current();
+      bump();
+      return;
+    }
+    change({ fill: hex });
   };
 
   const addFromCreative = async (creativeId: string, mode: "image" | "background" = "image") => {
@@ -931,6 +1024,7 @@ export default function Editor({ designId }: { designId: string }) {
   }
 
   return (
+    <BrandColors.Provider value={kit?.colors ?? EMPTY_COLORS}>
     <div ref={rootRef} className="flex min-h-[520px] flex-col overflow-hidden" style={{ height: height ?? "calc(100vh - 64px)" }}>
       {/* Top bar: one line, fixed height (nothing in it may change the canvas size) */}
       <div className="flex h-[52px] flex-none items-center gap-2 overflow-hidden border-b border-line bg-surface px-3">
@@ -1010,6 +1104,12 @@ export default function Editor({ designId }: { designId: string }) {
       <div className="flex min-h-0 flex-1">
         {/* Left: add */}
         <aside className="w-[232px] flex-none overflow-y-auto border-r border-line bg-surface" aria-label="Add to the design">
+          <Section title="Templates">
+            <PanelButton icon={<LayoutTemplate size={16} />} label={busy === "template" ? "Applying…" : "Browse templates"} onClick={() => setGallery(true)} disabled={!doc || !canEdit || busy === "template"} />
+          </Section>
+          <Section title={kitOwner === "Shared" ? "Brand kit" : `Brand · ${kitOwner}`}>
+            <BrandPanel kit={kit} owner={kitOwner} canEdit={Boolean(doc) && canEdit} onKit={setKit} onPlaceLogo={placeBrandLogo} onApplyColor={applyBrandColor} />
+          </Section>
           <Section title="Text">
             <PanelButton icon={<Heading1 size={16} />} label="Add a heading" onClick={() => void addText("heading")} disabled={!doc || !canEdit} />
             <PanelButton icon={<Type size={16} />} label="Add a subheading" onClick={() => void addText("subheading")} disabled={!doc || !canEdit} />
@@ -1293,6 +1393,7 @@ export default function Editor({ designId }: { designId: string }) {
         </aside>
       </div>
       <LibraryPicker open={picker} onClose={() => setPicker(false)} onPick={(cr) => void addFromCreative(cr.id)} />
+      <TemplateGallery open={gallery} onClose={() => setGallery(false)} W={W} H={H} kit={kit} owner={kitOwner} onPick={(t) => void applyTemplate(t)} />
       {dialog}
       <Dialog
         open={leaving !== null}
@@ -1317,5 +1418,6 @@ export default function Editor({ designId }: { designId: string }) {
         <p className="m-0 text-[13px] text-ink-2">Drafts are in Creatives → Design an ad → Your designs. A design that&apos;s never saved is deleted automatically after a day.</p>
       </Dialog>
     </div>
+    </BrandColors.Provider>
   );
 }

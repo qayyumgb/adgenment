@@ -4,7 +4,8 @@ import { requireAuth } from "../middleware/auth";
 import { getAccess } from "../lib/access";
 import { storageConfigured } from "../lib/storage";
 import { apiBase, MAX_UPLOAD_BYTES, readAsset, verifyAssetLink } from "../services/assets.service";
-import { addImage, createDesign, deleteDesign, exportDesign, getDesign, importCreativeImage, listDesigns, saveDesign, savePreview, SIZES } from "../services/designs.service";
+import { addBrandLogo, addImage, createDesign, deleteDesign, exportDesign, getDesign, importCreativeImage, listDesigns, saveDesign, savePreview, SIZES } from "../services/designs.service";
+import { addBrandLogo as addKitLogo, getBrandKit, removeBrandLogo, updateBrandKit } from "../services/brand.service";
 
 /**
  * Creative editor (plan C19a).
@@ -109,6 +110,16 @@ designsRouter.post("/:id/images/from-creative", async (req: Request, res: Respon
   }
 });
 
+/** POST /designs/:id/images/from-brand { assetId } — a logo from a brand kit (C19b). */
+designsRouter.post("/:id/images/from-brand", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!storageConfigured()) throw Object.assign(new Error("File storage isn't set up on this server yet (R2)."), { status: 503 });
+    res.status(201).json(await addBrandLogo(await accessOf(req), req.dbUserId!, apiBase(req), req.params.id, String(req.body?.assetId ?? "")));
+  } catch (err) {
+    next(err);
+  }
+});
+
 /** POST /designs/:id/preview (multipart image) — the draft's thumbnail. */
 designsRouter.post("/:id/preview", upload.single("image"), async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -132,6 +143,49 @@ designsRouter.delete("/:id", async (req: Request, res: Response, next: NextFunct
   try {
     await deleteDesign(await accessOf(req), req.params.id);
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Brand kits (plan C19b): GET/PUT /brand-kit?clientId= (empty or "shared" =
+ * the workspace's own kit), logos as multipart field "image".
+ */
+export const brandRouter = Router();
+brandRouter.use(requireAuth);
+
+/** GET /brand-kit?clientId= */
+brandRouter.get("/", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await getBrandKit(await accessOf(req), apiBase(req), req.query.clientId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** PUT /brand-kit { clientId?, colors?, headingFont?, bodyFont? } */
+brandRouter.put("/", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await updateBrandKit(await accessOf(req), apiBase(req), req.body ?? {}));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /brand-kit/logos?clientId= (multipart image) */
+brandRouter.post("/logos", upload.single("image"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.status(201).json(await addKitLogo(await accessOf(req), req.dbUserId!, apiBase(req), req.query.clientId ?? req.body?.clientId, fileOf(req)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** DELETE /brand-kit/logos/:assetId?clientId= */
+brandRouter.delete("/logos/:assetId", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await removeBrandLogo(await accessOf(req), apiBase(req), req.query.clientId, req.params.assetId));
   } catch (err) {
     next(err);
   }

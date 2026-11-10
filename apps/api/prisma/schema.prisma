@@ -94,48 +94,48 @@ enum AudienceType {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  clerkId   String   @unique
-  email     String   @unique
-  name      String?
-  plan      PlanType @default(FREE)
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  clerkId    String    @unique
+  email      String    @unique
+  name       String?
+  plan       PlanType  @default(FREE)
+  createdAt  DateTime  @default(now())
   /// Last request from this user (written at most every 10 minutes); superadmin Users list.
   lastSeenAt DateTime?
 
-  ownedWorkspaces  Workspace[]       @relation("WorkspaceOwner")
-  workspaceMembers WorkspaceMember[]
-  aiSessions       AiSession[]
+  ownedWorkspaces    Workspace[]       @relation("WorkspaceOwner")
+  workspaceMembers   WorkspaceMember[]
+  aiSessions         AiSession[]
   approvalsRequested ApprovalRequest[] @relation("ApprovalRequester")
   approvalsDecided   ApprovalRequest[] @relation("ApprovalDecider")
 }
 
 model Workspace {
-  id           String   @id @default(cuid())
-  name         String
-  slug         String?  @unique
-  industry     String?
-  companySize  String?
+  id                   String          @id @default(cuid())
+  name                 String
+  slug                 String?         @unique
+  industry             String?
+  companySize          String?
   /// Agency profile + reporting defaults (Settings › General, A14).
-  website      String?
+  website              String?
   /// IANA time zone for weekly summaries and alert timing; null = UTC.
-  timezone     String?
+  timezone             String?
   /// 1 = Monday, 0 = Sunday (weekly summaries).
-  weekStartsOn Int      @default(1)
+  weekStartsOn         Int             @default(1)
   /// C1: Media buyers' budget increases above this % wait for an owner. Null = off.
-  approvalBudgetPct Int?   @default(20)
+  approvalBudgetPct    Int?            @default(20)
   /// C1: what happens to an approval nobody acted on within 24 hours.
-  approvalTimeout ApprovalTimeout @default(KEEP)
+  approvalTimeout      ApprovalTimeout @default(KEEP)
   /// C14: the most a safety rule may cut a campaign's daily budget in one day (%).
-  safetyMaxCutPct Int     @default(20)
+  safetyMaxCutPct      Int             @default(20)
   /// C13: auto-apply only moves a daily budget by at most this % (once per campaign per day).
-  autoApplyMaxPct Int     @default(15)
+  autoApplyMaxPct      Int             @default(15)
   /// C13/C14: stops every automatic change (safety rules, auto-apply) until switched back on.
-  automationPaused Boolean @default(false)
+  automationPaused     Boolean         @default(false)
   /// C11: the getting-started checklist on the Overview (hidden once dismissed or all done).
-  setupDismissedAt DateTime?
+  setupDismissedAt     DateTime?
   /// C11: optional checklist steps an owner chose to skip ("clients", "briefing").
-  setupSkipped     String[] @default([])
+  setupSkipped         String[]        @default([])
   /// C11 billing: the 14-day trial (no card) ends here; set when the workspace is created.
   trialEndsAt          DateTime?
   stripeCustomerId     String?
@@ -146,7 +146,7 @@ model Workspace {
   planInterval         String?
   currentPeriodStart   DateTime?
   currentPeriodEnd     DateTime?
-  cancelAtPeriodEnd    Boolean   @default(false)
+  cancelAtPeriodEnd    Boolean         @default(false)
   /// C15b retention: when the workspace was first seen locked (trial over, no plan). Cleared when it unlocks.
   lockedSince          DateTime?
   /// C15b: when the stored ad platform access was removed (30 days locked). The accounts need reconnecting.
@@ -155,9 +155,9 @@ model Workspace {
   deletionScheduledAt  DateTime?
   /// C15b: "superadmin" | "auto"
   deletionReason       String?
-  ownerId      String
-  plan         PlanType @default(FREE)
-  createdAt    DateTime @default(now())
+  ownerId              String
+  plan                 PlanType        @default(FREE)
+  createdAt            DateTime        @default(now())
 
   /// Reserved for the deferred auto-optimize mode (auto-applying budget
   /// recommendations). Dormant for now — no cron consumes these yet.
@@ -183,6 +183,7 @@ model Workspace {
   clients               Client[]
   assets                Asset[]
   designs               Design[]
+  brandKits             BrandKit[]
   suggestions           Suggestion[]
   plans                 Plan[]
   changeLogs            ChangeLog[]
@@ -229,15 +230,16 @@ model Client {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  workspace    Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  adAccounts   AdAccount[]
-  creatives    Creative[]
-  audiences    Audience[]
-  suggestions  Suggestion[]
-  plans        Plan[]
-  memberAccess MemberClientAccess[]
-  approvals    ApprovalRequest[]
-  shares       ClientShare[]
+  workspace      Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  adAccounts     AdAccount[]
+  creatives      Creative[]
+  audiences      Audience[]
+  brandKit       BrandKit[]
+  suggestions    Suggestion[]
+  plans          Plan[]
+  memberAccess   MemberClientAccess[]
+  approvals      ApprovalRequest[]
+  shares         ClientShare[]
   reportSchedule ReportSchedule?
 
   @@index([workspaceId])
@@ -357,9 +359,9 @@ model AdAccount {
   lastSyncError   String?
   lastSyncErrorAt DateTime?
 
-  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  campaigns Campaign[]
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client      Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  campaigns   Campaign[]
   experiments Experiment[]
 
   @@unique([workspaceId, platform, accountId])
@@ -394,36 +396,36 @@ model Campaign {
   /// On Meta, every ad needs Campaign + AdSet + AdCreative + Ad. We store
   /// each so we can edit / delete / report on them later. Null until
   /// publish, equivalent for Google/TikTok/LinkedIn once those land.
-  externalAdSetId    String?
-  externalAdId       String?
-  externalCreativeId String?
+  externalAdSetId     String?
+  externalAdId        String?
+  externalCreativeId  String?
   /// FB Page that owns the ad's creative (the "sender" identity).
-  externalPageId     String?
+  externalPageId      String?
   /// Timestamp of last successful publish. Lets the UI surface "Published
   /// 2 days ago" without crawling the audit log.
-  publishedAt        DateTime?
+  publishedAt         DateTime?
   /// Last publish error message if the most recent attempt failed. Cleared
   /// on next successful publish.
-  publishError       String?
+  publishError        String?
   /// The saved audience (library) this campaign's targeting came from, set by
   /// the New campaign wizard (A9). Null = built by hand or synced.
-  audienceId         String?
+  audienceId          String?
   /// The saved AI plan (and its version) this draft was created from (A12).
-  planId             String?
-  planVersion        Int?
+  planId              String?
+  planVersion         Int?
   /// Auto-pause (C6), Meta only. Checked hourly with the safety rules; each
   /// pause is a RULE change-log entry with 7-day Undo.
   /// Pause once lifetime spend reaches this (account currency). Null = off.
-  spendCap           Decimal?  @db.Decimal(12, 2)
+  spendCap            Decimal?  @db.Decimal(12, 2)
   /// Days to stay paused, in the workspace time zone: [{ from, to, label? }] (YYYY-MM-DD).
-  blackouts          Json?
+  blackouts           Json?
   /// Pause while the account's pixel is silent, resume when it fires (the C14 rule, for this campaign).
-  pauseOnTrackingLoss Boolean  @default(false)
+  pauseOnTrackingLoss Boolean   @default(false)
   /// Smart hours (C7): Advertix watches this campaign's hours and, once it has
   /// 14+ days and 300+ conversions, suggests switching off costly hours (via Approvals).
-  smartHours         Boolean   @default(false)
+  smartHours          Boolean   @default(false)
   /// When its hour-by-hour report (HourlyStat) was last rebuilt.
-  hoursSyncedAt      DateTime?
+  hoursSyncedAt       DateTime?
 
   workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   adAccount   AdAccount         @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
@@ -1206,27 +1208,50 @@ model Asset {
 /// "asset:<id>", never embedded). Saving to Creatives exports a PNG and makes or
 /// updates its Creative (creativeId).
 model Design {
-  id          String   @id @default(cuid())
-  workspaceId String
-  clientId    String?
-  name        String
-  width       Int
-  height      Int
-  data        Json
+  id             String   @id @default(cuid())
+  workspaceId    String
+  clientId       String?
+  name           String
+  width          Int
+  height         Int
+  data           Json
   previewAssetId String?
   exportAssetId  String?
-  creativeId  String?  @unique
+  creativeId     String?  @unique
   /// Bumped on every save of the document: a save based on an older revision is refused (two tabs or teammates).
-  revision    Int      @default(0)
+  revision       Int      @default(0)
   /// False until someone clicks Save draft or Save to Creatives. A design never saved and untouched
   /// for 24 hours is deleted with its files (designs cleanup job). Existing designs count as saved.
-  kept        Boolean  @default(true)
-  createdById String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  kept           Boolean  @default(true)
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   assets    Asset[]
 
   @@index([workspaceId, updatedAt])
+}
+
+/// C19b: a client's brand for the creative editor (logos, colours, fonts). `clientId` null =
+/// the workspace's own kit, used for shared designs. Logos are Assets of kind "brand"; placing
+/// one in a design copies it into the design, so removing it from the kit never breaks a design.
+model BrandKit {
+  id          String   @id @default(cuid())
+  workspaceId String
+  clientId    String?
+  /// Hex colours in order, e.g. ["#6448f2", "#111827"] (up to 12).
+  colors      Json     @default("[]")
+  headingFont String?
+  bodyFont    String?
+  /// Asset ids (kind "brand"), in order (up to 6).
+  logoIds     Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, clientId])
+  @@index([workspaceId])
 }

@@ -485,6 +485,26 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-11 — C19b part 2: ad templates
+
+- **17 templates in 6 categories** (Sale 5, Product 3, Event 2, Testimonial 2, Lead 2, Announcement 3), each laid out for square, landscape and Story. Built from five layouts (centred, photo split, full photo with a colour band, photo card with optional badge, customer quote).
+- **Brand-aware:** colours are roles resolved from the client's kit (primary, secondary, accent, a soft tint, readable text on each picked by contrast); the kit's fonts replace the template's own (headings stay bold); the logo slot takes the kit's first logo (copied into the design). Without a kit each template has its own palette and fonts.
+- **One description, two renderers** (`templates.ts`): `TemplatePreview` draws the gallery cards in HTML / SVG; `templateRender.ts` builds real, editable Fabric objects (text boxes, shapes, empty photo frames, logo). Text stacks are measured on the canvas after fonts load, so wrapped headlines push the lines below down.
+- **Editor:** Templates section ("Browse templates") at the top of the left panel; the gallery opens by itself for a brand-new empty design. Using a template on a non-empty canvas asks first; it's one undo step.
+- **Dev check page:** `/dev/templates` (development only) shows every template in the three sizes with sample brand kits.
+- **Shared helper:** `nearestWeight` in `fonts.ts` (Anton has only 400, so 800 → 400).
+
+### 2026-11-10 — C19b part 1: brand kits in the creative editor
+
+- **What:** each client has a brand kit (logos, colours, heading + text font); the workspace has a shared one for designs without a client. Edited where it's used: the editor's new **Brand** section (top of the left panel).
+- **Logos** (up to 6, PNG / JPG / WebP, transparency kept, stored in R2 as assets of kind `brand`): click to place, sized to about a quarter of the ad near the top. Placing copies the file into the design (`copyAsset`, byte for byte), so removing a logo from the kit never breaks a design. Removing deletes the kit file from R2.
+- **Colours** (up to 12, hex): click to apply to the selected text / shape(s), or the background when nothing is selected; they also appear as a **Brand** row in every colour picker (`BrandColors` context). "+" adds one with the full picker.
+- **Fonts:** "Add a heading" uses the heading font, subheading and body text the text font (nearest weight the font has).
+- **Permissions:** everyone in the workspace reads kits; editing needs edit rights; limited (per-client) members change only their clients' kits and can't change the shared one.
+- **Cleanup:** the hourly design cleanup also deletes `brand` files no kit uses (a client deleted with its kit) after a day.
+- **API:** `GET/PUT /brand-kit?clientId=` (`shared` or empty = workspace kit), `POST /brand-kit/logos?clientId=`, `DELETE /brand-kit/logos/:assetId`, `POST /designs/:id/images/from-brand`. Tests: 9/9 brand kit, design cleanup 4/4.
+- **Schema:** new `BrandKit` model. **Production needs `prisma db push`** before or with this deploy.
+
 ### 2026-11-10 — Superadmin › Users (sign-ups as leads)
 
 - **Admin page** now has **Users | Workspaces** tabs (Users first). Users: funnel tiles (sign-ups and last 7 days, active this week, connected an ad account, published a campaign, paying), search (name, email, workspace), stage filter, sortable grid (signed up, last active, workspace + role, plan / trial days left, stage, platforms, campaigns + published, changes) and **Export CSV**. A row opens a drawer: details, Email button, journey (signed up, workspace created / joined, each ad account connected, first publishes), latest 25 changes (undone ones struck through) and AI features used.
