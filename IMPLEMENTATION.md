@@ -485,6 +485,12 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-10 — C16b prepared: Clerk production keys
+
+- **Guide:** `docs/C16B_CLERK_PRODUCTION.md` — production instance (cloned settings), DNS records, own Google OAuth credentials, switching keys on Railway + Vercel together, checks and rollback.
+- **Code check:** nothing else is tied to the development instance (no Clerk webhooks, no CSP); returning users relink by verified email (`userForClerkId`); account deletion only runs for a signed-in (so already relinked) user. `SUPERADMIN_CLERK_IDS`, if used, must be updated with the new ids.
+- **Sign-in note:** Clerk doesn't copy users to production, so email + password users must sign up again with the same email. A note under the sign-in box says so, only on `pk_live_` keys and until 15 Jan 2027.
+
 ### 2026-11-09 — Security review of the Meta connection (after the owner's Facebook account was hijacked)
 
 - **Finding: no path from Advertix to sending messages.** The token only carries ads_management, business_management, pages_show_list, pages_read_engagement and public_profile; none can send Messenger messages, and Facebook has no API for messaging a person's friends. Tokens are AES-256-CBC encrypted at rest (random IV), never logged, never returned by the API; the OAuth `state` is HMAC-signed, expiring and single-use.
