@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SignIn } from "@clerk/nextjs";
+import { AuthShell, clerkAppearance } from "@/components/auth/AuthShell";
 
 /**
  * C16b (Clerk production keys): logins aren't copied from the development
@@ -14,12 +15,8 @@ const SHOW_MOVE_NOTE =
 
 export default function SignInPage() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-bg p-4">
-      <SignIn
-        appearance={{
-          variables: { colorPrimary: "#6448f2" },
-        }}
-      />
+    <AuthShell mode="sign-in">
+      <SignIn appearance={clerkAppearance} />
       {SHOW_MOVE_NOTE && (
         <p className="m-0 max-w-[400px] rounded-xl border border-line bg-surface px-4 py-3 text-center text-[13px] leading-relaxed text-ink-2">
           <strong className="font-semibold text-ink">Had an account before November 2026?</strong> We moved to a new sign-in system. Continue with Google, or{" "}
@@ -29,6 +26,6 @@ export default function SignInPage() {
           again with the same email. Your workspace and data are kept.
         </p>
       )}
-    </div>
+    </AuthShell>
   );
 }

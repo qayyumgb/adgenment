@@ -1,0 +1,148 @@
+/*
+ * Sign-in / sign-up product cards (components/auth/AuthVisual.tsx).
+ * Pure CSS so the auth pages stay light. One 12s loop: the spend line draws,
+ * a suggestion gets approved and shows "Applied", the sync dot pulses.
+ * Everything stops for reduced motion.
+ */
+
+/* Spend line draws in, holds, fades, repeats. */
+.adx-auth-line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: adx-auth-draw 12s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+.adx-auth-area {
+  opacity: 0;
+  animation: adx-auth-area 12s ease infinite;
+}
+@keyframes adx-auth-draw {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 1;
+  }
+  22%,
+  90% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  97%,
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+@keyframes adx-auth-area {
+  0%,
+  12% {
+    opacity: 0;
+  }
+  26%,
+  90% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Suggestion: "Approve" is pressed, then the card shows it applied. */
+.adx-auth-approve {
+  display: inline-block;
+  animation: adx-auth-press 12s ease infinite;
+}
+@keyframes adx-auth-press {
+  0%,
+  40% {
+    transform: scale(1);
+    filter: none;
+  }
+  43% {
+    transform: scale(0.94);
+    filter: brightness(1.15);
+  }
+  46%,
+  100% {
+    transform: scale(1);
+    filter: none;
+  }
+}
+.adx-auth-ask {
+  animation: adx-auth-ask 12s ease infinite;
+}
+.adx-auth-done {
+  opacity: 0;
+  animation: adx-auth-done 12s ease infinite;
+}
+@keyframes adx-auth-ask {
+  0%,
+  46% {
+    opacity: 1;
+    transform: none;
+  }
+  51%,
+  92% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  97%,
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes adx-auth-done {
+  0%,
+  48% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  53%,
+  90% {
+    opacity: 1;
+    transform: none;
+  }
+  95%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Live sync dot. */
+.adx-auth-pulse {
+  animation: adx-auth-pulse 2.4s ease-out infinite;
+}
+@keyframes adx-auth-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(13, 143, 90, 0.45);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 6px rgba(13, 143, 90, 0);
+  }
+}
+
+/* Panel content eases in on load. */
+.adx-auth-rise {
+  animation: adx-auth-rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes adx-auth-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adx-auth-rise,
+  .adx-auth-motion,
+  .adx-auth-motion * {
+    animation: none !important;
+  }
+  .adx-auth-motion .adx-auth-line {
+    stroke-dashoffset: 0;
+  }
+  .adx-auth-motion .adx-auth-area {
+    opacity: 1;
+  }
+}

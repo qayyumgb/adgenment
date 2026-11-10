@@ -485,6 +485,12 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-10 — Sign-in and sign-up pages redesigned
+
+- **Layout (`components/auth/AuthShell.tsx`):** two columns on desktop. Left: a clean white panel, centred: colour logo, headline per page, three stacked product cards (thin brand border). Right: the Clerk form on the grey page background. Phones show only the form under the logo. Uses the app tokens, so dark mode works.
+- **Animation (`AuthVisual.tsx` + `auth.css`):** a 12-second CSS loop: a spend line draws itself, an AI suggestion ("Move 15% of budget to Reels") is approved and turns into "Applied on Meta · Undo", the sync dot pulses. No JavaScript animation library; stops under `prefers-reduced-motion`.
+- **Clerk card** restyled to Advertix (brand purple, Geist, 42px controls, softer border and shadow) through `clerkAppearance` style objects. The C16b move note stays under the sign-in card.
+
 ### 2026-11-10 — C16b prepared: Clerk production keys
 
 - **Guide:** `docs/C16B_CLERK_PRODUCTION.md` — production instance (cloned settings), DNS records, own Google OAuth credentials, switching keys on Railway + Vercel together, checks and rollback.
