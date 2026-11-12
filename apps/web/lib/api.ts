@@ -2128,6 +2128,11 @@ export function useApiClient() {
     addBrandLogo: (clientId: string | null, file: Blob, onProgress?: (share: number) => void) => uploadDesignFile<BrandKit>(`/brand-kit/logos?clientId=${encodeURIComponent(clientId ?? "shared")}`, file, onProgress),
     removeBrandLogo: (clientId: string | null, assetId: string) => apiFetch<BrandKit>(`/brand-kit/logos/${encodeURIComponent(assetId)}?clientId=${encodeURIComponent(clientId ?? "shared")}`, { method: "DELETE" }),
     saveDesignPreview: (id: string, png: Blob) => uploadDesignFile<{ previewUrl: string }>(`/designs/${id}/preview`, png),
+    /** C19c: new wording for a design's text boxes, from a campaign or a brief (1 AI credit). */
+    writeDesignCopy: (data: { designId: string; campaignId?: string; brief?: string; fields: { id: string; role: string; current: string; maxChars: number }[] }) =>
+      apiFetch<{ fields: { id: string; text: string }[] }>("/ai/design-copy", { method: "POST", body: JSON.stringify(data) }),
+    /** One-click resize (C19b): a new design in another size; the API copies the images it uses. */
+    copyDesign: (id: string, data: { name: string; width: number; height: number; data: Record<string, unknown> }) => apiFetch<DesignSummary>(`/designs/${id}/copy`, { method: "POST", body: JSON.stringify(data) }),
     exportDesign: (id: string, png: Blob) => uploadDesignFile<DesignExport>(`/designs/${id}/export`, png),
     getAdminWorkspaces: (filter: "locked" | "all") => apiFetch<{ workspaces: AdminWorkspace[] }>(`/admin/workspaces?filter=${filter}`),
     getAdminDeletions: () => apiFetch<{ deletions: WorkspaceDeletionRecord[] }>("/admin/deletions"),

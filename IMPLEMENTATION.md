@@ -485,6 +485,23 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-12 — C19c: AI text for designs, design check (background removal deferred)
+
+- **Write the text with AI** (Text section): based on one of the client's campaigns (name, objective, audience, its current ads' wording) or a short brief, Claude rewrites every text box on the design. Works on any design, not only templates: each box is sent with a role (headline, subheading, body, eyebrow, button, price, quote, attribution) and a length limit from its size (`copyFields.ts`). Applied as one undo step; template buttons re-fit around the new label. 1 AI credit ("copy"), charged only when it works.
+- **Guard rails** (`design-copy.service.ts`): the prompt forbids invented prices, discounts, dates, places, phone numbers and claims; customer quotes and names come back unchanged and are put back server-side even if the model changes them; every text is held to its limit; unknown ids are dropped. Other clients' campaigns are refused. Tests: 3/3 (model stubbed).
+- **Check design** (top bar, free and instant, `designCheck.ts`): small text for phones, low contrast against the shape or background behind it (text on photos gets a tip), text near the edges, outside the Stories / Reels safe zone (top 14%, bottom 20%), overlapping texts, more than 30 words, empty photo frames, a kit logo not used yet. Each finding has **Show** to select the object.
+- **Background removal:** deferred by decision (2026-11-12); options and prices noted in the plan.
+- **Fixes found on `/dev/resize`:** (1) resize lost edited template text: Fabric takes a Textbox's text from its first argument and ignores `options.text`, so overrides now go there (labels too). (2) Fonts could fall back to a serif when a template was drawn right after the editor opened: `addFontStylesheet` now returns a promise for the stylesheet, and `loadFont` waits for it before `document.fonts.load`. (3) Repositioning: something centred on the ad stays centred (wide centred text used to be pinned to the left edge).
+
+### 2026-11-12 — C19b part 3: one-click resize
+
+- **Editor:** **Resize** in the top bar → pick the other sizes (both preselected) → one new design per size, named "… · Square / Landscape / Story", for the same client, listed in Your designs, with a thumbnail and an Open link. The original is saved first and stays as it is.
+- **Made from a template:** objects now carry a `slot` (`<template>|<element>|<item>|<part>`, saved in the design; `EXTRA_PROPS`). Resize draws the template again in the new size and carries over what was changed: edited text (unedited text keeps the size's own wording), colours, fonts, frame photos with focus and zoom, the logo, the background colour. Deleted parts stay deleted; anything added by hand is repositioned.
+- **Anything else** (`reposition` in `resize.ts`): a background photo covers the new size; full-width / full-height bands and frames stretch along that side; objects near an edge keep their margin to it; the rest keep their relative place; everything scales with the shorter side (text by font size and box width); what was inside the ad stays inside.
+- **API:** `POST /designs/:id/copy { name, width, height, data }` creates the design and copies every image it references (`copyAsset`, byte for byte, this workspace's only), rewriting the references, so deleting or cleaning up the original never breaks a version; a failed copy is rolled back. Tests: 3/3.
+- **Fix:** the design page keys the editor by id, so opening another design from inside the editor starts a fresh one.
+- **Dev check page:** `/dev/resize` (development only) renders real canvas output: templates with an edited headline and a hand-made design, square → landscape and Story.
+
 ### 2026-11-11 — C19b part 2: ad templates
 
 - **17 templates in 6 categories** (Sale 5, Product 3, Event 2, Testimonial 2, Lead 2, Announcement 3), each laid out for square, landscape and Story. Built from five layouts (centred, photo split, full photo with a colour band, photo card with optional badge, customer quote).

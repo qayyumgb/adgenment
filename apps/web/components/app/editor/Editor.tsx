@@ -45,6 +45,10 @@ import {
   Unlock,
   Wallpaper,
   LayoutTemplate,
+  Scaling,
+  Sparkles,
+  ShieldCheck,
+  Eraser,
 } from "lucide-react";
 import { useApiClient, type BrandKit, type Creative, type DesignDoc, type DesignImage } from "@/lib/api";
 import { useClientScope } from "@/components/app/shell/ClientContext";
@@ -61,6 +65,12 @@ import { BrandPanel } from "./BrandPanel";
 import { TemplateGallery } from "./TemplateGallery";
 import { aspectOf, fontsFor, paletteFor, type Template } from "./templates";
 import { loadTemplateFonts, renderTemplate } from "./templateRender";
+import { resizeDesign } from "./resize";
+import { ResizeDialog, type AdSize } from "./ResizeDialog";
+import { collectCopyFields } from "./copyFields";
+import { WriteCopyDialog } from "./WriteCopyDialog";
+import { checkDesign, type Finding } from "./designCheck";
+import { CheckDialog } from "./CheckDialog";
 
 /**
  * Creative editor (plan C19a): finish ads in the three Meta sizes. Images,
@@ -213,6 +223,10 @@ export default function Editor({ designId }: { designId: string }) {
   // C19b: the design client's brand kit (or the workspace's shared one), and the template gallery.
   const [kit, setKit] = useState<BrandKit | null>(null);
   const [gallery, setGallery] = useState(false);
+  const [resizing, setResizing] = useState(false);
+  // C19c: AI text and the design check.
+  const [writing, setWriting] = useState(false);
+  const [findings, setFindings] = useState<Finding[] | null>(null);
   const scope = useClientScope();
   const kitClient = doc ? doc.clientId ?? "shared" : null;
   const kitOwner = doc?.clientId ? scope.clients.find((x) => x.id === doc.clientId)?.name ?? "This client" : "Shared";
@@ -714,7 +728,7 @@ export default function Editor({ designId }: { designId: string }) {
       try {
         cv.discardActiveObject();
         cv.getObjects().forEach((o) => cv.remove(o));
-        await renderTemplate(cv, els, { W, H, pal: paletteFor(kit), fonts, logo });
+        await renderTemplate(cv, els, { W, H, pal: paletteFor(kit), fonts, logo, tplId: tpl.id });
       } finally {
         h.quiet = false;
       }
@@ -726,6 +740,87 @@ export default function Editor({ designId }: { designId: string }) {
     } finally {
       setBusy(null);
     }
+  };
+
+  /** C19c: write every text box with AI (one undo step); template buttons re-fit around their new label. */
+  const writeWithAi = async (source: { campaignId?: string; brief?: string }) => {
+    const cv = c();
+    const { fields, byId } = collectCopyFields(cv);
+    if (!fields.length) return void toast.error("There's no text on the design to write.");
+    try {
+      const r = await api.writeDesignCopy({ designId, ...source, fields });
+      const h = history.current;
+      h.quiet = true;
+      let changed = 0;
+      try {
+        for (const f of r.fields) {
+          const t = byId.get(f.id);
+          if (!t || !f.text || f.text === t.text) continue;
+          t.set({ text: f.text });
+          t.initDimensions();
+          changed++;
+          // A template button: the label's width, then the pill around it.
+          const slot = (t as Textbox & { slot?: string }).slot;
+          if (slot?.endsWith("|label")) {
+            const rect = cv.getObjects().find((o) => (o as FabricObject & { slot?: string }).slot === slot.replace(/\|label$/, "|button"));
+            t.set({ width: W });
+            const tw = Math.ceil(t.calcTextWidth()) + 4;
+            t.set({ width: tw });
+            t.initDimensions();
+            if (rect) {
+              rect.set({ width: (tw + (t.fontSize ?? 40) * 1.35 * 2) / (rect.scaleX || 1) });
+              rect.setCoords();
+            }
+          }
+          t.setCoords();
+        }
+      } finally {
+        h.quiet = false;
+      }
+      cv.requestRenderAll();
+      recordRef.current();
+      bump();
+      toast.success(changed ? `Wrote ${changed} text box${changed === 1 ? "" : "es"}. Ctrl+Z puts the old text back.` : "The AI kept the current text.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't write the text.");
+      throw err;
+    }
+  };
+
+  /** Start over on the same design: everything off the canvas, white background; one undo step brings it back. */
+  const clearCanvas = async () => {
+    const cv = c();
+    if (!cv.getObjects().length && (cv.backgroundColor === "#ffffff" || !cv.backgroundColor)) return void toast("The canvas is already empty.");
+    if (!(await confirm({ title: "Clear the canvas?", body: "Everything on this design is removed and the background turns white. Ctrl+Z brings it back. Your uploads stay in Your uploads.", confirmLabel: "Clear canvas", danger: true }))) return;
+    const h = history.current;
+    h.quiet = true;
+    try {
+      cv.discardActiveObject();
+      cv.getObjects().forEach((o) => cv.remove(o));
+      cv.backgroundColor = "#ffffff";
+    } finally {
+      h.quiet = false;
+    }
+    cv.requestRenderAll();
+    recordRef.current();
+    bump();
+  };
+
+  const runCheck = () => {
+    c().discardActiveObject();
+    setFindings(checkDesign(c(), W, H, { kitHasLogo: Boolean(kit?.logos.length) }));
+  };
+
+  /** One-click resize (C19b): this design laid out in another size, saved as a new design with its own copies of the images. */
+  const makeVersion = async (s: AdSize) => {
+    const cv = c();
+    cv.discardActiveObject();
+    const source = cv.toObject(EXTRA_PROPS) as Record<string, unknown>;
+    const { data, preview } = await resizeDesign(source, { W, H }, { W: s.W, H: s.H }, kit);
+    const base = name.trim().replace(/ · (Square|Landscape|Story)$/, "") || "Untitled design";
+    const d = await api.copyDesign(designId, { name: `${base} · ${s.suffix}`, width: s.W, height: s.H, data });
+    await api.saveDesignPreview(d.id, preview).catch(() => undefined);
+    return { id: d.id, preview: URL.createObjectURL(preview) };
   };
 
   /** A brand-kit logo: copied into the design (so it stays even if the kit changes), placed near the top. */
@@ -1074,6 +1169,23 @@ export default function Editor({ designId }: { designId: string }) {
         </IconButton>
         {canEdit && (
           <>
+            <Button variant="ghost" size="sm" icon={<ShieldCheck size={15} />} disabled={!doc} title="Check text size, contrast, edges and safe zones" onClick={runCheck}>
+              Check
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Scaling size={15} />}
+              disabled={!doc}
+              title="Get this ad in the other sizes"
+              onClick={async () => {
+                // The original counts as saved before versions are made from it.
+                await save({ keep: true, quiet: true });
+                setResizing(true);
+              }}
+            >
+              Resize
+            </Button>
             <Button
               variant="secondary"
               size="sm"
@@ -1092,9 +1204,14 @@ export default function Editor({ designId }: { designId: string }) {
             </Button>
             <Menu align="end" width={200} trigger={(p) => <IconButton {...p} label="More" size={32}><MoreHorizontal size={16} /></IconButton>}>
               {(close) => (
-                <MenuItem icon={<Trash2 size={15} />} onSelect={() => (close(), void remove())}>
-                  Delete design
-                </MenuItem>
+                <>
+                  <MenuItem icon={<Eraser size={15} />} onSelect={() => (close(), void clearCanvas())}>
+                    Clear canvas
+                  </MenuItem>
+                  <MenuItem icon={<Trash2 size={15} />} onSelect={() => (close(), void remove())}>
+                    Delete design
+                  </MenuItem>
+                </>
               )}
             </Menu>
           </>
@@ -1114,6 +1231,7 @@ export default function Editor({ designId }: { designId: string }) {
             <PanelButton icon={<Heading1 size={16} />} label="Add a heading" onClick={() => void addText("heading")} disabled={!doc || !canEdit} />
             <PanelButton icon={<Type size={16} />} label="Add a subheading" onClick={() => void addText("subheading")} disabled={!doc || !canEdit} />
             <PanelButton icon={<Type size={14} />} label="Add body text" onClick={() => void addText("body")} disabled={!doc || !canEdit} />
+            <PanelButton icon={<Sparkles size={16} />} label="Write the text with AI" onClick={() => setWriting(true)} disabled={!doc || !canEdit} />
           </Section>
           <Section title="Images">
             <PanelButton icon={<ImageIcon size={16} />} label={busy === "upload" ? "Adding…" : "Upload image"} onClick={() => fileRef.current?.click()} disabled={!doc || !canEdit || busy === "upload"} />
@@ -1393,6 +1511,20 @@ export default function Editor({ designId }: { designId: string }) {
         </aside>
       </div>
       <LibraryPicker open={picker} onClose={() => setPicker(false)} onPick={(cr) => void addFromCreative(cr.id)} />
+      <WriteCopyDialog open={writing} onClose={() => setWriting(false)} clientId={doc?.clientId ?? null} boxes={writing ? collectCopyFields(c()).fields.length : 0} onWrite={writeWithAi} onTemplates={() => setGallery(true)} onAddHeading={() => void addText("heading")} />
+      <CheckDialog
+        findings={findings}
+        onClose={() => setFindings(null)}
+        onShow={(f) => {
+          setFindings(null);
+          if (f.target) {
+            c().setActiveObject(f.target);
+            c().requestRenderAll();
+            bump();
+          }
+        }}
+      />
+      <ResizeDialog open={resizing} onClose={() => setResizing(false)} W={W} H={H} make={makeVersion} />
       <TemplateGallery open={gallery} onClose={() => setGallery(false)} W={W} H={H} kit={kit} owner={kitOwner} onPick={(t) => void applyTemplate(t)} />
       {dialog}
       <Dialog

@@ -30,19 +30,34 @@ export const DEFAULT_FONT = "Inter";
 
 const HREF = `https://fonts.googleapis.com/css2?${FONTS.map((f) => `family=${f.family.replace(/ /g, "+")}:wght@${f.weights.join(";")}`).join("&")}&display=swap`;
 
-/** Add the stylesheet once. */
-export function addFontStylesheet() {
-  if (typeof document === "undefined" || document.getElementById("advertix-editor-fonts")) return;
-  const link = document.createElement("link");
-  link.id = "advertix-editor-fonts";
-  link.rel = "stylesheet";
-  link.href = HREF;
-  document.head.appendChild(link);
+let sheet: Promise<void> | null = null;
+/** Add the stylesheet once; resolves when it has loaded (or failed), so fonts can be measured after it. */
+export function addFontStylesheet(): Promise<void> {
+  if (typeof document === "undefined") return Promise.resolve();
+  if (sheet) return sheet;
+  const existing = document.getElementById("advertix-editor-fonts") as HTMLLinkElement | null;
+  if (existing?.sheet) return (sheet = Promise.resolve());
+  sheet = new Promise<void>((resolve) => {
+    const link = existing ?? document.createElement("link");
+    const done = () => resolve();
+    link.addEventListener("load", done, { once: true });
+    link.addEventListener("error", done, { once: true });
+    setTimeout(done, 8000); // never hang on a slow network: draw with the fallback instead
+    if (!existing) {
+      link.id = "advertix-editor-fonts";
+      link.rel = "stylesheet";
+      link.href = HREF;
+      document.head.appendChild(link);
+    }
+  });
+  return sheet;
 }
 
 /** Resolve when the family (at that weight) can be drawn; never throws. */
 export async function loadFont(family: string, weight: number | string = 400, italic = false) {
   if (typeof document === "undefined") return;
+  // The @font-face rules must exist before document.fonts can load them (else it resolves at once, with nothing).
+  await addFontStylesheet();
   try {
     await document.fonts.load(`${italic ? "italic " : ""}${weight} 48px "${family}"`);
   } catch {

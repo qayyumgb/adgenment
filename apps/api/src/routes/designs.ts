@@ -4,7 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { getAccess } from "../lib/access";
 import { storageConfigured } from "../lib/storage";
 import { apiBase, MAX_UPLOAD_BYTES, readAsset, verifyAssetLink } from "../services/assets.service";
-import { addBrandLogo, addImage, createDesign, deleteDesign, exportDesign, getDesign, importCreativeImage, listDesigns, saveDesign, savePreview, SIZES } from "../services/designs.service";
+import { addBrandLogo, addImage, copyDesign, createDesign, deleteDesign, exportDesign, getDesign, importCreativeImage, listDesigns, saveDesign, savePreview, SIZES } from "../services/designs.service";
 import { addBrandLogo as addKitLogo, getBrandKit, removeBrandLogo, updateBrandKit } from "../services/brand.service";
 
 /**
@@ -105,6 +105,16 @@ designsRouter.post("/:id/images/from-creative", async (req: Request, res: Respon
   try {
     if (!storageConfigured()) throw Object.assign(new Error("File storage isn't set up on this server yet (R2)."), { status: 503 });
     res.status(201).json(await importCreativeImage(await accessOf(req), req.dbUserId!, apiBase(req), req.params.id, String(req.body?.creativeId ?? "")));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /designs/:id/copy { name, width, height, data } — one-click resize: a new design in another size (C19b). */
+designsRouter.post("/:id/copy", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!storageConfigured()) throw Object.assign(new Error("File storage isn't set up on this server yet (R2)."), { status: 503 });
+    res.status(201).json(await copyDesign(await accessOf(req), req.dbUserId!, apiBase(req), req.params.id, req.body ?? {}));
   } catch (err) {
     next(err);
   }

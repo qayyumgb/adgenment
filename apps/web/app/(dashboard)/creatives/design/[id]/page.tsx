@@ -17,5 +17,6 @@ const Editor = dynamic(() => import("@/components/app/editor/Editor"), {
 });
 
 export default function DesignPage({ params }: { params: { id: string } }) {
-  return <Editor designId={params.id} />;
+  // Keyed by id: opening another design (e.g. a resized version) starts a fresh editor.
+  return <Editor key={params.id} designId={params.id} />;
 }

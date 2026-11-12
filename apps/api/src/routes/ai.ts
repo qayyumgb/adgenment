@@ -7,6 +7,7 @@ import { ClientScopeError } from "../lib/clients";
 import { openaiImageService, IMAGE_QUALITIES, type ImageQuality } from "../services/openai-image.service";
 import { CREDIT_COST, chargeCredits, imageCost, requireCredits } from "../services/credits.service";
 import { metaService, type MetaTargeting } from "../services/meta.service";
+import { copyContext, validFields, writeCopy } from "../services/design-copy.service";
 import { requireAuth } from "../middleware/auth";
 import { requireWorkspace } from "../lib/workspace";
 import { prisma } from "../lib/prisma";
@@ -326,6 +327,36 @@ router.post("/campaigns/:id/ask", requireAuth, async (req: Request, res: Respons
     }
   } catch (err) {
     next(err);
+  }
+});
+
+/**
+ * POST /ai/design-copy { designId, campaignId? | brief?, fields: [{ id, role, current, maxChars }] }
+ * C19c: new wording for the text boxes of an ad design. 1 AI credit, charged
+ * only when it works.
+ */
+router.post("/design-copy", requireAuth, async (req: Request, res: Response) => {
+  let workspaceId: string;
+  let context: string;
+  let fields: ReturnType<typeof validFields>;
+  try {
+    const access = await getAccess(req);
+    if (!access) return res.status(404).json({ error: "No workspace found" });
+    workspaceId = access.workspaceId;
+    fields = validFields(req.body?.fields);
+    context = await copyContext(access, req.body ?? {});
+    await requireCredits(workspaceId, CREDIT_COST.copy);
+  } catch (err) {
+    const e = err as Error & { status?: number; code?: string; credits?: unknown };
+    return res.status(e.status ?? 500).json({ error: e.message, ...(e.code ? { code: e.code, credits: e.credits } : {}) });
+  }
+  try {
+    const r = await writeCopy(context, fields);
+    await chargeCredits(workspaceId, req.dbUserId!, "copy", CREDIT_COST.copy).catch((e) => console.error("[credits]", e));
+    return res.json(r);
+  } catch (err) {
+    const code = err instanceof Error ? err.message : "AI_API_ERROR";
+    return res.status(code === "AI_PARSE_ERROR" ? 502 : 503).json({ error: code === "AI_PARSE_ERROR" ? "The AI's answer didn't come through properly. Try again." : "The AI service is busy right now. Try again in a moment." });
   }
 });
 

@@ -186,7 +186,24 @@ Rules:
 - You cannot change the campaign. Never say you have changed, paused or adjusted anything; recommend instead.
 - Days with zero spend may simply be days the campaign wasn't running.`;
 
+/** C19c: rewrite the text boxes of an ad design from a campaign or a brief. */
+const DESIGN_COPY_PROMPT = `You write the words on a static image ad (Facebook / Instagram) designed in an editor. You get the ad's text boxes (each with an id, a role and its current wording) and what the ad is about. Return ONLY valid JSON: {"fields":[{"id":"...","text":"..."}]} with one entry per field id you were given, in the same order.
+
+Rules:
+- Each text must stay within its maxChars and suit its role: "headline" is short and punchy (the main message), "subheading" adds one clear benefit, "body" is one or two short sentences, "eyebrow" is 1-3 words in CAPITALS, "button" is a 1-3 word call to action ("Shop now", "Book a call"), "price" is a price or offer.
+- Write in the language of the brief / campaign copy.
+- Never invent facts: prices, discounts, percentages, dates, times, places, phone numbers, guarantees or claims ("#1", "award-winning") only if they appear in the brief or campaign. If a field needs a fact you don't have, return its current text unchanged.
+- Roles "quote" and "attribution" are real customer words and names: return them exactly unchanged.
+- Keep line breaks only where the current text has them. No emojis unless the brief uses them. No surrounding quotes, no markdown.`;
+
 class AIService {
+  /** C19c: new wording for an ad design's text boxes. Returns { fields: [{ id, text }] } as JSON. */
+  async writeDesignCopy(context: string, fields: { id: string; role: string; current: string; maxChars: number }[]): Promise<{ json: string; tokensUsed: number }> {
+    const userMessage = `What the ad is about:\n${context}\n\nText boxes:\n${JSON.stringify(fields)}`;
+    const { text, tokensUsed } = await this.callAnthropic(DESIGN_COPY_PROMPT, userMessage, 1200);
+    return { json: this.extractJson(text), tokensUsed };
+  }
+
   private async callAnthropic(
     system: string,
     userMessage: string,

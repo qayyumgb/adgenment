@@ -19,7 +19,9 @@ const KITS: Record<string, BrandKit | null> = {
 
 export function DevTemplates() {
   const [kit, setKit] = useState("none");
-  useEffect(() => addFontStylesheet(), []);
+  useEffect(() => {
+    void addFontStylesheet();
+  }, []);
   const k = KITS[kit];
   const pal = paletteFor(k);
   return (

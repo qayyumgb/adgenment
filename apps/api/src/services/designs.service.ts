@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { assertClientAccess, type Access } from "../lib/access";
 import { metaService } from "./meta.service";
-import { assetError, assetUrl, createAsset, deleteAssets, readAsset } from "./assets.service";
+import { assetError, assetUrl, copyAsset, createAsset, deleteAssets, readAsset } from "./assets.service";
 import { cleanupBrandFiles, copyLogoIntoDesign } from "./brand.service";
 
 /**
@@ -126,6 +126,38 @@ export async function addImage(access: Access, userId: string, base: string, id:
   const d = await load(access, id);
   const a = await createAsset({ workspaceId: access.workspaceId, designId: d.id, createdById: userId, kind: "upload", input: file });
   return { id: a.id, url: assetUrl(base, a.id), width: a.width, height: a.height };
+}
+
+/**
+ * One-click resize (C19b): a new design in another size, laid out by the
+ * editor, for the same client. Every image it uses is copied into it (byte
+ * for byte), so deleting or cleaning up the original never breaks the copy.
+ * It counts as saved (listed in Your designs) since someone asked for it.
+ */
+export async function copyDesign(access: Access, userId: string, base: string, sourceId: string, body: Json) {
+  const src = await load(access, sourceId);
+  const size = validSize(body.width, body.height);
+  if (!size) throw assetError(400, "Pick one of the ad sizes: 1080×1080, 1200×628 or 1080×1920.");
+  if (!isObj(body.data)) throw assetError(400, "The design is missing.");
+  const name = typeof body.name === "string" && body.name.trim() ? body.name.trim().slice(0, 120) : `${src.name} (copy)`;
+  let text = JSON.stringify(body.data);
+  if (text.length > 5_000_000) throw assetError(413, "That design is too large to copy.");
+  const ids = [...new Set([...text.matchAll(/"asset:([A-Za-z0-9_-]{6,64})"/g)].map((m) => m[1]))];
+  const sources = ids.length ? await prisma.asset.findMany({ where: { id: { in: ids }, workspaceId: access.workspaceId } }) : [];
+  const d = await prisma.design.create({ data: { workspaceId: access.workspaceId, clientId: src.clientId, name, width: size.width, height: size.height, data: {}, createdById: userId, kept: true } });
+  try {
+    for (const a of sources) {
+      const copy = await copyAsset(a, { designId: d.id, createdById: userId, kind: "upload" });
+      text = text.split(`"asset:${a.id}"`).join(`"asset:${copy.id}"`);
+    }
+    const saved = await prisma.design.update({ where: { id: d.id }, data: { data: JSON.parse(text) as Prisma.InputJsonValue } });
+    return view(base, saved);
+  } catch (err) {
+    // Half-made copy: remove it and the files copied so far.
+    await deleteAssets({ designId: d.id }).catch(() => undefined);
+    await prisma.design.deleteMany({ where: { id: d.id } });
+    throw err;
+  }
 }
 
 /** A logo from a brand kit, copied into the design (C19b). */
