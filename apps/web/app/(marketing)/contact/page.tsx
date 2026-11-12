@@ -29,7 +29,7 @@ export default function ContactPage() {
         <div className="mx-auto flex max-w-[1280px] flex-wrap items-start gap-[clamp(32px,5vw,64px)]">
           <div className="flex min-w-0 flex-[1_1_400px] flex-col gap-5">
             <Eyebrow>CONTACT · REPLIES WITHIN ONE WORKING DAY</Eyebrow>
-            <HeroTitle line1="Talk to people" line2="who run ads." className="text-[clamp(44px,8vw,100px)]" />
+            <HeroTitle line1="Talk to people" line2="who run ads." />
             <p data-reveal="up" className="m-0 max-w-[460px] text-[clamp(16px,1.6vw,18px)] text-mk-ink2">
               Book 20 minutes and we’ll look at one of your real accounts together, or send a note and we’ll reply within
               a working day.

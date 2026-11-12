@@ -22,6 +22,37 @@ const slug = (s: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
+/** The legal pages' header: label, title, and the Privacy / Terms / Data deletion tabs. */
+export function LegalHeader({ eyebrow, title, accent, current }: { eyebrow: string; title: string; accent: string; current: "/privacy" | "/terms" | "/data-deletion" }) {
+  return (
+    <section className="border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-0 pt-[clamp(48px,8vw,104px)]">
+      <div className="mx-auto flex max-w-[1280px] flex-col gap-[18px]">
+        <Eyebrow>{eyebrow}</Eyebrow>
+        <h1 className="m-0 text-[clamp(40px,6.2vw,76px)] font-semibold leading-[1.02] tracking-[-0.04em]">
+          {title} <Accent>{accent}</Accent>
+        </h1>
+        <nav aria-label="Legal pages" className="mt-[clamp(12px,3vw,28px)] flex gap-6 overflow-x-auto">
+          {PAGES.map((p) => {
+            const on = p.href === current;
+            return (
+              <Link
+                key={p.href}
+                href={p.href}
+                aria-current={on ? "page" : undefined}
+                className={`-mb-0.5 whitespace-nowrap border-b-2 pb-3.5 text-[15px] font-semibold transition-colors ${
+                  on ? "border-mk-ink text-mk-ink" : "border-transparent text-mk-ink2 hover:text-mk-ink"
+                }`}
+              >
+                {p.label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+    </section>
+  );
+}
+
 export function LegalLayout({
   title,
   accent,
@@ -37,31 +68,7 @@ export function LegalLayout({
 }) {
   return (
     <>
-      <section className="border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-0 pt-[clamp(48px,8vw,104px)]">
-        <div className="mx-auto flex max-w-[1280px] flex-col gap-[18px]">
-          <Eyebrow>LEGAL · EFFECTIVE {effectiveDate.toUpperCase()}</Eyebrow>
-          <h1 className="m-0 text-[clamp(44px,8vw,96px)] font-medium leading-[.95] tracking-[-0.055em]">
-            {title} <Accent>{accent}</Accent>
-          </h1>
-          <nav aria-label="Legal pages" className="mt-[clamp(12px,3vw,28px)] flex gap-6 overflow-x-auto">
-            {PAGES.map((p) => {
-              const on = p.href === current;
-              return (
-                <Link
-                  key={p.href}
-                  href={p.href}
-                  aria-current={on ? "page" : undefined}
-                  className={`-mb-0.5 whitespace-nowrap border-b-2 pb-3.5 text-[15px] font-semibold transition-colors ${
-                    on ? "border-mk-ink text-mk-ink" : "border-transparent text-mk-ink2 hover:text-mk-ink"
-                  }`}
-                >
-                  {p.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
-      </section>
+      <LegalHeader eyebrow={`LEGAL · EFFECTIVE ${effectiveDate.toUpperCase()}`} title={title} accent={accent} current={current} />
       <section className="px-[clamp(16px,4vw,32px)] py-[clamp(48px,7vw,88px)]">
         <div className="mx-auto flex max-w-[1280px] items-start gap-[clamp(28px,5vw,72px)]">
           <LegalToc />

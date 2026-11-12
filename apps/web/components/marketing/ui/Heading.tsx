@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-/** Mono uppercase label above headings. */
+/** Small uppercase label above headings (sans, semibold; 2026-11 refresh: no mono). */
 export function Eyebrow({
   children,
   onDark = false,
@@ -12,7 +12,7 @@ export function Eyebrow({
 }) {
   return (
     <span
-      className={`font-mk-mono text-xs uppercase tracking-[.06em] ${
+      className={`text-[12.5px] font-semibold uppercase tracking-[.09em] ${
         onDark ? "text-mk-lav-ink" : "text-mk-brand-ink"
       } ${className}`}
     >
@@ -21,7 +21,7 @@ export function Eyebrow({
   );
 }
 
-/** Serif-italic accent phrase used at the end of most headlines. */
+/** Accent phrase at the end of a headline: same typeface, brand colour (2026-11 refresh: no serif italic). */
 export function Accent({
   children,
   onDark = false,
@@ -41,13 +41,13 @@ export function Accent({
         ? "text-mk-lav"
         : "text-mk-brand";
   return (
-    <span className={`font-mk-serif font-normal italic ${color} ${className}`}>{children}</span>
+    <span className={`${color} ${className}`}>{children}</span>
   );
 }
 
 /**
- * Section heading: sans lead + serif-italic accent.
- * Size matches the mockups' h2 (clamp 34→68px).
+ * Section heading: lead + accent phrase in the brand colour.
+ * clamp 30→52px, semibold.
  */
 export function AccentHeading({
   lead,
@@ -69,7 +69,7 @@ export function AccentHeading({
   return (
     <Tag
       data-reveal={reveal ? "up" : undefined}
-      className={`m-0 text-[clamp(34px,5.2vw,68px)] font-medium leading-[.98] tracking-[-0.05em] [text-wrap:balance] ${className}`}
+      className={`m-0 text-[clamp(30px,4.4vw,52px)] font-semibold leading-[1.05] tracking-[-0.035em] [text-wrap:balance] ${className}`}
     >
       {lead}
       {accent && (
@@ -84,7 +84,7 @@ export function AccentHeading({
   );
 }
 
-/** Eyebrow + heading on the left, lede on the right, bottom-aligned. */
+/** Eyebrow, heading, and the lede right under it (2026-11 refresh: no floating right column). */
 export function SectionHead({
   eyebrow,
   lead,
@@ -103,15 +103,15 @@ export function SectionHead({
   className?: string;
 }) {
   return (
-    <div className={`flex flex-wrap items-end justify-between gap-x-16 gap-y-6 ${className}`}>
-      <div className="flex min-w-0 flex-[1_1_520px] flex-col gap-4">
+    <div className={`flex max-w-[820px] flex-col gap-4 ${className}`}>
+      <div className="flex min-w-0 flex-col gap-4">
         {eyebrow && <Eyebrow onDark={onDark}>{eyebrow}</Eyebrow>}
         <AccentHeading lead={lead} accent={accent} onDark={onDark} accentTone={accentTone} />
       </div>
       {lede && (
         <p
           data-reveal="up"
-          className={`m-0 max-w-[420px] flex-[1_1_320px] text-[clamp(16px,1.6vw,18px)] ${
+          className={`m-0 max-w-[640px] text-[clamp(16px,1.6vw,18px)] ${
             onDark ? "text-mk-on-dark2" : "text-mk-ink2"
           }`}
         >
@@ -123,14 +123,14 @@ export function SectionHead({
 }
 
 /**
- * Hero h1: two masked lines that rise in on load. Line two is the
- * serif-italic accent.
+ * Hero h1: two masked lines that rise in on load; line two in the brand
+ * colour, same typeface (2026-11 refresh).
  */
 export function HeroTitle({
   line1,
   line2,
   line2ClassName = "text-mk-brand",
-  className = "text-[clamp(46px,9vw,112px)]",
+  className = "text-[clamp(40px,6.2vw,76px)]",
 }: {
   line1: ReactNode;
   line2: ReactNode;
@@ -138,7 +138,7 @@ export function HeroTitle({
   className?: string;
 }) {
   return (
-    <h1 className={`m-0 font-medium leading-[.92] tracking-[-0.055em] ${className}`}>
+    <h1 className={`m-0 font-semibold leading-[1.02] tracking-[-0.04em] [text-wrap:balance] ${className}`}>
       <span className="-mb-[.14em] block overflow-hidden pb-[.18em]">
         <span data-reveal="line" className="inline-block">
           {line1}
@@ -147,7 +147,7 @@ export function HeroTitle({
       <span className="-mb-[.1em] block overflow-hidden pb-[.22em]">
         <span
           data-reveal="line"
-          className={`inline-block font-mk-serif font-normal italic tracking-[-0.03em] ${line2ClassName}`}
+          className={`inline-block ${line2ClassName}`}
         >
           {line2}
         </span>

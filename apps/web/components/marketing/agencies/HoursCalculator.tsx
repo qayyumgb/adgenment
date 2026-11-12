@@ -7,9 +7,9 @@ import { AccentHeading, Eyebrow } from "@/components/marketing/ui/Heading";
 const HOURS = [
   { task: "Morning account checks", b: 3.5, a: 0.5, how: "One briefing ranks what matters across every client and platform." },
   { task: "Budget pacing and moves", b: 2, a: 0.3, how: "Monthly caps per client; the allocator proposes moves on response curves." },
-  { task: "Weekly client report", b: 2.5, a: 0.2, how: "Coming soon: a live white-label link plus a scheduled PDF with an AI-drafted summary." },
+  { task: "Weekly client report", b: 2.5, a: 0.2, how: "A live link per client plus a scheduled email report with an optional PDF." },
   { task: "Creative refresh", b: 3, a: 1, how: "Fatigue flagged early; variants drafted from proven hooks." },
-  { task: "Chasing tracking issues", b: 1.5, a: 0.2, how: "Pixel and access health checks today; CPA alerts grouped per campaign coming soon." },
+  { task: "Chasing tracking issues", b: 1.5, a: 0.2, how: "Pixel and access health checks, plus CPA and tracking alerts grouped per campaign." },
 ];
 const MAX = 3.5;
 const RATE = 85;

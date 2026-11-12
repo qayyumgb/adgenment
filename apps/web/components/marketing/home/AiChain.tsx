@@ -120,8 +120,8 @@ export function AiChain() {
               </button>
             </div>
             <span className="mt-auto text-sm text-mk-ink2">
-              Nothing applies until you approve it, and any change can be undone for 7 days. Coming soon: let small
-              changes inside a guardrail you set apply on their own.
+              Nothing applies until you approve it, and any change can be undone for 7 days. Or, per client, let small
+              budget moves inside a guardrail you set apply on their own.
             </span>
           </div>
         </div>

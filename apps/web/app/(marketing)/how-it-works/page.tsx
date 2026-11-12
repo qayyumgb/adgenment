@@ -31,13 +31,13 @@ export default function HowItWorksPage() {
   return (
     <>
       <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(40px,6vw,72px)] pt-[clamp(48px,8vw,104px)]">
-        <div className="mx-auto flex max-w-[1280px] flex-wrap items-end justify-between gap-x-16 gap-y-7">
-          <div className="flex min-w-0 flex-[1_1_600px] flex-col gap-[18px]">
+        <div className="mx-auto flex max-w-[1280px] flex-col gap-5">
+          <div className="flex max-w-[860px] flex-col gap-5">
             <Eyebrow>HOW IT WORKS</Eyebrow>
             <HeroTitle line1="Connect once." line2="Decide in minutes." />
           </div>
-          <div className="flex max-w-[420px] flex-[1_1_320px] flex-col gap-[18px]">
-            <p data-reveal="up" className="m-0 text-[clamp(16px,1.6vw,18px)] text-mk-ink2">
+          <div className="flex max-w-[640px] flex-col gap-6">
+            <p data-reveal="up" className="m-0 text-[clamp(16px,1.6vw,19px)] leading-relaxed text-mk-ink2">
               Four steps between your ad accounts and a short list of decisions. Here is what happens at each one,
               what Advertix reads, and where you stay in charge.
             </p>

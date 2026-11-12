@@ -28,17 +28,13 @@ export function PricingPlans() {
   return (
     <>
       <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(36px,5vw,56px)] pt-[clamp(48px,8vw,104px)]">
-        <div className="mx-auto flex max-w-[1280px] flex-wrap items-end justify-between gap-x-16 gap-y-7">
-          <div className="flex min-w-0 flex-[1_1_600px] flex-col gap-[18px]">
+        <div className="mx-auto flex max-w-[1280px] flex-col gap-5">
+          <div className="flex max-w-[860px] flex-col gap-5">
             <Eyebrow>PRICING · 14-DAY FREE TRIAL</Eyebrow>
-            <HeroTitle
-              line1="Pay for what you manage."
-              line2="Not a cut of your spend."
-              className="text-[clamp(44px,8.6vw,108px)]"
-            />
+            <HeroTitle line1="Pay for what you manage." line2="Not a cut of your spend." />
           </div>
-          <div data-reveal="up" className="flex max-w-[400px] flex-[1_1_300px] flex-col gap-4">
-            <p className="m-0 text-mk-ink2">
+          <div data-reveal="up" className="flex max-w-[640px] flex-col gap-5">
+            <p className="m-0 text-[clamp(16px,1.6vw,19px)] leading-relaxed text-mk-ink2">
               Flat monthly plans. Ad spend is billed by each platform, as it is today. Every plan starts with a 14-day free
               trial with every feature, no card needed.
             </p>

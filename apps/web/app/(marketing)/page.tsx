@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { HomeHero } from "@/components/marketing/home/HomeHero";
+import { HeroStage } from "@/components/marketing/home/HeroStage";
 import { LiveTour } from "@/components/marketing/home/LiveTour";
 import { ProblemSection } from "@/components/marketing/home/ProblemSection";
 import { NightShift } from "@/components/marketing/home/NightShift";
@@ -14,7 +15,7 @@ import { PillButton } from "@/components/marketing/ui/PillButton";
 import { DEMO_HREF, SIGN_UP_HREF } from "@/lib/marketing/nav";
 
 export const metadata: Metadata = {
-  title: { absolute: "Advertix — AI-Powered Ads. Amplified." },
+  title: { absolute: "Advertix — The AI workspace for ads on every platform" },
   description:
     "One budget, every platform, one AI that sees all of them. Plan, launch and optimize campaigns across Meta, Google, TikTok and LinkedIn from one workspace, with Snapchat coming soon.",
 };
@@ -22,6 +23,7 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <>
+      <HeroStage />
       <HomeHero />
       <LiveTour />
       <ProblemSection />

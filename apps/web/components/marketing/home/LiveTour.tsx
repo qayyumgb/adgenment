@@ -105,12 +105,12 @@ export function LiveTour() {
       className="border-t-2 border-mk-rule px-[clamp(12px,3vw,32px)] py-[clamp(56px,8vw,112px)]"
     >
       <div className="mx-auto flex max-w-[1280px] flex-col gap-[clamp(24px,3.6vw,40px)]">
-        <div className="flex flex-wrap items-end justify-between gap-x-14 gap-y-4 px-[clamp(4px,1vw,0px)]">
-          <div className="flex flex-[1_1_520px] flex-col gap-3">
+        <div className="flex max-w-[820px] flex-col gap-4 px-[clamp(4px,1vw,0px)]">
+          <div className="flex flex-col gap-3">
             <Eyebrow>THE WORKSPACE · A GUIDED TOUR</Eyebrow>
-            <AccentHeading lead="Take the tour." accent="Screen by screen." accentTone="ink" />
+            <AccentHeading lead="Take the tour." accent="Screen by screen." />
           </div>
-          <p data-reveal="up" className="m-0 max-w-[420px] flex-[1_1_300px] text-mk-ink2">
+          <p data-reveal="up" className="m-0 max-w-[640px] text-[clamp(16px,1.6vw,18px)] text-mk-ink2">
             The Advertix interface on an example agency, Halden &amp; Pike: six clients and a month of example
             data.
           </p>

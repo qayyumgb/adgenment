@@ -136,8 +136,7 @@ export const MODULES: ProductModule[] = [
     kicker: "ALERTS",
     lead: "Know when",
     accent: "something breaks.",
-    body: "Today, email alerts tell the right people when platform access is about to expire, a sync fails or a client is off pace, plus a weekly summary. Coming soon: broken pixels and CPA spikes, grouped per campaign in one inbox, with the fix one click away.",
-    soon: "Alerts inbox",
+    body: "An alerts inbox groups problems per campaign: expiring access, failed syncs, pacing, CPA spikes and tracking that went silent, each with the fix one click away. Email alerts and a weekly summary go to the right people.",
     dark: true,
     ui: {
       title: "Alerts · open",
@@ -153,7 +152,7 @@ export const MODULES: ProductModule[] = [
     points: [
       { t: "Email alerts today", b: "Access, sync failures, pacing, weekly summary" },
       { t: "Each person chooses", b: "Per event type" },
-      { t: "Inbox and fix from the alert", b: "Coming soon" },
+      { t: "Inbox and fix from the alert", b: "Sync, pause, reconnect or undo" },
     ],
   },
   {
@@ -162,8 +161,7 @@ export const MODULES: ProductModule[] = [
     kicker: "REPORTS & CLIENT PORTAL",
     lead: "Status updates",
     accent: "that write themselves.",
-    body: "Coming soon: a live link per client and a weekly PDF with KPIs, the platform split, top ads and a plain-English summary your team edits before it sends. Today, export any report view to CSV or Excel.",
-    soon: "Client portal & scheduled reports",
+    body: "A live, read-only link per client, and a weekly or monthly email with the headline numbers, the budget and the top campaigns, with an optional PDF. Export any report view to CSV or Excel too.",
     dark: false,
     ui: {
       title: "Weekly report · Lumen Skincare",
@@ -178,7 +176,7 @@ export const MODULES: ProductModule[] = [
     },
     points: [
       { t: "Your logo on every report", b: "Coming soon" },
-      { t: "Choose what clients see", b: "Coming soon" },
+      { t: "Choose what clients see", b: "Spend, revenue, campaigns" },
       { t: "Export today", b: "CSV or Excel from Campaigns, Analytics and Overview" },
     ],
   },

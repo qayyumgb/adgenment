@@ -4,24 +4,24 @@ import { SectionHead } from "@/components/marketing/ui/Heading";
 // Keep it in step with the plan; no dates or progress numbers we can't stand behind.
 const ROAD: { t: string; s: string; c: string; items: { t: string; b: string; why: string }[] }[] = [
   {
-    t: "Next up",
-    s: "IN PROGRESS",
+    t: "Just shipped",
+    s: "LIVE",
     c: "#41d39a",
     items: [
-      { t: "Command palette", b: "Any client, campaign or action in two keystrokes.", why: "speed with twenty accounts" },
-      { t: "Approvals", b: "Big changes wait for sign-off; everything stays in the history with undo.", why: "a second pair of eyes on real budgets" },
-      { t: "Morning briefing email", b: "The day’s top decisions across every client, before your first coffee.", why: "the morning check in one email" },
+      { t: "Approvals and auto-apply", b: "Big changes wait for sign-off; small Meta budget moves inside your limit apply on their own, with undo.", why: "routine changes stop needing you" },
+      { t: "Alerts inbox and safety rules", b: "Tracking and CPA problems grouped per campaign; pause when a pixel stops firing.", why: "a dead pixel overnight is the costliest bug" },
+      { t: "Client reports", b: "A live link per client and scheduled email reports with an optional PDF.", why: "status updates stop eating Fridays" },
+      { t: "Smart hours, experiments, creative editor", b: "Hour-by-hour results, A/B tests with a confidence level, and ads finished inside Advertix.", why: "fewer tools, faster decisions" },
     ],
   },
   {
-    t: "After that",
+    t: "Next up",
     s: "PLANNED",
     c: "#b9abff",
     items: [
-      { t: "Auto-apply with guardrails", b: "Small budget moves inside a limit you set apply on their own, with undo.", why: "the routine changes stop needing you" },
-      { t: "Safety rules", b: "Pause campaigns when a pixel stops firing; slow down before a client overspends.", why: "a dead pixel overnight is the costliest bug" },
-      { t: "Alerts inbox", b: "CPA spikes and tracking problems, grouped per campaign, fixed from the alert.", why: "one problem, one alert" },
-      { t: "Client portal & reports", b: "A live link per client and a weekly PDF with an AI summary you edit.", why: "status updates stop eating Fridays" },
+      { t: "Shopify & GA4 revenue", b: "Your own revenue data instead of pixels.", why: "truer ROAS on long sales cycles" },
+      { t: "Branded client reports", b: "Your logo on the client link and the email reports.", why: "your brand, not ours" },
+      { t: "Slack alerts", b: "The alerts inbox in the channel your team already reads.", why: "problems seen sooner" },
     ],
   },
   {
@@ -30,9 +30,8 @@ const ROAD: { t: string; s: string; c: string; items: { t: string; b: string; wh
     c: "#8e8a9f",
     items: [
       { t: "Snapchat", b: "The fifth platform, in the same workspace.", why: "every channel in one view" },
-      { t: "Smart hours", b: "Budgets follow the hours each client’s buyers buy.", why: "less wasted night spend" },
-      { t: "Experiments", b: "Tests that call a winner with a confidence level.", why: "proof a client can see" },
-      { t: "Shopify & GA4 revenue", b: "Your own revenue data instead of pixels.", why: "truer ROAS on long sales cycles" },
+      { t: "Publishing beyond Meta", b: "Launch and change campaigns on Google, TikTok and LinkedIn from Advertix.", why: "one place to act, not just to watch" },
+      { t: "Autopilot", b: "Advertix runs budgets inside the monthly cap and your guardrails, with a daily summary.", why: "hands-off clients stay on track" },
     ],
   },
 ];
@@ -48,9 +47,9 @@ export function ReleaseBoard() {
         <SectionHead
           onDark
           eyebrow="ROADMAP"
-          lead="What we’re building"
-          accent="next."
-          lede="In the order we’re building it. What our users ask for moves up the list."
+          lead="Shipped, and"
+          accent="what’s next."
+          lede="What went live recently, and what we’re building next, in that order. What our users ask for moves up the list."
         />
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))] gap-[clamp(20px,3vw,32px)]">
           {ROAD.map((col) => (

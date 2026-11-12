@@ -34,7 +34,7 @@ const STEPS = [
     n: "04",
     k: "CONTROL",
     t: "You stay in control",
-    b: "Nothing changes until someone on your team applies it, and every change is logged with who made it and reversible for 7 days. Coming soon: let small moves inside a guardrail apply on their own, per client.",
+    b: "Nothing changes until someone on your team applies it, and every change is logged with who made it and reversible for 7 days. Per client, you can let small Meta budget moves inside a daily limit apply on their own.",
     tags: ["You approve", "Full history", "7-day undo"],
   },
 ];
@@ -204,7 +204,7 @@ export function StepsScroller() {
             {step === 1 && (
               <div ref={paneRef} className="relative flex flex-col gap-3">
                 <div className={`flex flex-col gap-2.5 p-3.5 ${tile}`}>
-                  <span className="text-[12.5px] text-mk-on-dark2">Cost per purchase by hour · illustrative · Smart hours, coming soon</span>
+                  <span className="text-[12.5px] text-mk-on-dark2">Cost per purchase by hour · illustrative · Smart hours</span>
                   <div className="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-0.5" aria-hidden="true">
                     {HEAT.map((c, k) => (
                       <span key={k} className="aspect-square rounded-sm" style={{ background: c }} />

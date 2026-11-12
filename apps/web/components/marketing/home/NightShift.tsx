@@ -22,11 +22,11 @@ const TAG: Record<Tag, string> = {
 // the automatic version that's coming (plan C12–C14).
 const EVENTS: { time: string; tag: Tag; t: string; b: string; soon?: string; p: PlatformKey | "A"; client: string; v: string }[] = [
   { time: "00:12", tag: "Synced", t: "Read every account", b: "23 ad accounts across four platforms and 412 live ads, with the latest results refreshed.", p: "A", client: "All clients", v: "23 / 23" },
-  { time: "02:14", tag: "Found", t: "Spotted a broken pixel", b: "Mara’s Meta pixel stopped firing. Pausing its two sales campaigns is waiting for you.", soon: "Safety rules pause them for you", p: "M", client: "Mara Home", v: "$85 at risk" },
+  { time: "02:14", tag: "Found", t: "Spotted a broken pixel", b: "Mara’s Meta pixel stopped firing. Pausing its two sales campaigns is waiting for you.", soon: "With safety rules on, Advertix pauses them for you", p: "M", client: "Mara Home", v: "$85 at risk" },
   { time: "03:40", tag: "Flagged", t: "Caught creative fatigue", b: "Lumen’s best ad reached frequency 4.8. Fresh variants from the same hook are one click away in the Creative studio.", p: "M", client: "Lumen Skincare", v: "CTR −38%" },
   { time: "04:55", tag: "Proposed", t: "Flagged a pacing problem", b: "Kobo will run out of budget on the 26th. A lower daily budget is waiting for you.", p: "G", client: "Kobo Coffee", v: "5 days" },
-  { time: "06:00", tag: "Proposed", t: "Found $310 a day for TikTok", b: "TikTok’s next dollar earns 2.4× more than Search. Moving it is one click.", soon: "Auto-apply makes moves inside your 15% limit on its own", p: "T", client: "Fieldhouse", v: "+$3.1k / wk" },
-  { time: "07:00", tag: "Ready", t: "Your briefing is ready", b: "Three decisions, each with the numbers behind it, at the top of your Overview.", soon: "A morning briefing email", p: "A", client: "For Sara", v: "3 open" },
+  { time: "06:00", tag: "Proposed", t: "Found $310 a day for TikTok", b: "TikTok’s next dollar earns 2.4× more than Search. Moving it is one click.", soon: "With auto-apply on, moves inside your 15% limit happen on their own", p: "T", client: "Fieldhouse", v: "+$3.1k / wk" },
+  { time: "07:00", tag: "Ready", t: "Your briefing is ready", b: "Three decisions, each with the numbers behind it, at the top of your Overview.", soon: "It's in your inbox too: the morning briefing email", p: "A", client: "For Sara", v: "3 open" },
 ];
 
 /** 00:00 → 07:00 across the scroll. */
@@ -150,7 +150,7 @@ export function NightShift() {
                 <span className="text-[14.5px] text-mk-ink2 [text-wrap:pretty]">{e.b}</span>
                 {e.soon && (
                   <span className="flex items-start gap-2 text-[13px] text-mk-ink2">
-                    <span className="flex-none rounded-full bg-mk-soft px-2 py-px text-[11px] font-semibold text-mk-brand-ink">Coming soon</span>
+                    <span className="flex-none rounded-full bg-mk-soft px-2 py-px text-[11px] font-semibold text-mk-brand-ink">Optional</span>
                     <span className="[text-wrap:pretty]">{e.soon}</span>
                   </span>
                 )}

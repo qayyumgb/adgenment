@@ -26,8 +26,9 @@ const TIMELINE: { d: string; t: string; b: string; kind?: "now" | "next" }[] = [
   { d: "2025", t: "The first planner", b: "A prompt-to-plan prototype for Meta, built with a handful of founders." },
   { d: "Early 2026", t: "Four platforms, one workspace", b: "Google, TikTok and LinkedIn joined Meta: every campaign and result in one workspace." },
   { d: "Mid 2026", t: "Budget allocator and insights", b: "Cross-platform budget suggestions and AI insights went into beta." },
-  { d: "Oct 2026", t: "Built for agencies", b: "Client switcher, roles, email alerts and the redesigned workspace.", kind: "now" },
-  { d: "Next", t: "Approvals, auto-apply and client reports", b: "Then Snapchat and a white-label client portal for agencies.", kind: "next" },
+  { d: "Oct 2026", t: "Built for agencies", b: "Client switcher, roles, approvals, auto-apply with guardrails, an alerts inbox and client reports." },
+  { d: "Nov 2026", t: "Creative editor", b: "Finish ads inside Advertix: brand kits, templates, one-click resize and AI-written text.", kind: "now" },
+  { d: "Next", t: "Shopify and GA4 revenue", b: "Then Snapchat and branded client reports for agencies.", kind: "next" },
 ];
 
 export default function AboutPage() {
@@ -36,11 +37,11 @@ export default function AboutPage() {
       <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(40px,6vw,72px)] pt-[clamp(48px,8vw,112px)]">
         <div className="mx-auto flex max-w-[1280px] flex-col gap-5">
           <Eyebrow>ABOUT ADVERTIX</Eyebrow>
-          <HeroTitle
-            line1="Built so AI does the"
-            line2="boring parts of running ads."
-            className="max-w-[1100px] text-[clamp(44px,8.4vw,108px)] !leading-[.94]"
-          />
+          <HeroTitle line1="Built so AI does the" line2="boring parts of running ads." className="max-w-[1080px] text-[clamp(40px,6.2vw,76px)]" />
+          <p data-reveal="up" className="m-0 max-w-[640px] text-[clamp(16px,1.6vw,19px)] leading-relaxed text-mk-ink2">
+            Advertix is one workspace for running ads on Meta, Google, TikTok and LinkedIn. It reads every account, suggests
+            the next move with the numbers behind it, and leaves the decision to you.
+          </p>
         </div>
       </section>
 

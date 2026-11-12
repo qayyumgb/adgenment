@@ -106,11 +106,11 @@ export function PortalPreview() {
           </div>
         </div>
         <div className="flex flex-[1_1_360px] flex-col gap-3.5">
-          <Eyebrow>WHITE-LABEL CLIENT PORTAL · COMING SOON</Eyebrow>
+          <Eyebrow>CLIENT PORTAL · YOUR LOGO COMING SOON</Eyebrow>
           <AccentHeading lead="Your brand on the report." accent="Not ours." className="!text-[clamp(34px,5vw,64px)]" />
           <p data-reveal="up" className="m-0 max-w-[460px] text-mk-ink2">
-            Each client will get a live link with your logo and a weekly summary your team can edit before it sends. You
-            choose what they see.
+            Each client gets a live, read-only report link and a weekly or monthly email. You choose what they see: spend,
+            revenue, the campaign list. Your own logo on both is coming soon.
           </p>
           <SegmentedControl
             label="Report branding"

@@ -31,8 +31,8 @@ const COMPARE: { t: string; rows: { l: string; c: string[] }[] }[] = [
     rows: [
       { l: "Planner and decision feed", c: [Y, Y, Y, Y] },
       { l: "Budget allocator", c: [Y, Y, Y, Y] },
-      { l: "Smart hours · coming soon", c: [N, Y, Y, Y] },
-      { l: "Experiments · coming soon", c: [N, Y, Y, Y] },
+      { l: "Smart hours", c: [N, Y, Y, Y] },
+      { l: "Experiments", c: [N, Y, Y, Y] },
       { l: "Auto-apply and safety rules", c: [N, N, Y, Y] },
     ],
   },

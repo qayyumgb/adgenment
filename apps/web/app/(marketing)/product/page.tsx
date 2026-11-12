@@ -140,12 +140,10 @@ export default function ProductPage() {
     <>
       <section className="mk-grid-bg border-b-2 border-mk-rule px-[clamp(16px,4vw,32px)] pb-[clamp(36px,5vw,56px)] pt-[clamp(48px,8vw,104px)]">
         <div className="mx-auto flex max-w-[1280px] flex-col gap-[clamp(28px,4vw,48px)]">
-          <div className="flex flex-wrap items-end justify-between gap-x-16 gap-y-6">
-            <div className="flex min-w-0 flex-[1_1_640px] flex-col gap-[18px]">
-              <Eyebrow>THE PRODUCT · SIX MODULES · ONE DATA MODEL</Eyebrow>
-              <HeroTitle line1="Everything ads need." line2="One workspace." />
-            </div>
-            <p data-reveal="up" className="m-0 max-w-[420px] flex-[1_1_320px] text-[clamp(16px,1.6vw,18px)] text-mk-ink2">
+          <div className="flex max-w-[860px] flex-col gap-5">
+            <Eyebrow>THE PRODUCT · SIX MODULES · ONE DATA MODEL</Eyebrow>
+            <HeroTitle line1="Everything ads need." line2="One workspace." />
+            <p data-reveal="up" className="m-0 max-w-[640px] text-[clamp(16px,1.6vw,19px)] leading-relaxed text-mk-ink2">
               Planning, decisions, budgets, creative, alerts and reporting share one data model, so a suggestion at
               08:00, a slider in Budgets and a line in the client report always agree.
             </p>

@@ -12,18 +12,18 @@ import { planByName } from "@/lib/marketing/pricing";
 export const metadata: Metadata = {
   title: "For agencies",
   description:
-    "Twenty clients, one morning. A monthly cap per client, roles for your team and clients, and one set of decisions across every client and platform. White-label reports and per-client AI autonomy are coming soon.",
+    "Twenty clients, one morning. A monthly cap per client, roles for your team and clients, and one set of decisions across every client and platform. Live report links, scheduled client reports and per-client AI autonomy included.",
 };
 
 const H2_SM = "!text-[clamp(34px,5vw,64px)]";
 
 const PILLARS = [
-  { t: "Client switcher everywhere", b: "Every page filters by client. ⌘K search is coming soon." },
+  { t: "Client switcher everywhere", b: "Every page filters by client, and ⌘K jumps to any client, campaign or page." },
   { t: "Monthly caps and pacing", b: "Set each client’s budget once. Advertix warns days before anyone overspends or underspends." },
-  { t: "History and undo", b: "Every change records who made it and can be undone for 7 days. Sign-off for big changes is coming soon." },
+  { t: "History and undo", b: "Every change records who made it and can be undone for 7 days. Big changes can wait for an owner's approval." },
   { t: "Roles that fit agencies", b: "Buyers see their clients, analysts view everything, client viewers see only their own account." },
   { t: "Free client seats", b: "Invite every client stakeholder at no extra cost on the Agency plan." },
-  { t: "Client reports · coming soon", b: "Weekly PDFs per client with KPIs, top ads and a summary your team edits. Today: CSV and Excel exports." },
+  { t: "Client reports", b: "A live link per client and a weekly or monthly email with the numbers, top campaigns and an optional PDF. CSV and Excel exports too." },
 ];
 
 const ONBOARD = [
@@ -43,10 +43,10 @@ export default function AgenciesPage() {
           <div className="flex min-w-0 flex-[1_1_520px] flex-col gap-5">
             {/* TODO(copy): "5 to 50 clients" vs the Agency plan's 10-client limit — confirm (plan § 2, item 8). */}
             <Eyebrow>FOR AGENCIES · 5 TO 50 CLIENTS</Eyebrow>
-            <HeroTitle line1="Twenty clients." line2="One morning." className="text-[clamp(46px,8.6vw,108px)]" />
+            <HeroTitle line1="Twenty clients." line2="One morning." />
             <p data-reveal="up" className="m-0 max-w-[520px] text-[clamp(16px,1.6vw,18px)] text-mk-ink2">
               One set of decisions across every client and platform, a monthly cap per client and roles for your whole
-              team, with per-client AI autonomy and reports that send themselves coming soon. Your team spends its week on
+              team, with per-client AI autonomy and reports that send themselves. Your team spends its week on
               strategy instead of spreadsheets.
             </p>
             <div data-reveal="up" className="flex flex-wrap gap-2.5">
@@ -70,8 +70,8 @@ export default function AgenciesPage() {
             <Eyebrow>AUTONOMY, PER CLIENT</Eyebrow>
             <AccentHeading lead="Your cautious client" accent="and your hands-off one." className={H2_SM} />
             <p data-reveal="up" className="m-0 max-w-[460px] text-mk-ink2">
-              Coming soon: a regulated fintech stays on suggest-only while a DTC brand lets small moves apply on their own
-              inside a 15% daily limit. Today every client is on suggest-only, and every action is logged and reversible.
+              A regulated fintech stays on suggest-only while a DTC brand lets small Meta budget moves apply on their own
+              inside a 15% daily limit. Every action is logged and can be undone for 7 days.
             </p>
           </div>
           <AutonomyCards />

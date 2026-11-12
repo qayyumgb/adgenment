@@ -2,12 +2,9 @@
 
 import { useCallback, useRef, useState } from "react";
 import gsap from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
-import { PillButton } from "@/components/marketing/ui/PillButton";
 import { SegmentedControl } from "@/components/marketing/ui/SegmentedControl";
 import { PlatformMark } from "@/components/marketing/ui/PlatformMark";
-import { SIGN_UP_HREF } from "@/lib/marketing/nav";
 import {
   EVEN,
   MONTHLY_BUDGET,
@@ -19,7 +16,7 @@ import {
   type Scenario,
 } from "./allocation";
 
-gsap.registerPlugin(ScrollTrigger, useGSAP);
+gsap.registerPlugin(useGSAP);
 
 type Mode = "even" | "adv";
 
@@ -48,8 +45,6 @@ export function HomeHero() {
   const [mode, setMode] = useState<Mode>("adv");
 
   const secRef = useRef<HTMLElement>(null);
-  const shadeRef = useRef<HTMLDivElement>(null);
-  const introRef = useRef<HTMLDivElement>(null);
   const capRef = useRef<HTMLParagraphElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const engRef = useRef<HTMLDivElement>(null);
@@ -95,81 +90,19 @@ export function HomeHero() {
       paint();
       if (!reducedMotion()) startMode("adv");
 
-      const mm = gsap.matchMedia();
-      // Desktop: pin the hero and grow the engine to fill the viewport.
-      mm.add("(min-width: 760px) and (prefers-reduced-motion: no-preference)", () => {
-        const sec = secRef.current;
-        const wrap = wrapRef.current;
-        const eng = engRef.current;
-        if (!sec || !wrap || !eng) return;
-
-        const geo = () => {
-          const top = wrap.offsetTop;
-          const height = wrap.offsetHeight;
-          const width = wrap.offsetWidth;
-          const hdr = 64;
-          const avail = window.innerHeight - hdr;
-          const s = Math.max(1, Math.min(window.innerWidth / width, Math.max(1, (avail * 0.96) / height), 1.35));
-          const h = height * s;
-          const y = h <= avail ? hdr + avail / 2 - (top + height / 2) : hdr - top + (h - height) / 2;
-          return { y, s };
-        };
-        let G = geo();
-
-        // The next section slides up under the scaled engine so the pin
-        // doesn't leave a gap (mockup's closeGap).
-        const nextSection = () => {
-          const host = sec.parentElement?.classList.contains("pin-spacer") ? sec.parentElement : sec;
-          return host?.nextElementSibling as HTMLElement | null;
-        };
-        const closeGap = () => {
-          const nx = nextSection();
-          if (!nx) return;
-          const h0 = wrap.offsetHeight;
-          const bottomAfter = wrap.offsetTop + G.y + h0 / 2 + (h0 * G.s) / 2;
-          const gap = Math.max(0, Math.round(sec.offsetHeight - bottomAfter - 48));
-          Object.assign(nx.style, {
-            position: "relative",
-            zIndex: "3",
-            // The page colour of the current theme (a token, not a fixed value).
-            background: "rgb(var(--mk-paper))",
-            marginTop: `${-gap}px`,
-          });
-        };
-        closeGap();
-
-        gsap
-          .timeline({
-            defaults: { ease: "none" },
-            scrollTrigger: {
-              trigger: sec,
-              start: "top top",
-              end: () => `+=${Math.round(window.innerHeight * 1.15)}`,
-              pin: true,
-              pinSpacing: true,
-              scrub: 1.1,
-              anticipatePin: 1,
-              invalidateOnRefresh: true,
-              onRefreshInit: () => {
-                G = geo();
-                closeGap();
-              },
-            },
-          })
-          .to(introRef.current, { y: () => -Math.min(220, window.innerHeight * 0.25), scale: 0.94, autoAlpha: 0, ease: "power1.in", duration: 0.6 }, 0)
-          .to(capRef.current, { autoAlpha: 0, duration: 0.2 }, 0)
-          .to(wrap, { y: () => G.y, scale: () => G.s, ease: "power2.inOut", duration: 1, force3D: true }, 0)
-          .to(eng, { borderRadius: 0, boxShadow: "0 0 0 0 rgba(0,0,0,0)", ease: "power2.inOut", duration: 1 }, 0)
-          .to(shadeRef.current, { opacity: 1, ease: "power1.inOut", duration: 0.7 }, 0.3)
-          .to({}, { duration: 0.25 });
-
-        return () => {
-          const nx = nextSection();
-          if (nx) Object.assign(nx.style, { position: "", zIndex: "", background: "", marginTop: "" });
-        };
-      });
+      // No scroll takeover (2026-11): the panel scrolls with the page. Its loop pauses while it's off screen.
+      const eng = engRef.current;
+      let io: IntersectionObserver | null = null;
+      if (eng && typeof IntersectionObserver !== "undefined") {
+        io = new IntersectionObserver(([e]) => {
+          if (e.isIntersecting) loop.current?.resume();
+          else loop.current?.pause();
+        });
+        io.observe(eng);
+      }
 
       return () => {
+        io?.disconnect();
         loop.current?.kill();
         loop.current = null;
       };
@@ -224,54 +157,11 @@ export function HomeHero() {
   return (
     <section
       ref={secRef}
-      className="mk-grid-bg relative bg-mk-paper px-[clamp(12px,3vw,32px)] pb-[clamp(48px,7vw,88px)] pt-[clamp(36px,6vw,72px)]"
+      id="engine"
+      className="relative scroll-mt-20 bg-mk-paper px-[clamp(12px,3vw,32px)] pb-[clamp(48px,7vw,88px)] pt-[clamp(28px,4vw,48px)]"
     >
-      {/* Darkens the section as the engine takes over. An overlay's opacity, not
-          the section's background colour: a colour tween records its start value,
-          which would lock in the wrong theme if recorded mid-switch. */}
-      <div ref={shadeRef} aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[#15131a] opacity-0" />
       <div className="relative mx-auto max-w-[1280px]">
-        <div
-          ref={introRef}
-          className="flex origin-top flex-wrap items-end justify-between gap-x-16 gap-y-6 px-[clamp(4px,1vw,0px)] pb-[clamp(28px,4vw,44px)] will-change-transform"
-        >
-          <div className="flex min-w-0 flex-[1_1_560px] flex-col gap-[18px]">
-            <span data-reveal="up" className="font-mk-mono text-xs tracking-[.06em] text-mk-brand-ink">
-              ONE BUDGET · EVERY PLATFORM · ONE AI THAT SEES ALL OF THEM
-            </span>
-            <h1 className="m-0 text-[clamp(46px,10vw,124px)] font-medium leading-[.9] tracking-[-0.055em]">
-              <span className="-mb-[.14em] block overflow-hidden pb-[.18em]">
-                <span data-reveal="line" className="inline-block">
-                  AI-Powered Ads.
-                </span>
-              </span>
-              <span className="-mb-[.1em] block overflow-hidden pb-[.22em]">
-                <span
-                  data-reveal="line"
-                  className="mk-grad-text inline-block pr-[.08em] font-mk-serif font-normal italic tracking-[-0.03em]"
-                >
-                  Amplified.
-                </span>
-              </span>
-            </h1>
-          </div>
-          <div className="flex max-w-[440px] flex-[1_1_340px] flex-col gap-5">
-            <p data-reveal="up" className="m-0 text-[clamp(16px,1.6vw,18px)] text-mk-ink2 [text-wrap:pretty]">
-              Plan, generate, launch and optimize ad campaigns across Meta, Google, TikTok and LinkedIn
-              (Snapchat coming soon) — from one intelligent workspace where AI does the heavy lifting.
-            </p>
-            <div data-reveal="up" className="flex flex-wrap gap-2.5">
-              <PillButton href={SIGN_UP_HREF} variant="brand" className="h-[54px] flex-[1_1_150px]">
-                Start free
-              </PillButton>
-              <PillButton href="#night" variant="outline" className="h-[54px] flex-[1_1_150px]">
-                See how it works
-              </PillButton>
-            </div>
-          </div>
-        </div>
-
-        <div ref={wrapRef} className="relative z-[2] origin-center will-change-transform">
+        <div ref={wrapRef} className="relative z-[2]">
           <div
             ref={engRef}
             data-reveal="up"

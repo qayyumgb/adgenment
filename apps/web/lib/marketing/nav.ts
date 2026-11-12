@@ -61,4 +61,4 @@ export const SUPPORT_EMAIL = "support@advertix.io";
 // TODO(copy): confirm the legal entity name before launch — the current
 // Privacy/Terms pages name an individual operator, not "Advertix, Inc."
 // (docs/MARKETING_REDESIGN_PLAN.md § 2, item 6).
-export const COPYRIGHT = "© 2026 ADVERTIX, INC.";
+export const COPYRIGHT = "© 2026 Advertix"; // no "Inc.": the Privacy Policy names the operator; add a legal entity here once one exists

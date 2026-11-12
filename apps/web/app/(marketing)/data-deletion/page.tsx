@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Trash2, Mail, Clock, ShieldCheck, AlertCircle } from "lucide-react";
+import { LegalHeader } from "@/components/marketing/legal/Legal";
 
 export const metadata = {
   title: "Data Deletion Instructions",
@@ -11,7 +12,7 @@ const CONTACT_EMAIL = "support@advertix.io";
 
 export default function DataDeletionPage() {
   return (
-    <main className="bg-mk-paper2 text-mk-ink">
+    <main className="text-mk-ink">
       <Hero />
       <article className="mx-auto max-w-3xl px-6 py-12 lg:px-8">
         <Intro />
@@ -27,30 +28,8 @@ export default function DataDeletionPage() {
 }
 
 function Hero() {
-  return (
-    <section className="relative overflow-hidden bg-gradient-to-br from-[#0B1319] via-indigo-950 to-[#0B1319] pb-16 pt-32 sm:pt-36">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-32 top-0 h-72 w-72 rounded-full bg-mk-brand/25 blur-3xl"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-32 bottom-0 h-72 w-72 rounded-full bg-violet-600/25 blur-3xl"
-      />
-      <div className="relative mx-auto max-w-3xl px-6 text-center lg:px-8">
-        <div className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-xs font-semibold text-white/85 backdrop-blur">
-          <Trash2 className="h-3 w-3" strokeWidth={2.5} />
-          Data deletion
-        </div>
-        <h1 className="mt-4 text-4xl font-bold tracking-tight text-white sm:text-5xl">
-          Delete your data
-        </h1>
-        <p className="mt-3 text-sm font-medium text-mk-ink3">
-          How to remove your Advertix account and all associated data
-        </p>
-      </div>
-    </section>
-  );
+  // Same header as Privacy and Terms (2026-11 refresh), with the legal tabs.
+  return <LegalHeader eyebrow="LEGAL · YOUR DATA" title="Delete" accent="your data." current="/data-deletion" />;
 }
 
 function Intro() {

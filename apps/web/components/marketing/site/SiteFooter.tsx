@@ -20,7 +20,7 @@ export function SiteFooter() {
           >
             {FOOTER_COLUMNS.map((col) => (
               <div key={col.title} className="flex flex-col gap-2.5">
-                <span className="font-mk-mono text-xs tracking-[.06em] text-mk-ink3">
+                <span className="text-[12.5px] font-semibold uppercase tracking-[.09em] text-mk-ink3">
                   {col.title}
                 </span>
                 {col.links.map((l) => (
@@ -36,9 +36,9 @@ export function SiteFooter() {
             ))}
           </nav>
         </div>
-        <div className="flex flex-wrap justify-between gap-2.5 font-mk-mono text-xs text-mk-ink3">
+        <div className="flex flex-wrap justify-between gap-2.5 text-[13px] text-mk-ink3">
           <span>{COPYRIGHT}</span>
-          <a href={`mailto:${SUPPORT_EMAIL}`} className="uppercase transition-colors hover:text-mk-ink">
+          <a href={`mailto:${SUPPORT_EMAIL}`} className="transition-colors hover:text-mk-ink">
             {SUPPORT_EMAIL}
           </a>
         </div>

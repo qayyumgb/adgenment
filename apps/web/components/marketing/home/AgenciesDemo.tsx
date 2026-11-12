@@ -29,7 +29,7 @@ const CLIENTS: {
 
 const LEVELS: { value: Level; label: string; desc: string }[] = [
   { value: "suggest", label: "Suggest only", desc: "Every change waits for a person. Good for regulated or cautious clients." },
-  { value: "small", label: "Small changes", desc: "Coming soon. Budget moves under 15% a day apply on their own; bigger ones wait." },
+  { value: "small", label: "Small changes", desc: "Budget moves under 15% a day apply on their own; bigger ones wait." },
   { value: "auto", label: "Autopilot", desc: "Coming soon. Advertix manages budgets inside the guardrail and sends a daily summary." },
 ];
 

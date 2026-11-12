@@ -12,7 +12,7 @@ const TRUST = [
 const FAQS = [
   {
     q: "Will Advertix change my campaigns without asking?",
-    a: "No. Advertix suggests and you approve: nothing changes until someone clicks, and anything can be undone for 7 days. Coming soon, you’ll be able to let small budget moves apply on their own, per client, inside a daily limit you set.",
+    a: "No. Advertix suggests and you approve: nothing changes until someone clicks, and anything can be undone for 7 days. If you want, per client, small Meta budget moves inside a daily limit you set can apply on their own, each one logged with undo.",
   },
   {
     q: "What exactly does the AI do?",
@@ -28,7 +28,7 @@ const FAQS = [
   },
   {
     q: "Is it for agencies or single brands?",
-    a: "Both. Agencies get a client switcher, a monthly cap per client and roles for their team and clients, with white-label reports coming soon. A founder gets the same AI with a simpler setup.",
+    a: "Both. Agencies get a client switcher, a monthly cap per client and roles for their team and clients, plus a live report link and scheduled email reports per client. A founder gets the same AI with a simpler setup.",
   },
 ];
 
