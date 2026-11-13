@@ -1728,15 +1728,20 @@ function extractVideoFields(c: Creative): {
   // thumbnail (image) and feeding it into `<video src>` produces a broken
   // player. The wizard's MetaAdPreview falls through to thumbnail-as-img
   // when videoUrl is null but thumbnailUrl is set.
+  // Two saved shapes: a device upload has `videoId` and `url` = its poster;
+  // a pasted link has only `url`, and that url IS the video file. Without
+  // this the pasted video counted as "no asset" and couldn't be published.
+  const videoId = typeof obj.videoId === "string" ? obj.videoId : null;
+  const url = typeof obj.url === "string" ? obj.url : null;
   const thumb =
     typeof obj.thumbnailUrl === "string"
       ? obj.thumbnailUrl
-      : typeof obj.url === "string"
-        ? obj.url
+      : videoId
+        ? url
         : null;
   return {
-    videoId: typeof obj.videoId === "string" ? obj.videoId : null,
-    videoUrl: typeof obj.videoUrl === "string" ? obj.videoUrl : null,
+    videoId,
+    videoUrl: typeof obj.videoUrl === "string" ? obj.videoUrl : !videoId ? url : null,
     thumbnailUrl: thumb,
     videoWidth: typeof obj.videoWidth === "number" ? obj.videoWidth : null,
     videoHeight: typeof obj.videoHeight === "number" ? obj.videoHeight : null,

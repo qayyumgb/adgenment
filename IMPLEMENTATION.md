@@ -485,6 +485,17 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-13 — Video ads: publish path hardened
+
+Audit of upload video → save to Creatives → publish a campaign (Meta). The main path (device upload → `/meta/upload-video` → wait for Meta's transcode → wizard sends `videoId` → `video_data` creative) was sound; four gaps fixed:
+
+- **Poster image always fresh** (`routes/campaigns.ts`, `meta.service.ts` `getVideoPoster`): at publish the poster is fetched from Meta right then (the preferred full-size thumbnail, else `picture`) instead of reusing the link saved with the creative. Meta's image links expire after a few days and Meta rejects a video ad whose poster it can't download, so a video uploaded last week could fail to publish.
+- **Library videos by id** (`routes/campaigns.ts`): when a publish names only the library creative, a device-uploaded video now uses its stored Meta `videoId`. Before, the server sent the creative's `url`, which is the poster image, to `/advideos` as if it were the video.
+- **Pasted video links publishable** (`new-campaign/metaSteps.tsx` `extractVideoFields`): a video saved from a pasted link (only `url`) is read as the video, not as a poster, so the wizard no longer treats it as "no asset" and the preview plays it.
+- **Link never dropped** (`createAdCreative`): a video ad carries its website link only in `call_to_action`, so it defaults to Learn more if none is sent (the wizard always sends one; this guards other callers).
+- **Slow uploads** (`index.ts`): `server.requestTimeout` 15 minutes (Node's default 5 minutes could cut off a large video on a slow connection).
+- **Not changed:** a Meta video belongs to the ad account it was uploaded to; publishing a library video to a different client's ad account will be refused by Meta (upload it again there).
+
 ### 2026-11-12 — Marketing site: hero redesign, one typeface, claims brought up to date
 
 - **Home hero** rebuilt: centred, "The AI workspace for / ads on every platform.", a specific description (approve, 7-day undo), Start free trial / Book a demo, "14-day free trial · No card needed", a **Works with** Meta · Google · TikTok · LinkedIn row and a "New: Creative editor" badge. The live allocation panel stays as the product visual (scroll animation unchanged). Page titles and descriptions no longer say "AI-Powered Ads. Amplified."

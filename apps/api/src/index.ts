@@ -186,6 +186,10 @@ async function startServer() {
         `[advertix-api] CORS allowed origins: ${allowedOrigins.join(", ")}`
       );
     });
+    // Video uploads (≤ 200 MB, /meta/upload-video) on a slow connection can
+    // take longer than Node's default 5-minute limit to arrive, which cut
+    // the upload off mid-way. Allow 15 minutes for a request body.
+    server.requestTimeout = 15 * 60 * 1000;
 
     // Background work (sync, alerts, emails, safety rules, smart hours,
     // reports, approval timeouts) on the job queue (C10); falls back to

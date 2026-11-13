@@ -208,6 +208,7 @@ Ordered by value and dependencies (Feature Proposals + review):
 | C17 | **Meta Ads MCP server** — **priority: low, after launch.** Not a replacement for the Graph API integration (deterministic syncs and writes stay direct). Candidates: "Ask Advertix" chat (read-only breakdowns we don't sync), pixel / CAPI signal diagnostics for C14 and C2, and A/B tests + lift studies for C9. Verify Meta's docs before planning | C16, /ai/chat | M |
 | C18 | **Shopify / GA4 revenue truth** — **last in this series** (decided 2026-10-28). Order: 1) Shopify via a store access key (custom app, no review): real revenue, refunds, blended ROAS per client across Overview, Analytics, Budgets, portal and reports; submit Google verification and Shopify protected-customer-data access while building. 2) GA4 on the existing Google sign-in (+ analytics.readonly): any website, per-campaign attribution via UTMs, "platform claims vs GA4". 3) Shopify public app (one-click connect) once Shopify approves. APIs are free; cost is review time and ~3–4 weeks of build | Google / Shopify reviews | L |
 | C19 (a ✅) | **Creative editor** — decided 2026-11-03: a Canva-style editor to *finish* ads (AI images are generated without text), **built on Fabric.js** (not a licensed SDK). **C19a ✅ (2026-11-04)** editor + save to Creatives, files in **Cloudflare R2** · **C19b** brand kit (**✅ built 2026-11-10**: per client + shared; logos, colours, fonts in the editor's Brand section), templates (**✅ built 2026-11-11**: 17, brand-aware, all three sizes), one-click resize (**✅ built 2026-11-12**) · **C19c** background removal, AI fill. Desktop editing only. Doesn't touch Meta, so it runs while the App Review is pending; **starts after the C5–C15 live testing** | Creatives library, AI credits (C19c) | L |
+| C20 | **Video ads** — planned 2026-11-13 (details in the C20 section below). Make and finish video ads inside Advertix, in stages, cheapest and most-reused first: **C20a** motion ads (animate an editor design, render MP4 on our own worker) · **C20b** edit uploaded footage (trim, sizes, brand end card, auto captions) · **C20c** AI script + voiceover · **C20d** AI-generated clips (later, provider-dependent). Publishing reuses the existing Meta video flow; other platforms download the MP4 until "Publishing beyond Meta". Order vs C18 to decide | C19, C10 job queue, R2 | XL (a: L, b: L, c: M, d: M) |
 
 ---
 
@@ -282,6 +283,8 @@ Not blocking the start, but needed before the named phase:
 ---
 
 ## 10a. Testing backlog
+
+- [ ] **Video ad publish (2026-11-13 fixes)**, on production: upload a vertical MP4 in Creatives (wait for "processing" to finish) → new campaign → pick it from the library → publish → in Ads Manager the ad shows the video, poster, headline, text and the button with your link. Also: a video uploaded a week or more ago (old poster link), and a video saved from a pasted direct MP4 link.
 
 Features built and covered by automated tests, but not yet tested end to end by hand. Tick one off once it has been tested locally and on production.
 
@@ -1295,3 +1298,42 @@ C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the 
   - **Creatives:** "Design an ad" (size picker, client when "All clients" is in view) and, in the drawer, "Edit design" (editor creatives) or "Open in editor" (any image: the closest size, the image as a locked background);
   - **editor:** left panel (heading / subheading / body, upload image, from Creatives, rectangle / button / circle / line, background colour swatches and picker, background image), top bar (name, size, undo / redo, Stories / Reels safe zone for 9:16, zoom %, save status, Download PNG, Save draft, Save to Creatives, Delete), selection toolbar (colours everywhere use the editor's own picker with a separate opacity slider; text: 17 curated Google Fonts loaded before drawing, size, colour, bold, italic, underline, strikethrough, case, alignment, bullets, letter and line spacing; shapes (15: rectangle, button, circle, oval, triangle, diamond, pentagon, hexagon, star, heart, arch, arrow, slanted banner, line, diagonal line): fill, outline, width, corner radius; images: flip, set as background; **frames** (13 shapes; drag an image or drop a file onto a frame, the photo covers it without stretching and re-fills on resize, double-click to reposition, zoom, replace / remove, change shape); all: opacity, align to the ad, front / back, lock, duplicate, delete), layers panel (select, reorder, lock, hide), snapping to the ad's edges and centre with guides, keyboard shortcuts, auto-save 2.5 s after a change, a warning before leaving with unsaved changes, desktop only ("Open on a computer to edit" below 900 px). Guides and the safe zone are drawn over the canvas, never into the export.
 - **Checks:** API test with 8 groups (compression; designs and file references; signed links incl. forged / expired; preview replacement deletes the old file; Save to Creatives with and without Meta, PNG to Meta, re-save updates and deletes the old export; deleting the Creative or the design deletes every file; library images it copied stay; deleting a workspace deletes its folder). Typecheck and lint clean. **Not yet seen in the browser.**
+
+### C20 — Video ads (planned, 2026-11-13)
+
+- **Why:** most agencies run video, above all on Reels, Stories and TikTok. With C19 an agency finishes image ads inside Advertix but still leaves for CapCut or Canva for every video. Video is the bigger loop to close.
+- **Principle:** not "type a prompt, get a video" first. Fully AI-generated video is expensive per clip and uneven for branded ads (logo, product and text must be exact). Build from what agencies already have (designs, brand kit, product footage), and add AI where it's cheap and reliable (script, captions, voice) before AI footage.
+- **What exists today (checked 2026-11-13):**
+  - **Meta video publishing works:** `POST /meta/upload-video` (multipart, ≤ 200 MB) or `metaService.uploadVideoFromUrl` → poll `getVideoStatus` until Meta's transcode is ready → creative with `object_story_spec.video_data` (`routes/campaigns.ts`, `meta.service.ts`). Sync already reads video creatives (`sync.service.ts`) and the Ads tab plays them.
+  - **Video files aren't stored by us:** uploaded videos go straight to Meta (`videoId`); R2 assets (`Asset`, `assets.service.ts`) are images only (sharp → WebP).
+  - **The editor** (Fabric.js 7) has sizes 1:1, 1.91:1, 9:16, templates as data per aspect with `slot` tags, brand kits and resize. These are the base for motion.
+  - **pg-boss** (C10) is in place for background work; no ffmpeg or video library in the stack yet.
+  - **Publishing elsewhere:** Google, TikTok, LinkedIn are read-only in Advertix, so their videos are download-only until "Publishing beyond Meta" (roadmap: Later).
+
+- **C20a — Motion ads (L), first:**
+  - **Timeline in the editor:** a design gets a duration (6 / 10 / 15 s) and each layer gets an entrance / exit preset with start time and length: fade, slide, pop, wipe, typewriter for text, slow zoom (Ken Burns) for photos. One timeline bar under the canvas with play / scrub; layer bars to drag timing. Presets only, no keyframe curves.
+  - **Animated templates:** motion presets added to the existing template data (per slot: headline enters first, product second, button last), so the 17 templates (or the best 8–10) become motion templates in all sizes, brand-aware as today.
+  - **Sizes:** add **4:5 (1080×1350)**, the recommended feed size for video and images (and to the image editor too). Check Meta's current video specs (length, ratios, safe zones) when building.
+  - **Preview in the browser** with the same animation code (Fabric renders each frame on a clock), so what you see is what renders.
+  - **Render on the server:** a `video-render` pg-boss queue. The worker loads the design JSON in **Fabric for Node** (`fabric/node`, node-canvas), draws each frame at 30 fps and pipes frames to **ffmpeg** → H.264 MP4 (AAC if audio), plus a poster frame. One code path for templates, editor and render. Run it as a **separate Railway service from the same image** (worker mode, no HTTP) so renders never slow the API.
+  - **Storage:** `Asset` gains video support (kind `video`, mime, duration, poster asset); MP4 in R2 at `ws/<workspaceId>/<assetId>.mp4`, signed links as today. Exports kept, drafts cleaned with their design.
+  - **Save to Creatives as VIDEO** → wizard and A/B tests (C9) use it. **Publish to Meta** by passing the signed MP4 link to `uploadVideoFromUrl` (existing flow, poster as thumbnail). **Download MP4** for every other platform.
+  - **Music:** user-uploaded audio only at first (with a "you need rights to this music" note). A licensed music library is a separate decision (cost and licence terms).
+  - **Check video** (extends "Check design"): text inside safe zones, message in the first 3 seconds, readable without sound, length for the placement.
+  - **Spike first (1–2 days):** confirm `fabric/node` + node-canvas build on the API image (Alpine/musl; may need Debian slim for the worker), render speed for 15 s at 1080×1920, memory on Railway, and fonts in Node (same Google Fonts files).
+
+- **C20b — Edit uploaded footage (L):**
+  - **Video as a layer:** upload clips (stored in R2), trim, crop to each size with a focus point, mute / volume; a sequence of clips with simple cuts and crossfades.
+  - **Brand on top:** logo, lower-third text, end card from the brand kit; one-click resize to all sizes (reuses C19b resize).
+  - **Auto captions:** speech-to-text (a provider such as Deepgram, AssemblyAI or Whisper API; Claude doesn't read audio) → editable captions styled with brand fonts, burned in on render. Charge in AI credits by minute.
+  - **From the library:** pull existing videos from Creatives (synced Meta videos only if Meta allows download; otherwise upload the original).
+
+- **C20c — AI script and voiceover (M):**
+  - Claude writes a **storyboard** from a campaign, brief or product page: hook, 3–5 scenes, captions, CTA, using the client's best-performing ads (existing data), and fills a motion template scene by scene (like "Write the text with AI", 1–2 credits).
+  - Optional **AI voiceover** (a TTS provider such as ElevenLabs), timed to scenes. Credits per render.
+
+- **C20d — AI-generated clips (M, later):**
+  - A third-party video model for short B-roll and **image-to-video from a product photo** (a few seconds per clip), dropped into the timeline. Priced in credits at cost plus margin. Pick the provider after a quality and price test; prices move fast, check them then.
+
+- **Costs to decide:** a render worker on Railway (CPU and memory billed by use); R2 storage for video (cheap, no egress fees); speech-to-text, TTS and video-model fees per use (pass through as credits). Proposal: renders included in plans by **render minutes per month** (Team / Agency limits like AI credits), AI parts charged in credits.
+- **Open questions:** order vs **C18** (Shopify / GA4): build C20a first if agencies ask for creative tools, C18 first if they ask for truer numbers · music library or upload-only · which providers for captions, voice and clips (C20b–d) · whether phones get a simple "trim and caption" flow (editing stays desktop for now).

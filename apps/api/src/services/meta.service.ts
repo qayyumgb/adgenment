@@ -1650,6 +1650,24 @@ class MetaAdsService {
   }
 
   /**
+   * A fresh, full-size poster for a video ad (`video_data.image_url`): the
+   * thumbnail Meta marks as preferred, else the largest. Best-effort: null on
+   * any error, and callers fall back to the video's `picture` (small).
+   */
+  async getVideoPoster(accessToken: string, videoId: string): Promise<string | null> {
+    try {
+      const url = `${GRAPH_BASE}/${encodeURIComponent(videoId)}/thumbnails?fields=uri,is_preferred,width&access_token=${encodeURIComponent(accessToken)}`;
+      const data = await this.graphFetch<{ data?: { uri?: string; is_preferred?: boolean; width?: number }[] }>(url);
+      const list = (data.data ?? []).filter((t) => typeof t.uri === "string" && t.uri);
+      if (!list.length) return null;
+      const best = list.find((t) => t.is_preferred) ?? [...list].sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0];
+      return best.uri ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Create a Lookalike Custom Audience from an existing seed audience.
    * Meta runs this asynchronously — `delivery_status` will show "pending"
    * for several minutes/hours after creation.
@@ -1881,7 +1899,9 @@ class MetaAdsService {
         title: params.headline ?? undefined,
       };
       if (params.thumbnailUrl) videoData.image_url = params.thumbnailUrl;
-      if (callToAction) videoData.call_to_action = callToAction;
+      // A video ad carries its website link only inside call_to_action
+      // (video_data has no `link`), so never drop it: default to Learn more.
+      videoData.call_to_action = callToAction ?? { type: "LEARN_MORE", value: { link: params.linkUrl } };
       storySpec = { page_id: params.pageId, video_data: videoData };
     } else {
       const linkData: Record<string, unknown> = {

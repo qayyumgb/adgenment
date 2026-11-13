@@ -1071,8 +1071,17 @@ router.post(
             typeof content.imageHash === "string" && content.imageHash.trim()
               ? content.imageHash
               : null;
+          // Same for video: a device-uploaded video is stored as Meta's
+          // video_id, and its `url` is only the poster image. Publishing must
+          // use the id; sending the poster to /advideos as a "video" fails.
+          const storedVideoId =
+            typeof content.videoId === "string" && /^\d+$/.test(content.videoId)
+              ? content.videoId
+              : null;
           if (libCreative.type !== "VIDEO" && storedHash) {
             imageHash = storedHash;
+          } else if (libCreative.type === "VIDEO" && storedVideoId) {
+            videoId = storedVideoId;
           } else if (!url) {
             return res
               .status(400)
@@ -1112,9 +1121,12 @@ router.post(
         while (true) {
           const probe = await metaService.getVideoStatus(token, videoId);
           if (probe.status === "ready") {
-            if (!thumbnailUrl && probe.thumbnailUrl) {
-              thumbnailUrl = probe.thumbnailUrl;
-            }
+            // Use a poster fetched now, not the one saved with the creative:
+            // Meta's image links are signed and expire after a few days, and
+            // Meta rejects a video ad whose poster it can't download. Prefer
+            // the full-size preferred thumbnail; `picture` is small.
+            const poster = await metaService.getVideoPoster(token, videoId);
+            thumbnailUrl = poster ?? probe.thumbnailUrl ?? thumbnailUrl;
             break;
           }
           if (probe.status === "error") {
