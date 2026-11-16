@@ -25,7 +25,7 @@ type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 const validSize = (w: unknown, h: unknown) => SIZES.find((s) => s.width === Number(w) && s.height === Number(h));
 
-async function load(access: Access, id: string) {
+export async function load(access: Access, id: string) {
   const d = await prisma.design.findFirst({ where: { id, workspaceId: access.workspaceId } });
   if (!d) throw assetError(404, "Design not found");
   assertClientAccess(access, d.clientId, { allowShared: true });
@@ -219,7 +219,7 @@ export async function exportDesign(access: Access, userId: string, base: string,
 
   const content: Json = { assetId: a.id, designId: d.id, width: d.width, height: d.height, ...(meta ?? {}) };
   const creative = d.creativeId
-    ? await prisma.creative.update({ where: { id: d.creativeId }, data: { name: d.name, content: content as Prisma.InputJsonValue, clientId: d.clientId } }).catch(() => null)
+    ? await prisma.creative.update({ where: { id: d.creativeId }, data: { name: d.name, type: "IMAGE", content: content as Prisma.InputJsonValue, clientId: d.clientId } }).catch(() => null)
     : null;
   const saved = creative ?? (await prisma.creative.create({ data: { workspaceId: access.workspaceId, clientId: d.clientId, name: d.name, type: "IMAGE", status: "DRAFT", content: content as Prisma.InputJsonValue } }));
 
@@ -302,6 +302,11 @@ export function withAssetUrls<T extends { content: Prisma.JsonValue }>(base: str
       const url = assetUrl(base, c.assetId);
       (c as Json).imageUrl = url;
       (c as Json).url = url;
+      // A video made in the editor (C20a): `assetId` is its poster, and the MP4 gets its own link.
+      if (typeof c.videoAssetId === "string") {
+        (c as Json).thumbnailUrl = url;
+        (c as Json).videoUrl = assetUrl(base, c.videoAssetId);
+      }
     }
   }
   return creatives;

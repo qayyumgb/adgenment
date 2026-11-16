@@ -183,6 +183,7 @@ model Workspace {
   clients               Client[]
   assets                Asset[]
   designs               Design[]
+  videoRenders          VideoRender[]
   brandKits             BrandKit[]
   suggestions           Suggestion[]
   plans                 Plan[]
@@ -1192,7 +1193,7 @@ model Asset {
   width       Int
   height      Int
   bytes       Int
-  /// upload | preview | export
+  /// upload | preview | export | brand | video (an MP4, C20) | poster (a video's still)
   kind        String   @default("upload")
   createdById String?
   createdAt   DateTime @default(now())
@@ -1227,10 +1228,44 @@ model Design {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   assets    Asset[]
+  renders   VideoRender[]
 
   @@index([workspaceId, updatedAt])
+}
+
+/// C20a video ads: one render of a design with motion to an MP4. The design is copied into
+/// `data` when the render is asked for, so the video is exactly what was on screen even if
+/// editing goes on; `data` is cleared when the render ends. Files are Assets of the design
+/// (kind "video" and "poster"), so they're deleted with it.
+model VideoRender {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  designId      String
+  /// queued | rendering | done | failed
+  status        String    @default("queued")
+  /// 0–100
+  progress      Int       @default(0)
+  error         String?
+  /// The design's revision that was rendered (the editor shows "out of date" after later saves).
+  revision      Int       @default(0)
+  width         Int
+  height        Int
+  durationMs    Int?
+  data          Json?
+  assetId       String?
+  posterAssetId String?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  design    Design    @relation(fields: [designId], references: [id], onDelete: Cascade)
+
+  @@index([designId, createdAt])
+  @@index([status, createdAt])
 }
 
 /// C19b: a client's brand for the creative editor (logos, colours, fonts). `clientId` null =

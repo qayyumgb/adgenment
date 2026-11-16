@@ -485,6 +485,49 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-16 — C20a video ads, step 4: save to Creatives and publish (branch `feature/video-ads`)
+
+- **Save to Creatives** (editor top bar, and in the video dialog): a design with any animated layer is saved as a **video ad**. If the current video is up to date it is used; otherwise the design is saved, rendered, and then saved to Creatives in one go (the button stays busy; the timeline shows progress). A design without animation is saved as an image, as before.
+- **Server** (`video-render.service.ts` `exportDesignVideo`, `POST /designs/:id/video/export`): the design's Creative becomes type VIDEO with `content = { designId, assetId (the poster), posterAssetId, videoAssetId, width, height, videoWidth, videoHeight, durationMs, videoId?, metaAccountId? }`. With a Meta ad account the MP4 is uploaded there (`uploadVideoFromBytes`); if that fails the video is still saved. The same render is never uploaded twice. The previous render's files are deleted once nothing uses them.
+- **Links** (`withAssetUrls`): such a Creative gets `url` / `imageUrl` / `thumbnailUrl` (poster) and `videoUrl` (the MP4) as fresh signed links, so the Creatives grid, the drawer (plays directly, `videoUrl` on board items) and the campaign wizard work without changes.
+- **Publish** (`routes/campaigns.ts`): for a library video we hold the file of, the MP4 is uploaded from our storage to the ad account being published to when it has no Meta video yet or was uploaded to a different ad account (a Meta video belongs to one account); the new id is saved on the Creative. The existing wait-for-transcode and fresh poster steps then run as for any video.
+- **Fixed on the way:** saving an image over a Creative that had been a video now sets its type back to IMAGE.
+- **Checks:** type check (API and web), eslint. **Not tested:** the whole step in the browser, and nothing was sent to Meta from here (uploading to the ad account and publishing a video ad need a manual test).
+
+### 2026-11-16 — C20a video ads, step 3: templates come animated (branch `feature/video-ads`)
+
+- **One plan per template** (`editor/templateMotion.ts` `templateMotion`): worked out from the template's own description, so it fits all three sizes. Full photos drift, smaller photos zoom in, decoration fades in and floats, bands and the logo fade in, text arrives line by line, buttons pop then pulse, a badge pops as one piece. Five styles (rise, slide, pop, type, zoom) set by category with per-template exceptions, so the headline's move differs between templates.
+- **Gallery** (`TemplateGallery`, `TemplatePreview`): opened from a video design, each card has an "Animated" mark and plays its entrance on hover or focus (CSS keyframes approximating the real moves; not with reduced motion). Opened from an image design it is unchanged.
+- **Canvas:** picking a template in a video design gives every part its `anim` (`applyTemplateMotion`, by `slot`) in the same undo step, then plays once. **Animate for me** on a design made from a template uses the template's plan for its parts and the generic rules for anything added.
+- **Resize:** template parts keep their animation in the new size (copied by slot in `resize.ts`).
+- **Checks:** type check and eslint; the plan printed for several templates in two sizes; all 17 templates × 3 sizes get motion. **Not tested in the browser** by me.
+
+### 2026-11-16 — C20a video ads, step 2: the editor (branch `feature/video-ads`, not for production yet)
+
+Step 2 of 4: animate a design in the editor, preview it, and make the MP4.
+
+- **Video button** (editor top bar) opens the timeline under the canvas. Opening it the first time saves `motion: { duration: 8 }` in the design's data, which is what makes a design a video; a design with `motion` opens with the timeline showing.
+- **Timeline** (`editor/VideoPanel.tsx` `Timeline`): play / pause (Space), a ruler to click or drag to any moment, video length (5 to 30 s), one row per layer with a bar from when it comes in to when it's gone (handles drag those two times), **Animate for me** (a fitting animation for every layer, top to bottom, a button's shape arriving with its label; one undo step), Remove all, **Make video** with progress, Watch video.
+- **Animation section** (right sidebar, `AnimationFields`): for the selected layer, Comes in / While on screen / Leaves with their times. Changing one plays just that part (not with reduced motion).
+- **Preview** (`editor/motionPreview.ts` `MotionPreview`): plays on the editor's own canvas with `frameAt`, the same maths as the server render (`editor/motion.ts` is the identical copy of `apps/api/src/lib/motion.ts`). The design stays a still: touching anything outside the video controls, saving, undo or export first puts every layer back; autosave during a preview reads the still (`atRest`). The selected layer stays selected through a preview.
+- **Saved with the design:** each layer's `anim` (added to `EXTRA_PROPS`, so undo, duplicate and resize keep it); the length in `data.motion`. Resized copies of a video stay videos.
+- **Make video:** saves, `POST /designs/:id/video`, then polls `GET` every 1.5 s (gives up after 20 failed polls; a reload picks a running render up again). The finished video opens in a dialog with Download MP4. Anything changed afterwards marks it "older" until Update video.
+- **Fixed from step 1:** the byte-range pattern on `/assets/:id/file` had lost its backslashes (ranges were never matched); `cleanAnim` / `clampDuration` read a saved `null` time as 0 instead of the default.
+- **Checks:** web and API type check, eslint on the editor files; a scratch run of the preview on the server canvas (81 moments: the design read "at rest" is identical every time, and identical after leaving). **Not tested in the browser** (the dev servers weren't running): the timeline UI, dragging, Make video end to end.
+- **Known:** a render is called "older" after any later save, even one that changed nothing (it compares the design's revision). Templates don't carry motion yet (step 3); the video isn't saved to Creatives or published yet (step 4).
+
+### 2026-11-16 — C20a video ads, step 1: the render engine (branch `feature/video-ads`, not for production yet)
+
+Local only until the first paying client (decided 2026-11-16). Step 1 of 4: the server can turn a design with motion into an MP4. No editor UI yet.
+
+- **Motion model** (`apps/api/src/lib/motion.ts`; the editor gets an identical copy in step 2): a design stays a still layout; each layer may carry `anim` (entrance: fade, slide ×4, pop, zoom in, typewriter, with start and length; while on screen: slow zoom, float, pulse; exit: fade, slide, shrink) and the design a `motion: { duration }` (3–30 s, 30 fps). `frameAt` gives a layer's place, scale and opacity at any time; pure maths, shared by preview and render so they can't differ.
+- **Fabric on the server** (`services/video/fabric-server.ts`): Fabric's normal build on `@napi-rs/canvas` (Skia) through a small stand-in for the browser's document. Images come from file storage by "asset:<id>"; the editor's Google Fonts are downloaded once as TTF (cached in the temp folder) and registered. The editor's photo frame (`FrameImage`) is ported in `services/video/frame-image.ts` (keep in sync with the editor's `frames.ts` / `shapes.tsx`); an empty frame draws nothing in a video.
+- **Render** (`services/video/render.ts`): every frame is drawn and piped raw to ffmpeg (`ffmpeg-static`, so nothing to install; H.264 High, yuv420p, BT.709 colours, faststart, no audio yet). A poster image is taken at the moment every entrance has finished. Missing images are skipped; typewriter hides untyped characters instead of re-flowing the text. One render at a time per process, giving way to the event loop between frames.
+- **Job and storage** (`services/video-render.service.ts`, new `VideoRender` table): `POST /designs/:id/video` copies the design into a render row and queues it (pg-boss queue `video-render`; runs in-process without the queue); `GET /designs/:id/video` returns status, progress and, when done, signed links to the MP4 and poster. Files are the design's Assets (kinds `video`, `poster`), deleted with it; older renders are pruned. `VIDEO_RENDER_WORKER=off` makes an instance queue only (for a separate render service later). The asset file route now answers byte ranges (video players need them).
+- **Measured on the dev machine:** real template designs, 5 s: 1080×1080 in 1.5 s, 1080×1920 in 2.9 s; a heavier 6 s vertical test in 6.3 s; about 220 MB memory.
+- **Checks:** `npx tsx scripts/video-render-test.ts` (engine only) and `npx tsx scripts/video-job-test.ts` (a real local design through the job and storage, cleaned up after). Type check passes.
+- **Needs:** `npm install` (three new API packages), `prisma db push` (VideoRender; done on the local database). **Not tested:** the HTTP routes through the browser, the pg-boss path (needs an API restart), Railway's Docker image.
+
 ### 2026-11-13 — Video ads: publish path hardened
 
 Audit of upload video → save to Creatives → publish a campaign (Meta). The main path (device upload → `/meta/upload-video` → wait for Meta's transcode → wizard sends `videoId` → `video_data` creative) was sound; four gaps fixed:

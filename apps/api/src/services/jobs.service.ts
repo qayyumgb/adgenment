@@ -7,6 +7,7 @@ import { reportsTick, startReportScheduler } from "./reports.service";
 import { safetyTick, startSafetyScheduler } from "./safety.service";
 import { retentionTick, startRetentionScheduler } from "./retention.service";
 import { cleanupDesigns, startDesignCleanupScheduler } from "./designs.service";
+import { videoRenderQueue } from "./video-render.service";
 import { startSyncScheduler, syncQueues, syncSchedulerEnabled, syncTick } from "./sync-scheduler.service";
 
 /**
@@ -44,5 +45,5 @@ export const RECURRING: Recurring[] = [
 
 /** Start the background jobs: the queue, or the in-process timers if it can't start. */
 export function startBackgroundJobs() {
-  return startJobs(RECURRING, syncQueues);
+  return startJobs(RECURRING, [...syncQueues, videoRenderQueue]);
 }

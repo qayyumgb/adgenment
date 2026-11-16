@@ -64,7 +64,7 @@ export async function compress(input: Buffer, quality = 90) {
 }
 
 /** Compress and store one image. */
-export async function createAsset(opts: { workspaceId: string; designId?: string | null; createdById?: string | null; kind: "upload" | "preview" | "export" | "brand"; input: Buffer; quality?: number }): Promise<Asset> {
+export async function createAsset(opts: { workspaceId: string; designId?: string | null; createdById?: string | null; kind: "upload" | "preview" | "export" | "brand" | "poster"; input: Buffer; quality?: number }): Promise<Asset> {
   if (opts.input.length > MAX_UPLOAD_BYTES) throw assetError(413, "Images can be up to 15 MB.");
   const { data, width, height } = await compress(opts.input, opts.quality ?? 90);
   const id = randomBytes(12).toString("hex");
@@ -78,6 +78,24 @@ export async function createAsset(opts: { workspaceId: string; designId?: string
   }
   try {
     return await prisma.asset.create({ data: { id, workspaceId: opts.workspaceId, designId: opts.designId ?? null, key, mime: "image/webp", width, height, bytes: data.length, kind: opts.kind, createdById: opts.createdById ?? null } });
+  } catch (err) {
+    await deleteObjects([key]).catch(() => undefined);
+    throw err;
+  }
+}
+
+/** Store a finished file as it is (a rendered MP4, C20a): no compression. */
+export async function createFileAsset(opts: { workspaceId: string; designId?: string | null; createdById?: string | null; kind: "video"; body: Buffer; mime: string; ext: string; width: number; height: number }): Promise<Asset> {
+  const id = randomBytes(12).toString("hex");
+  const key = `ws/${opts.workspaceId}/${id}.${opts.ext}`;
+  try {
+    await putObject(key, opts.body, opts.mime);
+  } catch (err) {
+    console.error("[assets] storage upload failed:", err instanceof Error ? err.message : err);
+    throw assetError(502, "Couldn't save the file to file storage. Try again; if it keeps failing, check the R2 settings on the server.");
+  }
+  try {
+    return await prisma.asset.create({ data: { id, workspaceId: opts.workspaceId, designId: opts.designId ?? null, key, mime: opts.mime, width: opts.width, height: opts.height, bytes: opts.body.length, kind: opts.kind, createdById: opts.createdById ?? null } });
   } catch (err) {
     await deleteObjects([key]).catch(() => undefined);
     throw err;

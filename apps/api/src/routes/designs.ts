@@ -5,6 +5,7 @@ import { getAccess } from "../lib/access";
 import { storageConfigured } from "../lib/storage";
 import { apiBase, MAX_UPLOAD_BYTES, readAsset, verifyAssetLink } from "../services/assets.service";
 import { addBrandLogo, addImage, copyDesign, createDesign, deleteDesign, exportDesign, getDesign, importCreativeImage, listDesigns, saveDesign, savePreview, SIZES } from "../services/designs.service";
+import { exportDesignVideo, getVideoRender, startVideoRender } from "../services/video-render.service";
 import { addBrandLogo as addKitLogo, getBrandKit, removeBrandLogo, updateBrandKit } from "../services/brand.service";
 
 /**
@@ -29,6 +30,17 @@ assetsRouter.get("/:id/file", async (req: Request, res: Response, next: NextFunc
     res.set("Cache-Control", `private, max-age=${maxAge}, immutable`);
     // Loaded from the app's domain (img tags and the editor canvas).
     res.set("Cross-Origin-Resource-Policy", "cross-origin");
+    // Video players ask for byte ranges (Safari won't play without them).
+    res.set("Accept-Ranges", "bytes");
+    const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ""));
+    if (range && (range[1] || range[2])) {
+      const size = f.body.length;
+      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+      if (start >= size || start > end) return res.status(416).set("Content-Range", `bytes */${size}`).end();
+      res.status(206).set("Content-Range", `bytes ${start}-${end}/${size}`);
+      return res.send(f.body.subarray(start, end + 1));
+    }
     res.send(f.body);
   } catch (err) {
     next(err);
@@ -143,6 +155,34 @@ designsRouter.post("/:id/preview", upload.single("image"), async (req: Request, 
 designsRouter.post("/:id/export", upload.single("image"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await exportDesign(await accessOf(req), req.dbUserId!, apiBase(req), req.params.id, fileOf(req)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /designs/:id/video — render the design's motion to an MP4 (C20a). Answers at once; poll GET. */
+designsRouter.post("/:id/video", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!storageConfigured()) throw Object.assign(new Error("File storage isn't set up on this server yet (R2)."), { status: 503 });
+    res.status(202).json({ render: await startVideoRender(await accessOf(req), req.dbUserId!, apiBase(req), req.params.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /designs/:id/video/export — "Save to Creatives" for a video design: the finished MP4 becomes its (VIDEO) Creative. */
+designsRouter.post("/:id/video/export", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await exportDesignVideo(await accessOf(req), apiBase(req), req.params.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /designs/:id/video — the latest render: status, progress, and the links when it's done. */
+designsRouter.get("/:id/video", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json({ render: await getVideoRender(await accessOf(req), apiBase(req), req.params.id) });
   } catch (err) {
     next(err);
   }

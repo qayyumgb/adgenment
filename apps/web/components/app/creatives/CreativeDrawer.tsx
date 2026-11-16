@@ -122,8 +122,8 @@ export function CreativeDrawer({
     >
       <div className="flex flex-col gap-[18px]">
         <div className="relative">
-          {item.videoId ? (
-            <VideoThumbnailPlayer thumbnailUrl={item.imageUrl} videoId={item.videoId} alt={item.name} className="aspect-[4/5] max-h-[360px] w-full rounded-[14px]" />
+          {item.videoId || item.videoUrl ? (
+            <VideoThumbnailPlayer key={item.key} thumbnailUrl={item.imageUrl} videoId={item.videoId} directSrc={item.videoUrl} alt={item.name} className="aspect-[4/5] max-h-[360px] w-full rounded-[14px]" />
           ) : (
             <CreativeArt item={item} large className="aspect-[4/5] max-h-[360px] w-full rounded-[14px]" />
           )}

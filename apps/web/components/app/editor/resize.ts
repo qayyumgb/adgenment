@@ -146,6 +146,11 @@ export async function resizeDesign(source: Json, from: Size, to: Size, kit: Bran
       const bg = sc.backgroundColor;
       await renderTemplate(sc, els, { W: to.W, H: to.H, pal: paletteFor(kit), fonts: fontsFor(tpl, kit), logo, tplId: tpl.id, overrides, photos, keep: (slot) => bySlot.has(slot) });
       sc.backgroundColor = bg; // their background colour, not the template's default
+      // A video: every part keeps the animation it had (C20a).
+      for (const o of sc.getObjects() as (FabricObject & { slot?: string })[]) {
+        const anim = o.slot ? bySlot.get(o.slot)?.anim : undefined;
+        if (anim) o.set({ anim } as Partial<FabricObject>);
+      }
     }
 
     if (extras.length) {

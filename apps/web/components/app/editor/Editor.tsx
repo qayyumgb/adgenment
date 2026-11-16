@@ -49,8 +49,9 @@ import {
   Sparkles,
   ShieldCheck,
   Eraser,
+  Film,
 } from "lucide-react";
-import { useApiClient, type BrandKit, type Creative, type DesignDoc, type DesignImage } from "@/lib/api";
+import { useApiClient, type BrandKit, type Creative, type DesignDoc, type DesignImage, type VideoRender } from "@/lib/api";
 import { useClientScope } from "@/components/app/shell/ClientContext";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
@@ -71,6 +72,11 @@ import { collectCopyFields } from "./copyFields";
 import { WriteCopyDialog } from "./WriteCopyDialog";
 import { checkDesign, type Finding } from "./designCheck";
 import { CheckDialog } from "./CheckDialog";
+import { DEFAULT_DURATION, clampDuration, cleanAnim, type Anim, type DocMotion } from "./motion";
+import { MotionPreview, autoAnimate } from "./motionPreview";
+import { AnimationFields, Timeline, VideoDialog, type TimelineHandle } from "./VideoPanel";
+import { applyTemplateMotion } from "./templateMotion";
+import { TEMPLATES } from "./templates";
 
 /**
  * Creative editor (plan C19a): finish ads in the three Meta sizes. Images,
@@ -92,7 +98,7 @@ const SWATCHES = ["#ffffff", "#111827", "#6448f2", "#0ea5e9", "#16a34a", "#f59e0
 const EMPTY_COLORS: string[] = [];
 const HISTORY_MAX = 60;
 
-type Obj = FabricObject & { name?: string; assetId?: string; locked?: boolean };
+type Obj = FabricObject & { name?: string; assetId?: string; locked?: boolean; anim?: Anim | null };
 type TextObj = Textbox & { name?: string };
 type Status = "saved" | "dirty" | "saving" | "error" | "conflict";
 
@@ -227,6 +233,20 @@ export default function Editor({ designId }: { designId: string }) {
   // C19c: AI text and the design check.
   const [writing, setWriting] = useState(false);
   const [findings, setFindings] = useState<Finding[] | null>(null);
+  // C20a: video. `motion` (the video's length) makes the design a video ad; each layer carries its own animation.
+  const previewRef = useRef<MotionPreview | null>(null);
+  const timelineRef = useRef<TimelineHandle>(null);
+  const motionRef = useRef<DocMotion | null>(null);
+  const [motion, setMotionState] = useState<DocMotion | null>(null);
+  const [videoOpen, setVideoOpen] = useState(false);
+  const [video, setVideo] = useState<VideoRender | null>(null);
+  const [videoStale, setVideoStale] = useState(false);
+  const [making, setMaking] = useState(false);
+  const [watching, setWatching] = useState(false);
+  const pollFails = useRef(0);
+  // "Save to Creatives" is waiting for the video it asked for.
+  const exportAfter = useRef(false);
+  const duration = motion?.duration ?? DEFAULT_DURATION;
   const scope = useClientScope();
   const kitClient = doc ? doc.clientId ?? "shared" : null;
   const kitOwner = doc?.clientId ? scope.clients.find((x) => x.id === doc.clientId)?.name ?? "This client" : "Shared";
@@ -267,6 +287,22 @@ export default function Editor({ designId }: { designId: string }) {
         revisionRef.current = d.revision ?? 0;
         setName(d.name);
         setSize({ width: d.width, height: d.height });
+        const saved = (d.data ?? {}).motion;
+        if (saved && typeof saved === "object") {
+          const m = { duration: clampDuration((saved as { duration?: unknown }).duration) };
+          motionRef.current = m;
+          setMotionState(m);
+          setVideoOpen(true);
+          // A video design: its latest render, if it has one.
+          api
+            .getDesignVideo(designId)
+            .then((r) => {
+              if (!alive) return;
+              setVideo(r.render);
+              setVideoStale(Boolean(r.render?.outdated));
+            })
+            .catch(() => undefined);
+        }
       })
       .catch((err) => alive && setLoadError(err instanceof Error ? err.message : "This design didn't load."));
     return () => {
@@ -289,10 +325,13 @@ export default function Editor({ designId }: { designId: string }) {
       if (saveTimer.current) clearTimeout(saveTimer.current);
       setStatus("saving");
       try {
-        const saved = await api.saveDesign(designId, { data: serialize(c), name: name.trim() || "Untitled design", width: W, height: H, revision: revisionRef.current, ...(opts.keep ? { keep: true } : {}) });
+        // Saved as the still it is, even while a video preview is playing.
+        const data = { ...(previewRef.current ? previewRef.current.atRest(() => serialize(c)) : serialize(c)), ...(motionRef.current ? { motion: motionRef.current } : {}) };
+        const saved = await api.saveDesign(designId, { data, name: name.trim() || "Untitled design", width: W, height: H, revision: revisionRef.current, ...(opts.keep ? { keep: true } : {}) });
         if (opts.keep) keptRef.current = true;
         revisionRef.current = saved.revision;
         if (opts.preview) {
+          previewRef.current?.exit();
           c.discardActiveObject();
           c.requestRenderAll();
           const url = c.toDataURL({ format: "png", multiplier: 480 / (W * c.getZoom()), enableRetinaScaling: false });
@@ -319,6 +358,9 @@ export default function Editor({ designId }: { designId: string }) {
     const c = canvasRef.current;
     const h = history.current;
     if (!c || h.quiet) return;
+    // Never remember a moment of a playing preview: the still.
+    previewRef.current?.exit();
+    setVideoStale(true);
     // Undo keeps the live image links; the saved form (asset references) can't be loaded back directly.
     const snapshot = JSON.stringify(c.toObject(EXTRA_PROPS));
     if (h.stack[h.at] === snapshot) return;
@@ -343,6 +385,7 @@ export default function Editor({ designId }: { designId: string }) {
   const loadJson = useCallback(async (json: Record<string, unknown>) => {
     const c = canvasRef.current;
     if (!c) return;
+    previewRef.current?.exit();
     history.current.quiet = true;
     await Promise.all(fontsIn(json).map((f) => loadFont(f.family, f.weight, f.italic)));
     await c.loadFromJSON(json);
@@ -360,13 +403,17 @@ export default function Editor({ designId }: { designId: string }) {
     if (!doc || !elRef.current || canvasRef.current) return;
     const c = new Canvas(elRef.current, { preserveObjectStacking: true, backgroundColor: "#ffffff", selectionColor: "rgba(100,72,242,0.08)", selectionBorderColor: "#6448f2", selectionLineWidth: 1 });
     canvasRef.current = c;
+    const preview = new MotionPreview(c);
+    previewRef.current = preview;
     const onSel = () => {
+      if (preview.quiet) return;
       setSelected((c.getActiveObject() as Obj) ?? null);
       bump();
     };
     c.on("selection:created", onSel);
     c.on("selection:updated", onSel);
     c.on("selection:cleared", () => {
+      if (preview.quiet) return;
       setSelected(null);
       stopAdjustRef.current();
     });
@@ -466,6 +513,9 @@ export default function Editor({ designId }: { designId: string }) {
       else if (!from && doc.kept === false && c.getObjects().length === 0 && canEdit) setGallery(true);
     })();
     return () => {
+      preview.onChange = null;
+      preview.exit();
+      previewRef.current = null;
       void c.dispose();
       canvasRef.current = null;
     };
@@ -729,12 +779,15 @@ export default function Editor({ designId }: { designId: string }) {
         cv.discardActiveObject();
         cv.getObjects().forEach((o) => cv.remove(o));
         await renderTemplate(cv, els, { W, H, pal: paletteFor(kit), fonts, logo, tplId: tpl.id });
+        // A video design: the template arrives with its animation (C20a).
+        if (motionRef.current) applyTemplateMotion(cv, tpl, els, motionRef.current.duration);
       } finally {
         h.quiet = false;
       }
       cv.requestRenderAll();
       recordRef.current();
       bump();
+      if (motionRef.current && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) timelineRef.current?.play(0);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't use that template.");
     } finally {
@@ -807,6 +860,7 @@ export default function Editor({ designId }: { designId: string }) {
   };
 
   const runCheck = () => {
+    previewRef.current?.exit();
     c().discardActiveObject();
     setFindings(checkDesign(c(), W, H, { kitHasLogo: Boolean(kit?.logos.length) }));
   };
@@ -814,11 +868,13 @@ export default function Editor({ designId }: { designId: string }) {
   /** One-click resize (C19b): this design laid out in another size, saved as a new design with its own copies of the images. */
   const makeVersion = async (s: AdSize) => {
     const cv = c();
+    previewRef.current?.exit();
     cv.discardActiveObject();
     const source = cv.toObject(EXTRA_PROPS) as Record<string, unknown>;
     const { data, preview } = await resizeDesign(source, { W, H }, { W: s.W, H: s.H }, kit);
     const base = name.trim().replace(/ · (Square|Landscape|Story)$/, "") || "Untitled design";
-    const d = await api.copyDesign(designId, { name: `${base} · ${s.suffix}`, width: s.W, height: s.H, data });
+    // A video stays a video: the new size keeps the length (layers keep their animation, except ones a template draws again).
+    const d = await api.copyDesign(designId, { name: `${base} · ${s.suffix}`, width: s.W, height: s.H, data: { ...data, ...(motionRef.current ? { motion: motionRef.current } : {}) } });
     await api.saveDesignPreview(d.id, preview).catch(() => undefined);
     return { id: d.id, preview: URL.createObjectURL(preview) };
   };
@@ -920,7 +976,7 @@ export default function Editor({ designId }: { designId: string }) {
   const duplicate = async () => {
     const o = c().getActiveObject() as Obj | undefined;
     if (!o || o.type?.toLowerCase() === "activeselection") return;
-    const copy = (await o.clone(["assetId", "name", "locked"])) as Obj;
+    const copy = (await o.clone(["assetId", "name", "locked", "anim"])) as Obj;
     copy.set({ left: (o.left ?? 0) + 24, top: (o.top ?? 0) + 24 });
     if (isLocked(copy)) setLocked(copy, false);
     add(copy);
@@ -973,6 +1029,7 @@ export default function Editor({ designId }: { designId: string }) {
     const h = history.current;
     const to = h.at + dir;
     if (to < 0 || to >= h.stack.length) return;
+    previewRef.current?.exit();
     c().discardActiveObject();
     try {
       await loadJson(JSON.parse(h.stack[to]));
@@ -986,6 +1043,7 @@ export default function Editor({ designId }: { designId: string }) {
     setCanUndo(h.at > 0);
     setCanRedo(h.at < h.stack.length - 1);
     setSelected(null);
+    setVideoStale(true);
     setStatus("dirty");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => void saveRef.current({ quiet: true }), 2500);
@@ -1000,6 +1058,7 @@ export default function Editor({ designId }: { designId: string }) {
   };
 
   const exportPng = () => {
+    previewRef.current?.exit();
     c().discardActiveObject();
     c().requestRenderAll();
     return c().toDataURL({ format: "png", multiplier: 1 / c().getZoom(), enableRetinaScaling: false });
@@ -1012,7 +1071,37 @@ export default function Editor({ designId }: { designId: string }) {
     a.click();
   };
 
+  /** The finished video becomes the design's Creative (a video ad), uploaded to Meta when connected. */
+  const exportVideo = async () => {
+    setBusy("export");
+    try {
+      const r = await api.exportDesignVideo(designId);
+      if (r.metaUploaded) toast.success("Video saved to Creatives, and uploaded to Meta: ready to publish.");
+      else if (r.metaError) toast(`Video saved to Creatives. Meta didn't take it yet (${r.metaError}); it uploads when you publish.`, { icon: "⚠️", duration: 7000 });
+      else toast.success("Video saved to Creatives.");
+      keptRef.current = true;
+      setDoc((d) => (d ? { ...d, creativeId: r.creativeId, kept: true } : d));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save the video to Creatives.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const toCreatives = async () => {
+    // A design with animation is saved as a video ad: the current video if it's up to date, else a new one first.
+    if ((c().getObjects() as Obj[]).some((o) => cleanAnim(o.anim, duration))) {
+      if (video?.status === "done" && !videoStale && statusRef.current === "saved") return exportVideo();
+      setBusy("export");
+      exportAfter.current = true;
+      if (video?.status === "queued" || video?.status === "rendering") return;
+      const started = await makeVideo();
+      if (!started) {
+        exportAfter.current = false;
+        setBusy(null);
+      }
+      return;
+    }
     setBusy("export");
     try {
       await save({ quiet: true });
@@ -1028,6 +1117,163 @@ export default function Editor({ designId }: { designId: string }) {
       setBusy(null);
     }
   };
+
+  /* ── video (C20a) ────────────────────────────────────────────────────── */
+  /** A change that isn't on the canvas (the video's length): save soon. */
+  const touch = () => {
+    if (!canEdit) return;
+    setVideoStale(true);
+    setStatus("dirty");
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => void saveRef.current({ quiet: true }), 2500);
+  };
+
+  const setDuration = (seconds: number) => {
+    previewRef.current?.exit();
+    const m = { duration: clampDuration(seconds) };
+    motionRef.current = m;
+    setMotionState(m);
+    // Times past the new end move inside it.
+    (canvasRef.current?.getObjects() as Obj[] | undefined)?.forEach((o) => o.anim && o.set({ anim: cleanAnim(o.anim, m.duration) ?? undefined } as Partial<FabricObject>));
+    touch();
+  };
+
+  const toggleVideo = () => {
+    if (videoOpen) {
+      previewRef.current?.exit();
+      return setVideoOpen(false);
+    }
+    // Opening the timeline for the first time makes this a video design (8 seconds to start with).
+    if (!motionRef.current && canEdit) setDuration(DEFAULT_DURATION);
+    setVideoOpen(true);
+  };
+
+  /** Change one layer's animation (null takes it off). `final` false while dragging on the timeline. */
+  const setAnim = (o: Obj, patch: Partial<Anim> | null, final = true) => {
+    previewRef.current?.exit();
+    const next = patch ? cleanAnim({ ...(o.anim ?? {}), ...patch }, duration) : null;
+    o.set({ anim: next ?? undefined } as Partial<FabricObject>);
+    if (final) recordRef.current();
+    bump();
+  };
+
+  /** Play the part of a layer's animation that was just changed. */
+  const showAnim = (o: Obj, part: "in" | "hold" | "out") => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const a = cleanAnim(o.anim, duration);
+    if (!a) return;
+    const at = a.at ?? 0;
+    if (part === "in" && a.in !== "none") timelineRef.current?.play(Math.max(0, at - 0.15), Math.min(duration, at + (a.dur ?? 0.6) + 0.5));
+    else if (part === "out" && a.out !== "none" && a.outAt != null) timelineRef.current?.play(Math.max(0, a.outAt - (a.outDur ?? 0.4) - 0.4), Math.min(duration, a.outAt + 0.2));
+    else if (part === "hold" && a.hold !== "none") timelineRef.current?.play(Math.max(0, at), Math.min(duration, at + 3));
+  };
+
+  /** "Animate for me": every layer gets a fitting animation (one undo step), then it plays. */
+  const animateAll = () => {
+    const cv = c();
+    previewRef.current?.exit();
+    const plan = autoAnimate(cv, W, H, duration);
+    // Parts of a template move the way that template is meant to; everything else by what it is and where it sits.
+    const slot = (cv.getObjects() as (Obj & { slot?: string })[]).find((o) => typeof o.slot === "string")?.slot;
+    const tpl = slot ? TEMPLATES.find((x) => x.id === slot.split("|")[0]) : undefined;
+    if (tpl) {
+      const kept = new Map((cv.getObjects() as Obj[]).map((o) => [o, o.anim] as const));
+      applyTemplateMotion(cv, tpl, tpl.build(aspectOf(W, H)), duration);
+      for (const o of cv.getObjects() as (Obj & { slot?: string })[]) {
+        if (o.slot?.startsWith(`${tpl.id}|`)) plan.set(o, o.anim ?? null);
+        o.set({ anim: kept.get(o) ?? undefined } as Partial<FabricObject>);
+      }
+    }
+    let count = 0;
+    plan.forEach((anim, o) => {
+      o.set({ anim: anim ?? undefined } as Partial<FabricObject>);
+      if (anim) count++;
+    });
+    recordRef.current();
+    bump();
+    if (!count) return void toast("There's nothing to animate yet. Add text, an image or a shape.");
+    toast.success(`Animated ${count} layer${count === 1 ? "" : "s"}. Ctrl+Z puts it back.`);
+    timelineRef.current?.play(0);
+  };
+
+  const clearAnims = () => {
+    previewRef.current?.exit();
+    (c().getObjects() as Obj[]).forEach((o) => o.anim && o.set({ anim: undefined } as Partial<FabricObject>));
+    recordRef.current();
+    bump();
+    toast("Animation removed from every layer. Ctrl+Z puts it back.");
+  };
+
+  /** Render the saved design to an MP4 (in the background; the timeline shows progress). */
+  const makeVideo = async () => {
+    if (!canEdit || making) return false;
+    setMaking(true);
+    try {
+      previewRef.current?.exit();
+      if (!motionRef.current) {
+        motionRef.current = { duration: DEFAULT_DURATION };
+        setMotionState(motionRef.current);
+      }
+      await save({ quiet: true, keep: true });
+      if (statusRef.current !== "saved") throw new Error("The design couldn't be saved, so the video wasn't started. Try again.");
+      const r = await api.startDesignVideo(designId);
+      pollFails.current = 0;
+      setVideoStale(false);
+      setVideo(r.render);
+      return true;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't start the video.");
+      return false;
+    } finally {
+      setMaking(false);
+    }
+  };
+
+  // Follow a render until it's done (a reload picks it up again).
+  useEffect(() => {
+    if (!video || (video.status !== "queued" && video.status !== "rendering")) return;
+    let live = true;
+    const timer = setTimeout(async () => {
+      try {
+        const r = await api.getDesignVideo(designId);
+        if (!live) return;
+        pollFails.current = 0;
+        const wanted = exportAfter.current;
+        if (r.render?.status === "done") {
+          if (wanted) {
+            exportAfter.current = false;
+            void exportVideo();
+          } else {
+            toast.success("Your video is ready.");
+            setWatching(true);
+          }
+        } else if (r.render?.status === "failed" || !r.render) {
+          if (r.render) toast.error(r.render.error ?? "The video couldn't be made. Try again.", { duration: 7000 });
+          if (wanted) {
+            exportAfter.current = false;
+            setBusy(null);
+          }
+        }
+        setVideo(r.render);
+      } catch {
+        if (!live) return;
+        // The connection dropped: keep asking for a while, then say so (the render itself carries on).
+        if (++pollFails.current > 20) {
+          toast.error("Lost touch with the server while making the video. Reload the page to see it.", { duration: 8000 });
+          setVideo(null);
+          if (exportAfter.current) {
+            exportAfter.current = false;
+            setBusy(null);
+          }
+        } else setVideo((v) => (v ? { ...v } : v));
+      }
+    }, 1500);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-armed by each answer
+  }, [video]);
 
   const remove = async () => {
     if (!(await confirm({ title: "Delete this design?", body: doc?.creativeId ? "The design, its ad in Creatives and its images are deleted. Ads already running on Meta aren't affected." : "The design and its images are deleted.", confirmLabel: "Delete", danger: true }))) return;
@@ -1051,6 +1297,13 @@ export default function Editor({ designId }: { designId: string }) {
       if (editing) return;
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
+      // Space plays / pauses the video; any other key ends a preview first.
+      if (k === " " && videoOpen && !mod) {
+        if (t?.tagName === "BUTTON" || t?.tagName === "A") return;
+        e.preventDefault();
+        return timelineRef.current?.toggle();
+      }
+      if (!t?.closest?.("[data-video-ui]")) previewRef.current?.exit();
       if (mod && k === "z") {
         e.preventDefault();
         void step(e.shiftKey ? 1 : -1);
@@ -1120,7 +1373,13 @@ export default function Editor({ designId }: { designId: string }) {
 
   return (
     <BrandColors.Provider value={kit?.colors ?? EMPTY_COLORS}>
-    <div ref={rootRef} className="flex min-h-[520px] flex-col overflow-hidden" style={{ height: height ?? "calc(100vh - 64px)" }}>
+    <div
+      ref={rootRef}
+      className="flex min-h-[520px] flex-col overflow-hidden"
+      style={{ height: height ?? "calc(100vh - 64px)" }}
+      // A video preview ends (the design back as it was) the moment anything but the video controls is touched.
+      onPointerDownCapture={(e) => !(e.target as HTMLElement).closest?.("[data-video-ui]") && previewRef.current?.exit()}
+    >
       {/* Top bar: one line, fixed height (nothing in it may change the canvas size) */}
       <div className="flex h-[52px] flex-none items-center gap-2 overflow-hidden border-b border-line bg-surface px-3">
         <Link href="/creatives" className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-2 hover:bg-surface-2 hover:text-ink" aria-label="Back to Creatives">
@@ -1164,6 +1423,9 @@ export default function Editor({ designId }: { designId: string }) {
         <span className={cn("hidden w-[118px] truncate text-right text-xs min-[1200px]:inline", status === "error" || status === "conflict" ? "text-neg" : "text-ink-3")} aria-live="polite" title={canEdit ? statusText : "View only"}>
           {canEdit ? statusText : "View only"}
         </span>
+        <Button variant={videoOpen ? "soft" : "ghost"} size="sm" icon={<Film size={15} />} disabled={!doc} aria-pressed={videoOpen} title="Turn this ad into a video: animate its layers" onClick={toggleVideo}>
+          <span className="hidden min-[1280px]:inline">Video</span>
+        </Button>
         <IconButton label="Download PNG" size={32} onClick={download} disabled={!doc}>
           <Download size={16} />
         </IconButton>
@@ -1468,10 +1730,56 @@ export default function Editor({ designId }: { designId: string }) {
               </div>
             )}
           </div>
+          {videoOpen && doc && (
+            <Timeline
+              ref={timelineRef}
+              getPreview={() => previewRef.current}
+              W={W}
+              H={H}
+              duration={duration}
+              layers={layers}
+              selected={sel}
+              canEdit={canEdit}
+              onDuration={setDuration}
+              onSelect={(o) => {
+                previewRef.current?.exit();
+                c().setActiveObject(o);
+                c().requestRenderAll();
+                setSelected(o as Obj);
+              }}
+              onAnim={(o, patch, final) => setAnim(o as Obj, patch, final)}
+              onAuto={animateAll}
+              onClear={clearAnims}
+              onClose={toggleVideo}
+              video={video}
+              stale={videoStale}
+              making={making}
+              onMake={() => void makeVideo()}
+              onWatch={() => setWatching(true)}
+            />
+          )}
         </div>
 
         {/* Right: layers */}
         <aside className="w-[220px] flex-none overflow-y-auto border-l border-line bg-surface" aria-label="Layers">
+          {videoOpen && (
+            <Section title="Animation">
+              {sel && kind !== "activeselection" ? (
+                <AnimationFields
+                  o={sel}
+                  duration={duration}
+                  canEdit={canEdit}
+                  onChange={(patch, show) => {
+                    setAnim(sel, patch);
+                    if (show) showAnim(sel, show);
+                  }}
+                  onRemove={() => setAnim(sel, null)}
+                />
+              ) : (
+                <p className="m-0 text-xs text-ink-3">{sel ? "Select one layer to animate it." : "Select a layer to choose how it comes in, or use Animate for me on the timeline."}</p>
+              )}
+            </Section>
+          )}
           <Section title={`Layers${layers.length ? ` · ${layers.length}` : ""}`}>
             {layers.length === 0 ? (
               <p className="m-0 text-xs text-ink-3">Add text, an image or a shape to start.</p>
@@ -1506,6 +1814,7 @@ export default function Editor({ designId }: { designId: string }) {
               <li>Delete · Delete</li>
               <li>Nudge · arrows (Shift: 10 px)</li>
               <li>Save draft · Ctrl+S</li>
+              <li>Play the video · Space</li>
             </ul>
           </Section>
         </aside>
@@ -1524,8 +1833,9 @@ export default function Editor({ designId }: { designId: string }) {
           }
         }}
       />
+      <VideoDialog open={watching} onClose={() => setWatching(false)} video={video} stale={videoStale} name={name} onSave={canEdit ? () => (setWatching(false), void (videoStale ? toCreatives() : exportVideo())) : undefined} saving={busy === "export"} />
       <ResizeDialog open={resizing} onClose={() => setResizing(false)} W={W} H={H} make={makeVersion} />
-      <TemplateGallery open={gallery} onClose={() => setGallery(false)} W={W} H={H} kit={kit} owner={kitOwner} onPick={(t) => void applyTemplate(t)} />
+      <TemplateGallery open={gallery} onClose={() => setGallery(false)} W={W} H={H} kit={kit} owner={kitOwner} onPick={(t) => void applyTemplate(t)} video={videoOpen && Boolean(motion)} />
       {dialog}
       <Dialog
         open={leaving !== null}

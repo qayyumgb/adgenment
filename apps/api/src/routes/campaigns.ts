@@ -14,6 +14,7 @@ import { isMetaError, friendlyMetaError } from "../lib/meta-errors";
 import { changeLog } from "../services/change-log.service";
 import { syncService } from "../services/sync.service";
 import { metaEndTime, metaStartTime } from "../lib/schedule-time";
+import { readAsset } from "../services/assets.service";
 
 /** Pull a just-published / launched campaign's ad sets and ads (B4). Never blocks the response. */
 function refreshStructure(campaignId: string) {
@@ -1082,6 +1083,8 @@ router.post(
             imageHash = storedHash;
           } else if (libCreative.type === "VIDEO" && storedVideoId) {
             videoId = storedVideoId;
+          } else if (libCreative.type === "VIDEO" && typeof content.videoAssetId === "string") {
+            // Made in the editor: uploaded from our own file just below.
           } else if (!url) {
             return res
               .status(400)
@@ -1099,6 +1102,32 @@ router.post(
       // timeout because the upstream upload should already have been done
       // via /meta/upload-video (where the client did the long poll). This
       // poll here is the fallback when the user pasted a videoUrl directly.
+      // A video made in the editor (C20a): we hold the MP4, so it can always be
+      // put on the ad account being published to. Needed when it was never
+      // uploaded to Meta (no account then, or the upload failed) or was
+      // uploaded to a different ad account (a Meta video belongs to one).
+      if (creative.libraryCreativeId) {
+        const lib = await prisma.creative.findFirst({
+          where: { id: creative.libraryCreativeId, workspaceId: workspace.id },
+          select: { id: true, type: true, content: true },
+        });
+        const lc =
+          lib && lib.type === "VIDEO" && lib.content && typeof lib.content === "object" && !Array.isArray(lib.content)
+            ? (lib.content as Record<string, unknown>)
+            : null;
+        if (lib && lc && typeof lc.videoAssetId === "string" && (!videoId || lc.metaAccountId !== adAccountId)) {
+          const f = await readAsset(lc.videoAssetId);
+          if (f && f.asset.workspaceId === workspace.id) {
+            const uploaded = await metaService.uploadVideoFromBytes(token, adAccountId, f.body, "advertix-video.mp4", "video/mp4");
+            videoId = uploaded.id;
+            await prisma.creative.update({
+              where: { id: lib.id },
+              data: { content: { ...lc, videoId: uploaded.id, metaAccountId: adAccountId } as Prisma.InputJsonValue },
+            });
+          }
+        }
+      }
+
       if (!videoId && videoUrlForResolution) {
         const uploaded = await metaService.uploadVideoFromUrl(
           token,

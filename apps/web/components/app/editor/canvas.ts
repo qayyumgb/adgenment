@@ -6,8 +6,8 @@ import { FabricObject, type Canvas } from "fabric";
  * design's own pixels (the canvas zoom only scales the view).
  */
 
-/** Saved with every object: the R2 file it shows, its layer name, whether it's locked, and (C19b) which template part it came from ("<template>|<element>|<item>|<part>", used by resize). */
-export const EXTRA_PROPS = ["assetId", "name", "locked", "slot"];
+/** Saved with every object: the R2 file it shows, its layer name, whether it's locked, and (C19b) which template part it came from ("<template>|<element>|<item>|<part>", used by resize), and (C20a) its animation in a video. */
+export const EXTRA_PROPS = ["assetId", "name", "locked", "slot", "anim"];
 FabricObject.customProperties = EXTRA_PROPS;
 
 // Selection handles in the Advertix style.

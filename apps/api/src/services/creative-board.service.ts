@@ -29,6 +29,8 @@ export type BoardItem = {
   format: "IMAGE" | "VIDEO" | "CAROUSEL" | "TEXT" | "UNKNOWN";
   imageUrl: string | null;
   videoId: string | null;
+  /** A video we hold the file of (made in the editor): a link that plays directly. */
+  videoUrl: string | null;
   headline: string | null;
   body: string | null;
   callToAction: string | null;
@@ -68,6 +70,7 @@ function libraryFields(type: string, content: Prisma.JsonValue) {
     format: (type === "IMAGE" || type === "VIDEO" || type === "CAROUSEL" || type === "TEXT" ? type : "UNKNOWN") as BoardItem["format"],
     imageUrl: imageUrl && /^https?:|^data:image\//.test(imageUrl) ? imageUrl : null,
     videoId,
+    videoUrl: str(c.videoAssetId) ? str(c.videoUrl) : null,
     headline: first(c.headlines) ?? str(c.headline) ?? str(card0.headline),
     body: first(c.primary_texts) ?? str(c.primaryText) ?? str(c.text) ?? str(c.copy),
     callToAction: first(c.ctas) ?? str(c.callToAction),
@@ -198,6 +201,7 @@ export async function creativeBoard(workspaceId: string, clientId: string | null
       format: (["IMAGE", "VIDEO", "CAROUSEL"].includes(ad.format) ? ad.format : "UNKNOWN") as BoardItem["format"],
       imageUrl: ad.imageUrl,
       videoId: null,
+      videoUrl: null,
       headline: ad.headline,
       body: ad.body,
       callToAction: ad.callToAction,

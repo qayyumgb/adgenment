@@ -528,6 +528,32 @@ export interface BrandKit {
   logos: DesignImage[];
   updatedAt: string | null;
 }
+/** C20a: a design rendered to an MP4 (in progress or finished). */
+export interface VideoRender {
+  id: string;
+  status: "queued" | "rendering" | "done" | "failed";
+  /** 0–100 while rendering. */
+  progress: number;
+  error: string | null;
+  width: number;
+  height: number;
+  durationMs: number | null;
+  videoUrl: string | null;
+  posterUrl: string | null;
+  /** The design was saved again after this render. */
+  outdated: boolean;
+  createdAt: string;
+  finishedAt: string | null;
+}
+/** C20a: a video design saved to Creatives. */
+export interface DesignVideoExport {
+  creativeId: string;
+  videoUrl: string;
+  posterUrl: string;
+  /** Also uploaded to the workspace's Meta ad account (ready to publish). */
+  metaUploaded: boolean;
+  metaError: string | null;
+}
 export interface DesignExport {
   creativeId: string;
   imageUrl: string;
@@ -1065,6 +1091,8 @@ export interface CreativeBoardItem {
   format: "IMAGE" | "VIDEO" | "CAROUSEL" | "TEXT" | "UNKNOWN";
   imageUrl: string | null;
   videoId: string | null;
+  /** A video we hold the file of (made in the editor): plays directly. */
+  videoUrl?: string | null;
   headline: string | null;
   body: string | null;
   callToAction: string | null;
@@ -2133,6 +2161,12 @@ export function useApiClient() {
       apiFetch<{ fields: { id: string; text: string }[] }>("/ai/design-copy", { method: "POST", body: JSON.stringify(data) }),
     /** One-click resize (C19b): a new design in another size; the API copies the images it uses. */
     copyDesign: (id: string, data: { name: string; width: number; height: number; data: Record<string, unknown> }) => apiFetch<DesignSummary>(`/designs/${id}/copy`, { method: "POST", body: JSON.stringify(data) }),
+    /** C20a: the design's latest video render (null when it has none); poll while it's queued or rendering. */
+    getDesignVideo: (id: string) => apiFetch<{ render: VideoRender | null }>(`/designs/${id}/video`),
+    /** C20a: render the saved design to an MP4. Answers at once; follow it with getDesignVideo. */
+    startDesignVideo: (id: string) => apiFetch<{ render: VideoRender }>(`/designs/${id}/video`, { method: "POST" }),
+    /** C20a: the design's finished video becomes its Creative (a video ad). */
+    exportDesignVideo: (id: string) => apiFetch<DesignVideoExport>(`/designs/${id}/video/export`, { method: "POST" }),
     exportDesign: (id: string, png: Blob) => uploadDesignFile<DesignExport>(`/designs/${id}/export`, png),
     getAdminWorkspaces: (filter: "locked" | "all") => apiFetch<{ workspaces: AdminWorkspace[] }>(`/admin/workspaces?filter=${filter}`),
     getAdminDeletions: () => apiFetch<{ deletions: WorkspaceDeletionRecord[] }>("/admin/deletions"),

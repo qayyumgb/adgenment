@@ -1323,6 +1323,17 @@ C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the 
   - **Check video** (extends "Check design"): text inside safe zones, message in the first 3 seconds, readable without sound, length for the placement.
   - **Spike first (1–2 days):** confirm `fabric/node` + node-canvas build on the API image (Alpine/musl; may need Debian slim for the worker), render speed for 15 s at 1080×1920, memory on Railway, and fonts in Node (same Google Fonts files).
 
+- **C20a render test ✅ (2026-11-16, branch `feature/video-ads`; local only until the first paying client):**
+  - **Works:** Fabric draws each frame on the server and ffmpeg encodes H.264 MP4 (raw frames piped in, 30 fps, `-preset veryfast -crf 20`, faststart). 10 s at 1080×1920 rendered in ~15–17 s on the dev machine (≈ 18–20 frames/s), ~200 MB memory, file under 0.5 MB for a flat design. 15 s at 1080×1080: ~10 s.
+  - **Drawing library decided: `@napi-rs/canvas` (Skia), not `fabric/node` + node-canvas.** node-canvas can't load custom fonts on Windows (falls back to a default font; the owner tests on Windows) and needs a compile step on Alpine. `@napi-rs/canvas` ships ready-made binaries (Windows, Linux incl. Alpine/musl), loads fonts from files on every system, and Skia is what Chrome draws with, so text matches the editor more closely. Fabric's normal build runs on it through a small stand-in for the browser's document (`setEnv`), so no jsdom.
+  - **Not tested:** inside Railway's Docker image (no Docker on the dev machine): ffmpeg must be added to the image (`apk add ffmpeg`), and the musl binary confirmed at first deploy. Photos, real templates and audio come with the build.
+
+- **C20a build, step 1 ✅ (2026-11-16): render engine, job, storage.** Details in IMPLEMENTATION.md.
+- **C20a build, step 2 ✅ built (2026-11-16), browser test pending: the editor.** Video button, timeline (play, scrub, length, per-layer bars, Animate for me), Animation section per layer, preview on the canvas with the render's own maths, Make video with progress, watch and download. 
+- **C20a build, step 3 ✅ built (2026-11-16), browser test pending: templates come animated.** One animation plan per template (all sizes), played on hover in the gallery of a video design, applied with the template, kept through resize.
+- **C20a build, step 4 ✅ built (2026-11-16), browser and Meta test pending: save to Creatives as a video ad, publish to Meta.** C20a is now complete on the branch; it stays unreleased until the first paying client.
+- **Later, C20a polish: more professional template animation** (owner, 2026-11-16: the current animation is good enough for now). Ideas: a hand-tuned sequence per template instead of rules by category; richer moves (masked text reveals, word-by-word, shape wipes, parallax on photos); scene changes within one video; better easing and overlap; exit animations and a closing "end card"; the gallery card playing the real render instead of a CSS approximation.
+
 - **C20b — Edit uploaded footage (L):**
   - **Video as a layer:** upload clips (stored in R2), trim, crop to each size with a focus point, mute / volume; a sequence of clips with simple cuts and crossfades.
   - **Brand on top:** logo, lower-third text, end card from the brand kit; one-click resize to all sizes (reuses C19b resize).
