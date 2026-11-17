@@ -485,6 +485,12 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-17 — Editor: canvas no longer resets after Save to Creatives
+
+- **Bug (live since C19):** after **Save to Creatives** the editor canvas was thrown away and rebuilt from the design **as it was when the page opened** (blank for a new design; the opened draft without the edits made since). The canvas was built in an effect that depended on the whole `doc`, and saving updates `doc` (its `creativeId`). Any edit after that autosaved the old version over the real one.
+- **Fix** (`apps/web/components/app/editor/Editor.tsx`): the effect depends on `doc?.id`, so the canvas is built once per design. Same fix as on `feature/video-ads`, where the bug was found in browser testing.
+- **Check after deploy:** open a draft, change something, Save to Creatives: the canvas stays as it is; keep editing, reload: the edits are there.
+
 ### 2026-11-17 — Billing: fair charging rules (first charge date, upgrades, downgrades, tax details)
 
 Three changes so billing does what the screen says, built on behaviour first tried in Stripe test mode. Go-live steps and what's left: plan § 10b.
