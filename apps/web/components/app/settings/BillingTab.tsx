@@ -12,6 +12,7 @@ import { PLANS, yearlyMonthly, type Plan } from "@/lib/marketing/pricing";
 import { Button, ButtonLink, Card, Pill, Segmented, Skeleton, useConfirm, type PillTone } from "@/components/app/ui";
 import { useAccess } from "@/components/app/team/access";
 import { CreditsCard } from "@/components/app/credits/Credits";
+import { usePlan } from "@/components/app/billing/plan";
 
 /**
  * Settings › Billing (plan C11): the plan and its state (trial, active, past
@@ -23,6 +24,8 @@ import { CreditsCard } from "@/components/app/credits/Credits";
 const TIER_OF_NAME: Record<Exclude<Plan["name"], "Enterprise">, PaidTier> = { Founder: "FOUNDER", Team: "TEAM", Agency: "AGENCY" };
 const NAME_OF_TIER: Record<PaidTier | "ENTERPRISE", Plan["name"]> = { FOUNDER: "Founder", TEAM: "Team", AGENCY: "Agency", ENTERPRISE: "Enterprise" };
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) : "");
+/** For labels: "17 Dec". */
+const shortDay = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "");
 
 function Usage({ label, value, used, limit, tone = "brand" }: { label: string; value: string; used: number; limit: number | null; tone?: "brand" | "mid" }) {
   const pct = limit && Number.isFinite(limit) ? Math.min(100, (used / limit) * 100) : 0;
@@ -44,6 +47,7 @@ function statusLine(s: BillingStatus): { label: string; tone: PillTone; text: st
   if (s.state === "EXPIRED") return { label: "Trial ended", tone: "neg", text: "The workspace is locked: syncing, AI, reports and automation are paused. Your ads keep running and your data is safe; choose a plan to pick up where you left off." };
   if (s.state === "PAST_DUE") return { label: "Payment failed", tone: "warn", text: "Stripe couldn't charge your card and will retry. Update it in Manage billing to keep your plan." };
   if (s.cancelAtPeriodEnd) return { label: "Cancelling", tone: "warn", text: `Your plan ends on ${day(s.renewsAt)}. Choose it again below to keep it.` };
+  if (s.pending) return { label: "Active", tone: "pos", text: `Changes to ${NAME_OF_TIER[s.pending.tier]} (${s.pending.interval === "year" ? "yearly" : "monthly"}) on ${day(s.pending.at)}. Until then you keep everything in your current plan, and nothing is charged for the change.` };
   return { label: "Active", tone: "pos", text: s.renewsAt ? `${s.interval === "year" ? "Renews yearly" : "Renews monthly"} on ${day(s.renewsAt)}.` : "Set up by the Advertix team." };
 }
 
@@ -60,10 +64,34 @@ export function BillingTab() {
   const [busy, setBusy] = useState<string | null>(null);
   const { confirm, dialog } = useConfirm();
   const polled = useRef(false);
+  const plan = usePlan();
+  const stateRef = useRef<BillingStatus["state"] | null>(null);
+  stateRef.current = s?.state ?? null;
 
   useEffect(() => {
     if (s?.interval) setCycle(s.interval);
   }, [s?.interval]);
+
+  // Opening this page (also when coming back from Stripe's portal): check with Stripe, so a cancellation,
+  // an undone cancellation or a plan change made there shows now, with or without a webhook.
+  useEffect(() => {
+    let live = true;
+    api
+      .getBillingStatus(true)
+      .then(() => (live ? Promise.all([q.refetch(), usage.refetch()]) : undefined))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on opening
+  }, []);
+
+  // The plan is running but the app still thinks it's locked (just paid): unlock it without a reload.
+  const unlocked = s ? !s.locked : null;
+  useEffect(() => {
+    if (unlocked && plan.locked) void plan.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- when the status changes
+  }, [unlocked, plan.locked]);
 
   // Back from Stripe Checkout: the webhook may land a moment later, so poll briefly.
   useEffect(() => {
@@ -72,18 +100,36 @@ export function BillingTab() {
     polled.current = true;
     router.replace("/settings?tab=billing");
     if (result === "cancelled") return void toast("Checkout cancelled. Nothing was charged.");
+    // Each status request makes the server ask Stripe, so this normally settles on the first try.
+    const paid = () => stateRef.current === "ACTIVE" || stateRef.current === "PAST_DUE";
     let tries = 0;
-    const tick = async () => {
-      tries++;
-      await q.refetch();
-      await usage.refetch();
+    let stopped = false;
+    const id = toast.loading("Payment received. Setting up your plan…");
+    const finish = (ok: boolean) => {
+      stopped = true;
+      window.clearInterval(t);
+      if (ok) toast.success("Your plan is active. Thanks!", { id });
+      else toast.error("Stripe took your payment, but the plan isn't showing here yet. Reload this page in a minute. You won't be charged again; if it still doesn't show, email support@advertix.io.", { id, duration: 15000 });
     };
-    toast.success("Thanks! Your plan is being set up.");
-    const t = window.setInterval(() => {
-      void tick();
-      if (tries >= 8) window.clearInterval(t);
-    }, 2000);
-    return () => window.clearInterval(t);
+    const tick = async () => {
+      if (stopped) return;
+      tries++;
+      await Promise.all([q.refetch(), usage.refetch()]);
+      if (stopped) return;
+      // The refetched status is on the next render: look a moment later.
+      window.setTimeout(() => {
+        if (stopped) return;
+        if (paid()) finish(true);
+        else if (tries >= 10) finish(false);
+      }, 300);
+    };
+    const t = window.setInterval(() => void tick(), 2000);
+    void tick();
+    return () => {
+      stopped = true;
+      window.clearInterval(t);
+      toast.dismiss(id);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
 
@@ -104,13 +150,25 @@ export function BillingTab() {
     if (!subscribed) return go(tier, () => api.startCheckout(tier, cycle));
     if (s.tier === "ENTERPRISE") return;
     const price = cycle === "year" ? `$${(plan.monthly ?? 0) * 10} a year` : `$${plan.monthly} a month`;
-    const ok = await confirm({ title: `Switch to ${plan.name}?`, body: `${price}. Stripe adjusts the next invoice for the days left on your current plan (prorated).`, confirmLabel: `Switch to ${plan.name}` });
-    if (!ok) return;
+    // The plan they have (a waiting change or a cancellation is undone), a smaller one (at renewal), or a bigger one (now).
+    const same = s.tier === tier && s.interval === cycle;
+    const RANK: Record<PaidTier, number> = { FOUNDER: 0, TEAM: 1, AGENCY: 2 };
+    const smaller = !same && (RANK[tier] < RANK[s.tier as PaidTier] || (s.tier === tier && s.interval === "year" && cycle === "month"));
+    const trialRunning = Boolean(s.trialEndsAt && new Date(s.trialEndsAt).getTime() > Date.now());
+    if (!same) {
+      const body = trialRunning
+        ? `${price}, starting when your free trial ends on ${day(s.trialEndsAt)}. Nothing is charged before then.`
+        : smaller
+          ? `You keep your current plan until ${day(s.renewsAt)}, which is already paid for. From that day it's ${plan.name} at ${price}. Nothing is charged or refunded now, and you can undo this any time before then.`
+          : `${price}, starting now. Today your card is charged only the difference for the days left in this period; the full price starts at the next renewal on ${day(s.renewsAt)}.`;
+      const ok = await confirm({ title: smaller && !trialRunning ? `Move to ${plan.name} on ${day(s.renewsAt)}?` : `Switch to ${plan.name}?`, body, confirmLabel: smaller && !trialRunning ? `Move to ${plan.name}` : `Switch to ${plan.name}` });
+      if (!ok) return;
+    }
     setBusy(tier);
     try {
-      await api.changePlan(tier, cycle);
+      const after = await api.changePlan(tier, cycle);
       await Promise.all([q.refetch(), usage.refetch()]);
-      toast.success(`You're on ${plan.name} now.`);
+      toast.success(same ? `You're staying on ${plan.name}.` : after.pending ? `Done. You move to ${plan.name} on ${day(after.pending.at)}.` : `You're on ${plan.name} now.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't switch plans.");
     } finally {
@@ -200,7 +258,7 @@ export function BillingTab() {
           <span className="flex flex-col gap-0.5">
             <span className="text-base font-semibold">{subscribed ? "Change plan" : "Choose a plan"}</span>
             <span className="text-[13px] text-ink-2">
-              {s.state === "TRIAL" ? `Pick one now and you're only charged when the trial ends on ${day(s.trialEndsAt)}.` : subscribed ? "Switching is prorated: you only pay the difference for the rest of this period." : "Every plan includes the AI Planner, suggestions, budgets, creatives and reports."}
+              {s.state === "TRIAL" ? `Pick one now and you're only charged when the trial ends on ${day(s.trialEndsAt)}.` : subscribed ? "A bigger plan starts now and you pay only the difference. A smaller one starts at your next renewal." : "Every plan includes the AI Planner, suggestions, budgets, creatives and reports."}
             </span>
           </span>
           <Segmented
@@ -215,14 +273,18 @@ export function BillingTab() {
         </div>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
           {PLANS.map((p) => {
-            const isCurrent = currentName === p.name && (p.name === "Enterprise" || s.interval === cycle) && !s.cancelAtPeriodEnd;
+            const isMine = currentName === p.name && (p.name === "Enterprise" || s.interval === cycle);
+            const isCurrent = isMine && !s.cancelAtPeriodEnd && !s.pending;
             const tier = p.name === "Enterprise" ? null : TIER_OF_NAME[p.name];
+            const isNext = Boolean(s.pending && tier === s.pending.tier && cycle === s.pending.interval);
             const perMonth = p.monthly == null ? null : cycle === "year" ? yearlyMonthly(p.monthly) : p.monthly;
             return (
-              <div key={p.name} className={cn("flex flex-col gap-3 rounded-[14px] p-[18px]", isCurrent ? "border-[1.5px] border-brand bg-brand-soft" : "border border-line bg-surface")}>
+              // The plan they have now is always the marked one, also while a change or a cancellation is waiting.
+              <div key={p.name} className={cn("flex flex-col gap-3 rounded-[14px] p-[18px]", isMine ? "border-[1.5px] border-brand bg-brand-soft" : isNext ? "border border-dashed border-line-2 bg-surface" : "border border-line bg-surface")}>
                 <span className="flex items-center justify-between gap-2">
                   <span className="font-semibold">{p.name}</span>
-                  {isCurrent && <Pill tone="brand">Current</Pill>}
+                  {isMine && <Pill tone="brand">{isCurrent ? "Current" : `Current until ${shortDay(s.renewsAt)}`}</Pill>}
+                  {isNext && <Pill tone="neutral">Starts {shortDay(s.pending?.at ?? null)}</Pill>}
                 </span>
                 <span className="flex items-baseline gap-1">
                   {perMonth == null ? <span className="text-[22px] font-semibold">Custom</span> : <span className="text-[26px] font-semibold tabular-nums tracking-[-0.02em]">${perMonth}</span>}
@@ -243,17 +305,22 @@ export function BillingTab() {
                       Talk to us
                     </ButtonLink>
                   ) : (
-                    <Button
-                      variant={isCurrent ? "secondary" : "primary"}
-                      size="sm"
-                      className="w-full justify-center"
-                      disabled={isCurrent || Boolean(why) || busy !== null || s.tier === "ENTERPRISE"}
-                      loading={busy === tier}
-                      title={why}
-                      onClick={() => void choose(p)}
-                    >
-                      {isCurrent ? "Current plan" : subscribed ? `Switch to ${p.name}` : `Choose ${p.name}`}
-                    </Button>
+                    <span className="flex flex-col gap-1.5">
+                      <Button
+                        variant={isCurrent || isNext ? "secondary" : "primary"}
+                        size="sm"
+                        className="w-full justify-center"
+                        disabled={isCurrent || isNext || Boolean(why) || busy !== null || s.tier === "ENTERPRISE"}
+                        loading={busy === tier}
+                        title={why}
+                        onClick={() => void choose(p)}
+                      >
+                        {isCurrent ? "Current plan" : isNext ? `Starts ${shortDay(s.pending?.at ?? null)}` : isMine ? `Keep ${p.name}` : subscribed ? `Switch to ${p.name}` : `Choose ${p.name}`}
+                      </Button>
+                      {isMine && !isCurrent && (
+                        <span className="text-center text-[11px] text-ink-3">{s.pending ? `Cancels the change to ${NAME_OF_TIER[s.pending.tier]}` : "Keeps the plan instead of ending it"}</span>
+                      )}
+                    </span>
                   )}
                 </div>
               </div>
@@ -261,6 +328,10 @@ export function BillingTab() {
           })}
         </div>
         {why && <span className="text-[13px] text-ink-2">{why}</span>}
+        <span className="text-xs text-ink-3">
+          Prices are in US dollars and don&apos;t include sales tax or VAT; where it applies it is added at checkout. Cancel any time in Manage billing: you keep your plan to the end of the period you paid for.
+          {s.pending ? ` To cancel instead of changing plan, choose Keep ${currentName} first.` : ""}
+        </span>
       </Card>
       {dialog}
     </>

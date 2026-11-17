@@ -3,6 +3,7 @@ import { BILLING_SELECT, isLocked, planOf } from "../lib/plans";
 import { emailLayout, escapeHtml, sendEmail } from "../lib/email";
 import { notifyMembers } from "./notifications.service";
 import { deleteWorkspaceFiles } from "./assets.service";
+import { cancelSubscriptions } from "./billing.service";
 
 /**
  * Data retention for locked workspaces (plan C15b). "Locked" = the trial
@@ -85,6 +86,8 @@ async function remind(w: Ws, due: Date, now: Date) {
 /** Delete a workspace that is still locked, record it, and tell its owners. */
 async function deleteNow(w: Ws, now: Date) {
   const owners = await prisma.workspaceMember.findMany({ where: { workspaceId: w.id, role: "OWNER" }, select: { user: { select: { email: true } } } });
+  // Anything still being paid for is cancelled first (if Stripe can't be reached this throws, and the deletion is tried again tomorrow).
+  await cancelSubscriptions(w.id);
   await prisma.workspace.delete({ where: { id: w.id } });
   await deleteWorkspaceFiles(w.id);
   await prisma.workspaceDeletion.updateMany({ where: { workspaceId: w.id, deletedAt: null, cancelledAt: null }, data: { deletedAt: now } });

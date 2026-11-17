@@ -147,6 +147,9 @@ model Workspace {
   currentPeriodStart   DateTime?
   currentPeriodEnd     DateTime?
   cancelAtPeriodEnd    Boolean         @default(false)
+  /// A downgrade waiting for the next renewal (C11): the plan and period it changes to on currentPeriodEnd. Copied from the Stripe subscription schedule.
+  pendingPlan          PlanType?
+  pendingInterval      String?
   /// C15b retention: when the workspace was first seen locked (trial over, no plan). Cleared when it unlocks.
   lockedSince          DateTime?
   /// C15b: when the stored ad platform access was removed (30 days locked). The accounts need reconnecting.

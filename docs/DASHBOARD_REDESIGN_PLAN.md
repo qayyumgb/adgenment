@@ -370,6 +370,37 @@ Features built and covered by automated tests, but not yet tested end to end by 
   - auto-apply (C13);
   - safety rules (C14). They only act on real conditions (a silent pixel, a client overspending), so watch Activity and the "Automatic changes" emails for the first week.
 
+## 10b. Billing: going live, and what's left (added 2026-11-17)
+
+Billing was reviewed and hardened on 2026-11-17 after a payment didn't show (details in IMPLEMENTATION.md). It has only ever run in Stripe **test** mode.
+
+**Going live with real cards (owner, in order):**
+1. **Stripe account:** activate it (business details, bank account), and set the statement descriptor and support email customers see on receipts.
+2. **Railway:** set `STRIPE_SECRET_KEY` to the **live** key. Products and prices are created by the app on first use in the live account; nothing to set up by hand.
+3. **Webhook (live):** add an endpoint for `https://<api>/api/billing/webhook` with these events: checkout.session.completed · customer.subscription.created / updated / deleted / paused / resumed / trial_will_end · subscription_schedule.updated / released / completed / canceled · invoice.paid · invoice.payment_failed. Put its signing secret in Railway as `STRIPE_WEBHOOK_SECRET`. (The app works without it, by asking Stripe directly; the webhook makes changes show within seconds.)
+4. **Database:** `prisma db push` on production for `Workspace.pendingPlan` and `pendingInterval` **before** deploying this code.
+5. **Stripe dashboard settings:** Smart Retries on (default schedule); after the last retry **cancel the subscription**; emails on for failed payments, expiring cards, receipts and upcoming yearly renewals; "limit customers to one subscription" on, if offered.
+6. **One real purchase:** buy Founder with a real card, check the plan shows, the receipt arrives, an upgrade charges the difference, then cancel and refund yourself. Run `npx tsx scripts/billing-check.ts` afterwards: no mismatch.
+7. **Refund policy** on the pricing page and in the Terms (proposal: cancel any time and keep the plan to the end of the paid period; no refund for a month already started; 14-day money-back on a first yearly payment). Owner's decision.
+
+**Test in test mode before that (owner):** a declined card at checkout (4000 0000 0000 0002) and on an upgrade; a card that needs confirmation (4000 0025 0000 3155); cancel in the portal and choose the plan again; a yearly plan; a downgrade and "Keep" to undo it. `npx tsx scripts/billing-flow-test.ts` covers upgrades, downgrades, renewal, cancelling and the first charge date automatically.
+
+**Left for later:**
+
+| What | Why it matters | Size |
+| --- | --- | --- |
+| **Tax** (`STRIPE_TAX_ENABLED=true`) | Checkout already collects the billing address and tax ID and prices are marked "excluding tax". Switch on once registered to collect tax somewhere (accountant's call) and Stripe Tax is set up. | S |
+| **Downgrade over the new plan's limits** | A workspace with 4 clients can move to Founder (1 client). Decide: block the downgrade with a clear message, or allow it and make the extra clients read-only. Same for seats. | M |
+| **Cancel while a downgrade is waiting** | Stripe refuses a direct cancel while a schedule manages the subscription, so the page says to choose "Keep" first. Better: our own "Cancel plan" that ends the schedule. | S |
+| **Spend limits** ($25K / $100K / $250K a month) | Shown on the plans, not enforced (needs currency conversion). Decided 2026-11-02 to defer; soft warning first. | M |
+| **Payment that needs confirmation on an upgrade** (3-D Secure) | Today the upgrade is refused with "update your card". Better: send the customer to Stripe's page to confirm, then apply it. | S |
+| **Receipts and invoices in the app** | Today in Stripe's portal only. A list in Settings › Billing saves a click. | S |
+| **Coupons / partner discounts** | Promotion codes can already be typed at checkout; no way to make or track them from the admin page. | S |
+| **Dunning in the app** | Past due shows a banner; add the retry date and a one-click "pay now" link to Stripe's hosted invoice. | S |
+| **Alert on a billing mismatch** | The daily check logs problems (`[billing] ATTENTION`); email the superadmin instead of relying on logs. | S |
+| **Enterprise / invoices by bank transfer** | Set by hand today. Stripe invoicing with net terms if a customer asks. | M |
+| **Other currencies / local payment methods** | USD cards only. Revisit when customers ask. | M |
+
 ## 11. Progress
 
 ### A1 — Foundations ✅ (2026-10-21)
