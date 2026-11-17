@@ -1372,7 +1372,9 @@ C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the 
   - **From the library:** pull existing videos from Creatives (synced Meta videos only if Meta allows download; otherwise upload the original).
   - **Build, step 1 ✅ built (2026-11-16), browser test pending: a clip as a layer.** Footage goes into a photo frame (so crop, focus, shapes, templates and resize already work), trim and sound in the sidebar, plays in the preview, rendered with its sound. Details in IMPLEMENTATION.md.
   - **Build, step 2 ✅ built (2026-11-16), browser test pending: clips in a row and a brand end card.** A clip starts when its layer comes in; the next clip is added after the previous one with a crossfade (or a cut); trimming moves the clips that follow; videos up to 60 s; a 2.5 s end card from the brand kit.
-  - **Next steps:** auto captions (needs the owner's choice of speech-to-text provider and an API key) · videos from Creatives and a "Your videos" list.
+  - **Build, step 3 ✅ built (2026-11-17), browser test pending: reuse videos.** "Your videos" list in the editor; a video from Creatives into a design (editor videos, saved links, or the file from Meta); image or video chosen on the template screen. Test guide: `docs/VIDEO_ADS_TEST_GUIDE.md`.
+  - **Build, step 4 ✅ built and checked in Chrome (2026-11-17): editing at a moment.** While editing a video, the canvas shows only the layers on screen at the editing moment (shown on the timeline); selecting or adding a later layer moves to it.
+  - **Next step:** auto captions (needs the owner's choice of speech-to-text provider and an API key).
 
 - **C20c — AI script and voiceover (M):**
   - Claude writes a **storyboard** from a campaign, brief or product page: hook, 3–5 scenes, captions, CTA, using the client's best-performing ads (existing data), and fills a motion template scene by scene (like "Write the text with AI", 1–2 credits).

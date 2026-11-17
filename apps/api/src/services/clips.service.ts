@@ -3,8 +3,10 @@ import os from "os";
 import path from "path";
 import { randomBytes } from "crypto";
 import type { Access } from "../lib/access";
-import { assetError, assetUrl, createFileAsset } from "./assets.service";
+import { prisma } from "../lib/prisma";
+import { assetError, assetUrl, createFileAsset, readAsset } from "./assets.service";
 import { load } from "./designs.service";
+import { metaService } from "./meta.service";
 import { probe, runFfmpeg } from "./video/ffmpeg";
 
 /**
@@ -22,6 +24,67 @@ import { probe, runFfmpeg } from "./video/ffmpeg";
 export const MAX_CLIP_BYTES = 100 * 1024 * 1024;
 export const MAX_CLIP_SECONDS = 180;
 const MAX_SIDE = 1920;
+
+/** The design's clips, newest first ("Your videos" in the editor). */
+export async function listClips(base: string, designId: string) {
+  const rows = await prisma.asset.findMany({ where: { designId, kind: "clip" }, orderBy: { createdAt: "desc" }, take: 24, select: { id: true, width: true, height: true, durationMs: true } });
+  return rows.map((r) => ({ id: r.id, url: assetUrl(base, r.id), width: r.width, height: r.height, durationMs: r.durationMs ?? 0 }));
+}
+
+/** A file from a link, refused once it passes `max` bytes (never holds more than that). */
+async function fetchCapped(url: string, max: number): Promise<Buffer | null> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(120_000) }).catch(() => null);
+  if (!res?.ok || !res.body) return null;
+  const declared = Number(res.headers.get("content-length") ?? 0);
+  if (declared > max) throw assetError(413, "That video is over 100 MB. Trim it and upload the file instead.");
+  const parts: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    size += chunk.length;
+    if (size > max) throw assetError(413, "That video is over 100 MB. Trim it and upload the file instead.");
+    parts.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(parts);
+}
+
+/**
+ * A video from the Creatives library, put into the design as a clip (C20b).
+ * Where it comes from, in order: a video made in the editor (our own file);
+ * a link saved with it; the video on Meta (a fresh link from any of the
+ * workspace's Meta ad accounts). Then prepared like an upload.
+ */
+export async function importCreativeClip(access: Access, userId: string, base: string, designId: string, creativeId: string) {
+  const d = await load(access, designId);
+  const c = await prisma.creative.findFirst({ where: { id: creativeId, workspaceId: access.workspaceId } });
+  if (!c) throw assetError(404, "Creative not found");
+  if (c.type !== "VIDEO") throw assetError(400, "That creative isn't a video.");
+  const content = (c.content && typeof c.content === "object" && !Array.isArray(c.content) ? c.content : {}) as Record<string, unknown>;
+  let bytes: Buffer | null = null;
+  if (typeof content.videoAssetId === "string") {
+    const f = await readAsset(content.videoAssetId);
+    if (f && f.asset.workspaceId === access.workspaceId) bytes = f.body;
+  }
+  // A saved link: `videoUrl`, or `url` when the creative has no Meta video (then `url` is the video, not its poster).
+  const links = [content.videoUrl, typeof content.videoId === "string" ? null : content.url].filter((u): u is string => typeof u === "string" && /^https:\/\//.test(u));
+  for (const u of links) {
+    if (bytes) break;
+    bytes = await fetchCapped(u, MAX_CLIP_BYTES).catch((err) => {
+      if ((err as { status?: number }).status === 413) throw err;
+      return null;
+    });
+  }
+  if (!bytes && typeof content.videoId === "string" && /^\d+$/.test(content.videoId)) {
+    const accounts = await prisma.adAccount.findMany({ where: { workspaceId: access.workspaceId, platform: "META", isActive: true }, orderBy: { createdAt: "desc" }, select: { accessToken: true } });
+    for (const a of accounts) {
+      const src = await metaService.getVideoSource(metaService.decryptToken(a.accessToken), content.videoId).catch(() => null);
+      if (!src?.source) continue;
+      bytes = await fetchCapped(src.source, MAX_CLIP_BYTES);
+      if (bytes) break;
+    }
+  }
+  if (!bytes) throw assetError(409, "Advertix couldn't get this video's file (Meta may not share it). Download it and use Upload video instead.");
+  return addClip(access, userId, base, d.id, bytes);
+}
 
 export async function addClip(access: Access, userId: string, base: string, designId: string, file: Buffer) {
   const d = await load(access, designId);

@@ -485,6 +485,35 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-17 — C20b: editing a video at one moment (branch `feature/video-ads`)
+
+Found in the first browser test: while editing, layers that come in later covered the earlier ones (a second clip hid the first; an end card hid the whole ad).
+
+- **The canvas shows the design at the editing moment** (`editor/editMoment.ts`): layers not on screen then (before their entrance starts, or after their exit) aren't drawn and can't be clicked. Nothing is saved: the flag is our own, and Fabric doesn't save `evented` / `selectable`. Only while the timeline is open; a still design is unchanged.
+- **Which moment:** by default, once the opening has come in (every layer that starts in the first 2 s). Scrubbing or pausing and then going back to editing edits at that moment (a selected layer that isn't on screen then is deselected). Selecting a hidden layer from the timeline or Layers, or adding one that comes in later (a clip after another, an end card), moves the moment to when that layer is fully on screen. Playing to the end keeps the moment.
+- **Timeline:** a dashed line and "Editing at 1.6 s" show the moment.
+- **PNG of a video design** (Download PNG, the draft's thumbnail) shows the editing moment, as the canvas does, instead of every layer stacked (which was the end card).
+- **Not changed:** the preview and the rendered video (every layer at its own time).
+- **Checked in Chrome:** opens at the opening (first clip, not the second); selecting the second clip in Layers moves to 4.0 s; scrubbing to 1 s with it selected edits at 1.1 s with the first clip; adding an end card moves to it (11.1 s) and scrubbing back shows the opening uncovered; preview and reload fine; no console errors. Type check and eslint clean.
+
+### 2026-11-17 — Video ads: first browser test, three fixes (branch `feature/video-ads`)
+
+Claude's first pass through `docs/VIDEO_ADS_TEST_GUIDE.md` in Chrome on the local dev servers (results table in the guide).
+
+- **Canvas went blank after Save to Creatives** (`Editor.tsx`, **also on `main`, so in production for image ads**): the canvas was built in an effect that depended on the whole `doc`; saving to Creatives updates `doc` (its `creativeId`), so the canvas was disposed and rebuilt from the design **as it was when the page opened**. On a new design that is blank; on an opened draft it is the draft without the edits made since. Any later edit would autosave that old version over the real one (no data was lost in this test: nothing was edited after it went blank). Fix: the effect depends on `doc?.id`, so the canvas is built once per design. **Needs the same one-line fix on `main`.**
+- **Video renders waited up to 10 s before starting** ("Starting…"): work queues checked for jobs every 10 s. `WorkQueue.pollSeconds` (default 10); the video queue uses 2. Measured: 6.3 s wait before, 0.3 s after.
+- **Undo didn't restore the video's length** (adding a clip or an end card lengthens it; undoing left the extra seconds as a frozen last frame): each undo step now carries `motion` and restores it. Checked: end card 10 → 12.5 s, undo → 10, redo → 12.5.
+- **Verified working:** image / video switch on the template screen with animated previews; template applied animated; play, scrub (correct frame at 0.4 s), click-to-edit restoring the design; Make video through the real queue and storage; MP4 upload into a design, trim panel, scrubbing footage; second clip fading in at the right time; trimming moving the next clip and the end; end card without a logo; render with two clips and an end card (crossfade frame and no click at the join checked in the file); Save to Creatives as a Video creative that plays in the drawer; reload keeps everything; no console errors.
+- **Found, not fixed:** while editing, layers that come in later cover the ones below (second clip over the first, end card over the whole ad). Added to the plan as the next C20b step.
+
+### 2026-11-17 — C20b footage, step 3: reuse videos (branch `feature/video-ads`)
+
+- **Your videos** (editor left panel, under Your uploads): the design's clips, newest first, with their length; one click adds a clip again (into the selected frame, else after the last clip, as a sequence). `GET /designs/:id` now returns `clips`.
+- **Video from Creatives** (left panel, and on a selected frame): a library picker for VIDEO creatives (poster pictures). `POST /designs/:id/clips/from-creative` (`clips.service.ts` `importCreativeClip`) gets the file from, in order: a video made in the editor (our own file, copied), a saved link (`videoUrl`, or `url` when there's no Meta video), or the video on Meta (a fresh source link from any of the workspace's Meta ad accounts). Downloads stop at 100 MB. The file is then prepared like an upload (standard MP4 with a sound track). When nothing can be had (Meta may not share a video's file) it says so and suggests Upload video.
+- **Image or video at the start** (template screen): a *Make: Image ad / Video ad* switch; Video turns on the timeline, animated previews and animated templates.
+- **Testing guide:** `docs/VIDEO_ADS_TEST_GUIDE.md` (everything in C20a and C20b, section by section, with a results table).
+- **Checks:** `npx tsx scripts/video-import-test.ts` (local database and storage, temporary design and creatives, removed after): 8 checks pass: an editor video comes in as a prepared clip, is listed with the design and sent to the editor, the source is untouched, and an empty video creative, an image creative and a missing one are refused with clear messages. Type check and eslint clean. **Not tested:** importing a Meta video (needs a connected account whose video Meta shares) and everything in the browser.
+
 ### 2026-11-17 — Billing: fair charging rules (first charge date, upgrades, downgrades, tax details)
 
 Three changes so billing does what the screen says, built on behaviour first tried in Stripe test mode. Go-live steps and what's left: plan § 10b.

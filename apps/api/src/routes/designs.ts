@@ -6,7 +6,7 @@ import { storageConfigured } from "../lib/storage";
 import { apiBase, MAX_UPLOAD_BYTES, readAsset, verifyAssetLink } from "../services/assets.service";
 import { addBrandLogo, addImage, copyDesign, createDesign, deleteDesign, exportDesign, getDesign, importCreativeImage, listDesigns, saveDesign, savePreview, SIZES } from "../services/designs.service";
 import { exportDesignVideo, getVideoRender, startVideoRender } from "../services/video-render.service";
-import { addClip, MAX_CLIP_BYTES } from "../services/clips.service";
+import { addClip, importCreativeClip, MAX_CLIP_BYTES } from "../services/clips.service";
 import { addBrandLogo as addKitLogo, getBrandKit, removeBrandLogo, updateBrandKit } from "../services/brand.service";
 
 /**
@@ -190,6 +190,16 @@ designsRouter.post("/:id/clips", uploadClip.single("video"), async (req: Request
     if (!storageConfigured()) throw Object.assign(new Error("File storage isn't set up on this server yet (R2)."), { status: 503 });
     if (!req.file?.buffer?.length) throw Object.assign(new Error("No video received (field name must be 'video')."), { status: 400 });
     res.status(201).json(await addClip(await accessOf(req), req.dbUserId!, apiBase(req), req.params.id, req.file.buffer));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /designs/:id/clips/from-creative { creativeId } — a video from the Creatives library, as a clip (C20b). */
+designsRouter.post("/:id/clips/from-creative", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!storageConfigured()) throw Object.assign(new Error("File storage isn't set up on this server yet (R2)."), { status: 503 });
+    res.status(201).json(await importCreativeClip(await accessOf(req), req.dbUserId!, apiBase(req), req.params.id, String(req.body?.creativeId ?? "")));
   } catch (err) {
     next(err);
   }

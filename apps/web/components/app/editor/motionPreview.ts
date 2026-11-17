@@ -1,5 +1,6 @@
 import type { Canvas, FabricObject } from "fabric";
 import { cleanAnim, frameAt, type Anim, type MotionIn, type Rest } from "./motion";
+import { clearEditMoment } from "./editMoment";
 
 /**
  * The video preview on the editor's own canvas (plan C20a).
@@ -54,6 +55,10 @@ export class MotionPreview {
   quiet = false;
   /** Told when the preview starts and ends (the timeline follows it). */
   onChange: ((active: boolean) => void) | null = null;
+  /** The moment shown last while not playing (scrubbed or paused); null after playing. */
+  private parked: number | null = null;
+  /** Told after the preview ends, with where it was parked (the editor edits at that moment, C20b). */
+  afterExit: ((parkedAt: number | null) => void) | null = null;
 
   constructor(private canvas: Canvas) {}
 
@@ -77,6 +82,9 @@ export class MotionPreview {
     this.W = W;
     this.H = H;
     this.duration = duration;
+    this.parked = null;
+    // The preview shows every layer at its own time.
+    clearEditMoment(c);
     this.layers = (c.getObjects() as AnimObj[]).map((o) => {
       const anim = cleanAnim(o.anim, duration);
       const text = typeof o.text === "string" && anim?.in === "typewriter" ? o.text : null;
@@ -156,6 +164,7 @@ export class MotionPreview {
   draw(t: number, playing = false) {
     if (!this.layers) return;
     this.last = t;
+    this.parked = playing ? null : t;
     this.apply(t);
     this.sync(t, playing);
     this.canvas.requestRenderAll();
@@ -187,6 +196,7 @@ export class MotionPreview {
     }
     c.requestRenderAll();
     this.onChange?.(false);
+    this.afterExit?.(this.parked);
   }
 
   /** Read the canvas as the still it is (saving while a preview plays), then carry on previewing. */

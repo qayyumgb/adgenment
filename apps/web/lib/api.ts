@@ -511,6 +511,8 @@ export interface DesignDoc extends DesignSummary {
   assets: Record<string, string>;
   /** Every image uploaded to this design, newest first ("Your uploads"). */
   uploads?: DesignImage[];
+  /** C20b: the design's video clips, newest first ("Your videos"). */
+  clips?: DesignClip[];
 }
 export interface DesignImage {
   id: string;
@@ -535,7 +537,8 @@ export interface DesignClip {
   width: number;
   height: number;
   durationMs: number;
-  hasAudio: boolean;
+  /** Known right after an upload; unknown for a clip listed later. */
+  hasAudio?: boolean;
 }
 /** C20a: a design rendered to an MP4 (in progress or finished). */
 export interface VideoRender {
@@ -2174,6 +2177,8 @@ export function useApiClient() {
     /** One-click resize (C19b): a new design in another size; the API copies the images it uses. */
     copyDesign: (id: string, data: { name: string; width: number; height: number; data: Record<string, unknown> }) => apiFetch<DesignSummary>(`/designs/${id}/copy`, { method: "POST", body: JSON.stringify(data) }),
     /** C20b: footage for a design (up to 100 MB, 3 minutes): converted to a standard MP4 on the server, which takes a moment after the upload reaches 100%. */
+    /** C20b: a video from the Creatives library, copied into the design as a clip (prepared on the server, like an upload). */
+    importDesignClip: (id: string, creativeId: string) => apiFetch<DesignClip>(`/designs/${id}/clips/from-creative`, { method: "POST", body: JSON.stringify({ creativeId }) }),
     uploadDesignClip: (id: string, file: Blob, onProgress?: (share: number) => void) => uploadDesignFile<DesignClip>(`/designs/${id}/clips`, file, onProgress, "video"),
     /** C20a: the design's latest video render (null when it has none); poll while it's queued or rendering. */
     getDesignVideo: (id: string) => apiFetch<{ render: VideoRender | null }>(`/designs/${id}/video`),

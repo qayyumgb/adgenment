@@ -54,9 +54,11 @@ type TimelineProps = {
   making: boolean;
   onMake: () => void;
   onWatch: () => void;
+  /** C20b: the moment the canvas is edited at (layers not on screen then are hidden while editing). */
+  editAt?: number | null;
 };
 
-export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timeline({ getPreview, W, H, duration, layers, selected, canEdit, onDuration, onSelect, onAnim, onAuto, onClear, onClose, video, stale, making, onMake, onWatch }, ref) {
+export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timeline({ getPreview, W, H, duration, layers, selected, canEdit, onDuration, onSelect, onAnim, onAuto, onClear, onClose, video, stale, making, onMake, onWatch, editAt = null }, ref) {
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [on, setOn] = useState(false);
@@ -233,7 +235,7 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
             {/* Ruler: click or drag to look at any moment */}
             <div className="sticky top-0 z-10 flex h-6 items-end bg-surface">
               <span className="flex-none text-[11px] text-ink-3" style={{ width: LABEL_W }}>
-                {on && !playing ? "Click the design to edit" : ""}
+                {on && !playing ? "Click the design to edit" : !on && editAt != null ? `Editing at ${editAt.toFixed(1)} s` : ""}
               </span>
               <div
                 className="relative h-full flex-1 cursor-pointer touch-none border-b border-line"
@@ -319,6 +321,10 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
               );
             })}
 
+            {!on && editAt != null && (
+              // Where the design is being edited: the layers on screen at this moment are the ones shown.
+              <span className="pointer-events-none absolute bottom-0 top-0 z-10 border-l border-dashed border-brand/70" style={{ left: `calc(${LABEL_W}px + (100% - ${LABEL_W}px) * ${clamp01(editAt / duration)})` }} aria-hidden="true" />
+            )}
             {on && (
               <span className="pointer-events-none absolute bottom-0 top-0 z-20 w-px bg-[#ec4899]" style={{ left: `calc(${LABEL_W}px + (100% - ${LABEL_W}px) * ${clamp01(t / duration)})` }} aria-hidden="true">
                 <span className="absolute -left-[4px] top-0 h-[9px] w-[9px] rounded-full bg-[#ec4899]" />

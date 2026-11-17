@@ -202,4 +202,6 @@ export const videoRenderQueue: WorkQueue<{ renderId: string }> = {
   retryLimit: 1,
   retryDelaySeconds: 20,
   expireInMinutes: 20,
+  // Someone is watching the progress bar: start within 2 s, not 10.
+  pollSeconds: 2,
 };

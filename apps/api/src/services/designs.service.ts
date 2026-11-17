@@ -66,7 +66,15 @@ export async function listDesigns(access: Access, base: string, clientId: string
 export async function getDesign(access: Access, base: string, id: string) {
   const d = await load(access, id);
   const uploads = await prisma.asset.findMany({ where: { designId: d.id, kind: "upload" }, orderBy: { createdAt: "desc" }, select: { id: true, width: true, height: true } });
-  return { ...view(base, d), data: d.data, assets: await assetLinks(base, d.id), uploads: uploads.map((u) => ({ ...u, url: assetUrl(base, u.id) })) };
+  const clips = await prisma.asset.findMany({ where: { designId: d.id, kind: "clip" }, orderBy: { createdAt: "desc" }, take: 24, select: { id: true, width: true, height: true, durationMs: true } });
+  return {
+    ...view(base, d),
+    data: d.data,
+    assets: await assetLinks(base, d.id),
+    uploads: uploads.map((u) => ({ ...u, url: assetUrl(base, u.id) })),
+    // C20b: the design's videos ("Your videos").
+    clips: clips.map((c) => ({ id: c.id, width: c.width, height: c.height, durationMs: c.durationMs ?? 0, url: assetUrl(base, c.id) })),
+  };
 }
 
 export async function createDesign(access: Access, userId: string, base: string, body: Json) {

@@ -74,6 +74,7 @@ import { checkDesign, type Finding } from "./designCheck";
 import { CheckDialog } from "./CheckDialog";
 import { DEFAULT_DURATION, MAX_DURATION, clampDuration, cleanAnim, type Anim, type DocMotion } from "./motion";
 import { MotionPreview, autoAnimate } from "./motionPreview";
+import { applyEditMoment, clearEditMoment, defaultEditMoment, isOffscreen, onScreenAt, settleTime } from "./editMoment";
 import { AnimationFields, ClipFields, Timeline, VideoDialog, type ClipFrame, type TimelineHandle } from "./VideoPanel";
 import { applyTemplateMotion } from "./templateMotion";
 import { TEMPLATES } from "./templates";
@@ -142,28 +143,49 @@ function PanelButton({ icon, label, onClick, disabled }: { icon: ReactNode; labe
 }
 
 /** Pick an image from the Creatives library. */
-function LibraryPicker({ open, onClose, onPick }: { open: boolean; onClose: () => void; onPick: (c: Creative) => void }) {
-  const q = useApi((c) => (open ? c.getCreatives({ type: "IMAGE", limit: 60 }) : new Promise<never>(() => {})), [open], { key: "editor-library" });
+/** Pick an image or (C20b) a video from the Creatives library. */
+function LibraryPicker({ open, onClose, onPick, kind = "image" }: { open: boolean; onClose: () => void; onPick: (c: Creative) => void; kind?: "image" | "video" }) {
+  const video = kind === "video";
+  const q = useApi((c) => (open ? c.getCreatives({ type: video ? "VIDEO" : "IMAGE", limit: 60 }) : new Promise<never>(() => {})), [open, kind], { key: `editor-library-${kind}` });
   const list = (q.data?.creatives ?? []).filter((c) => {
     const x = (c.content ?? {}) as Record<string, unknown>;
+    if (video) return typeof x.videoAssetId === "string" || typeof x.videoUrl === "string" || typeof x.videoId === "string" || typeof x.url === "string";
     return typeof x.imageUrl === "string" || typeof x.url === "string" || typeof x.dataUrl === "string" || typeof x.assetId === "string";
   });
   const src = (c: Creative) => {
     const x = (c.content ?? {}) as Record<string, unknown>;
+    // A video's picture: its poster (a pasted video link has none).
+    if (video) return (x.thumbnailUrl ?? (typeof x.videoId === "string" || typeof x.videoAssetId === "string" ? x.url : undefined)) as string | undefined;
     return (x.dataUrl ?? x.imageUrl ?? x.url) as string | undefined;
   };
   return (
-    <Dialog open={open} onClose={onClose} title="Add from Creatives" sub="Images in your library. A copy goes into this design." width={720} footer={<Button variant="secondary" onClick={onClose}>Close</Button>}>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={video ? "Add a video from Creatives" : "Add from Creatives"}
+      sub={video ? "Videos in your library. A copy goes into this design (it takes a moment to prepare)." : "Images in your library. A copy goes into this design."}
+      width={720}
+      footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
+    >
       {q.loading && !q.data ? (
         <Skeleton className="h-48 rounded-card" />
       ) : list.length === 0 ? (
-        <p className="m-0 text-sm text-ink-2">No images in Creatives yet. Upload one with Upload image instead.</p>
+        <p className="m-0 text-sm text-ink-2">{video ? "No videos in Creatives yet. Use Upload video instead." : "No images in Creatives yet. Upload one with Upload image instead."}</p>
       ) : (
         <div className="grid max-h-[60vh] grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-2.5 overflow-y-auto">
           {list.map((c) => (
             <button key={c.id} type="button" onClick={() => onPick(c)} className="group flex flex-col gap-1 rounded-ctl border border-line p-1.5 text-left hover:border-brand">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={src(c)} alt="" className="aspect-square w-full rounded-md bg-surface-2 object-cover" loading="lazy" />
+              <span className="relative block">
+                {src(c) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={src(c)} alt="" className="aspect-square w-full rounded-md bg-surface-2 object-cover" loading="lazy" />
+                ) : (
+                  <span className="flex aspect-square w-full items-center justify-center rounded-md bg-surface-2 text-ink-3">
+                    <Film size={22} aria-hidden="true" />
+                  </span>
+                )}
+                {video && <Film size={14} className="absolute bottom-1.5 left-1.5 rounded bg-black/60 p-0.5 text-white" aria-hidden="true" />}
+              </span>
               <span className="truncate text-xs text-ink-2 group-hover:text-ink">{c.name}</span>
             </button>
           ))}
@@ -232,6 +254,9 @@ export default function Editor({ designId }: { designId: string }) {
   const [adjusting, setAdjusting] = useState<FrameImage | null>(null);
   // An image on its way in: upload progress, then the server preparing it, then placing it.
   const [uploads, setUploads] = useState<DesignImage[]>([]);
+  // C20b: the design's video clips ("Your videos"), and the library picker for videos.
+  const [clips, setClips] = useState<DesignClip[]>([]);
+  const [videoPicker, setVideoPicker] = useState(false);
   // C19b: the design client's brand kit (or the workspace's shared one), and the template gallery.
   const [kit, setKit] = useState<BrandKit | null>(null);
   const [gallery, setGallery] = useState(false);
@@ -253,6 +278,39 @@ export default function Editor({ designId }: { designId: string }) {
   // "Save to Creatives" is waiting for the video it asked for.
   const exportAfter = useRef(false);
   const duration = motion?.duration ?? DEFAULT_DURATION;
+  // C20b: the moment a video design is edited at (null = where the opening has come in).
+  const editAtRef = useRef<number | null>(null);
+  const [editAt, setEditAt] = useState<number | null>(null);
+  const videoOpenRef = useRef(videoOpen);
+  videoOpenRef.current = videoOpen;
+  /**
+   * Show the layers on screen at the editing moment, hide the rest (never saved). A selected layer
+   * that isn't on screen then moves the moment to when it is.
+   */
+  const reapplyMoment = () => {
+    const cv = canvasRef.current;
+    if (!cv || previewRef.current?.active) return;
+    const m = motionRef.current;
+    if (!videoOpenRef.current || !m) {
+      if (clearEditMoment(cv)) cv.requestRenderAll();
+      setEditAt(null);
+      return;
+    }
+    let t = Math.min(editAtRef.current ?? defaultEditMoment(cv, m.duration), m.duration - 0.05);
+    applyEditMoment(cv, t, m.duration);
+    const act = cv.getActiveObject() as Obj | undefined;
+    if (act && isOffscreen(act)) {
+      t = settleTime(act.anim, m.duration);
+      editAtRef.current = t;
+      applyEditMoment(cv, t, m.duration);
+    }
+    setEditAt(Math.round(t * 10) / 10);
+    cv.requestRenderAll();
+  };
+  const reapplyRef = useRef(reapplyMoment);
+  reapplyRef.current = reapplyMoment;
+  // Opening or closing the timeline, or a new length: show the right layers.
+  useEffect(() => reapplyRef.current(), [videoOpen, motion?.duration]);
   const scope = useClientScope();
   const kitClient = doc ? doc.clientId ?? "shared" : null;
   const kitOwner = doc?.clientId ? scope.clients.find((x) => x.id === doc.clientId)?.name ?? "This client" : "Shared";
@@ -290,6 +348,7 @@ export default function Editor({ designId }: { designId: string }) {
         setDoc(d);
         keptRef.current = d.kept !== false;
         setUploads(d.uploads ?? []);
+        setClips(d.clips ?? []);
         revisionRef.current = d.revision ?? 0;
         setName(d.name);
         setSize({ width: d.width, height: d.height });
@@ -368,7 +427,8 @@ export default function Editor({ designId }: { designId: string }) {
     previewRef.current?.exit();
     setVideoStale(true);
     // Undo keeps the live image links; the saved form (asset references) can't be loaded back directly.
-    const snapshot = JSON.stringify(c.toObject(EXTRA_PROPS));
+    // The video's length goes with each step (adding a clip or an end card also lengthens the video).
+    const snapshot = JSON.stringify({ ...c.toObject(EXTRA_PROPS), motion: motionRef.current });
     if (h.stack[h.at] === snapshot) return;
     h.stack = h.stack.slice(0, h.at + 1);
     h.stack.push(snapshot);
@@ -377,6 +437,7 @@ export default function Editor({ designId }: { designId: string }) {
     setCanUndo(h.at > 0);
     setCanRedo(false);
     refreshLayers();
+    reapplyRef.current();
     if (!canEdit) return;
     setStatus("dirty");
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -402,6 +463,7 @@ export default function Editor({ designId }: { designId: string }) {
     c.requestRenderAll();
     history.current.quiet = false;
     refreshLayers();
+    reapplyRef.current();
   }, [refreshLayers]);
 
   /* ── canvas ───────────────────────────────────────────────────────────── */
@@ -410,9 +472,22 @@ export default function Editor({ designId }: { designId: string }) {
     const c = new Canvas(elRef.current, { preserveObjectStacking: true, backgroundColor: "#ffffff", selectionColor: "rgba(100,72,242,0.08)", selectionBorderColor: "#6448f2", selectionLineWidth: 1 });
     canvasRef.current = c;
     const preview = new MotionPreview(c);
+    // After a preview: edit where it was scrubbed or paused (after playing through, the moment stays).
+    preview.afterExit = (parkedAt) => {
+      if (parkedAt != null) {
+        editAtRef.current = Math.round(parkedAt * 100) / 100;
+        // The moment they chose wins: a selected layer that isn't on screen then is let go (not jumped to).
+        const act = c.getActiveObject() as Obj | undefined;
+        const m = motionRef.current;
+        if (act && m && !onScreenAt(act.anim, parkedAt, m.duration)) c.discardActiveObject();
+      }
+      reapplyRef.current();
+    };
     previewRef.current = preview;
     const onSel = () => {
       if (preview.quiet) return;
+      // A layer picked in the timeline or Layers that isn't on screen now: edit at its moment.
+      if (isOffscreen(c.getActiveObject())) reapplyRef.current();
       setSelected((c.getActiveObject() as Obj) ?? null);
       bump();
     };
@@ -509,7 +584,7 @@ export default function Editor({ designId }: { designId: string }) {
         if (typeof json.background === "string") c.backgroundColor = json.background;
         history.current.quiet = false;
       }
-      history.current.stack = [JSON.stringify(c.toObject(EXTRA_PROPS))];
+      history.current.stack = [JSON.stringify({ ...c.toObject(EXTRA_PROPS), motion: motionRef.current })];
       history.current.at = 0;
       refreshLayers();
       // Opened from a library image ("Open in editor"): place it as the background.
@@ -525,8 +600,10 @@ export default function Editor({ designId }: { designId: string }) {
       void c.dispose();
       canvasRef.current = null;
     };
+    // Built once per design. Not on every change to `doc`: saving to Creatives updates it, and rebuilding
+    // would reload the design as it was when the page opened (and autosave would then write that back).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc]);
+  }, [doc?.id]);
 
   // Fit the design in the space available.
   useEffect(() => {
@@ -852,10 +929,46 @@ export default function Editor({ designId }: { designId: string }) {
     setIncoming({ stage: "uploading", share: 0, video: true });
     try {
       const clip = await api.uploadDesignClip(designId, file, (share) => setIncoming({ stage: share >= 1 ? "preparing" : "uploading", share, video: true }));
+      setClips((list) => [clip, ...list.filter((x) => x.id !== clip.id)]);
       setIncoming({ stage: "adding", share: 1, video: true });
       await placeClip(clip, into, after);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't add the video.");
+    } finally {
+      setBusy(null);
+      setIncoming(null);
+    }
+  };
+
+  /** A clip that's already in the design's videos, added again: into the selected frame, else after the last clip. */
+  const reuseClip = async (clip: DesignClip) => {
+    setBusy("upload");
+    setIncoming({ stage: "adding", share: 1, video: true });
+    try {
+      await placeClip(clip);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't add the video.");
+    } finally {
+      setBusy(null);
+      setIncoming(null);
+    }
+  };
+
+  /** A video from the Creatives library (copied and prepared on the server), placed like an upload. */
+  const clipFromCreative = async (creativeId: string) => {
+    setVideoPicker(false);
+    const into = clipTarget.current?.into ?? null;
+    const after = clipTarget.current?.after ?? null;
+    clipTarget.current = null;
+    setBusy("upload");
+    setIncoming({ stage: "preparing", share: 1, video: true });
+    try {
+      const clip = await api.importDesignClip(designId, creativeId);
+      setClips((list) => [clip, ...list.filter((x) => x.id !== clip.id)]);
+      setIncoming({ stage: "adding", share: 1, video: true });
+      await placeClip(clip, into, after);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't add that video.");
     } finally {
       setBusy(null);
       setIncoming(null);
@@ -1205,7 +1318,13 @@ export default function Editor({ designId }: { designId: string }) {
     previewRef.current?.exit();
     c().discardActiveObject();
     try {
-      await loadJson(JSON.parse(h.stack[to]));
+      const snap = JSON.parse(h.stack[to]) as Record<string, unknown> & { motion?: DocMotion | null };
+      await loadJson(snap);
+      // Undo / redo also restores the video's length (a still design has none).
+      if (snap.motion !== undefined && JSON.stringify(snap.motion) !== JSON.stringify(motionRef.current)) {
+        motionRef.current = snap.motion ?? null;
+        setMotionState(snap.motion ?? null);
+      }
     } catch {
       // Couldn't restore that step (e.g. an image didn't load): keep what's on the canvas.
       await loadJson(JSON.parse(h.stack[h.at])).catch(() => undefined);
@@ -1673,6 +1792,7 @@ export default function Editor({ designId }: { designId: string }) {
             <PanelButton icon={<Images size={16} />} label="From Creatives" onClick={() => setPicker(true)} disabled={!doc || !canEdit || busy === "upload"} />
             <PanelButton icon={<Film size={16} />} label={busy === "upload" && incoming?.video ? "Adding…" : clipFrames().length ? "Add another video clip" : "Upload video"} onClick={() => ((clipTarget.current = null), clipFileRef.current?.click())} disabled={!doc || !canEdit || busy === "upload"} />
             <input ref={clipFileRef} type="file" accept={CLIP_TYPES} className="hidden" onChange={(e) => { const to = clipTarget.current; clipTarget.current = null; void uploadClip(e.target.files?.[0], to?.into ?? null, to?.after ?? null); e.target.value = ""; }} />
+            <PanelButton icon={<Images size={16} />} label="Video from Creatives" onClick={() => ((clipTarget.current = null), setVideoPicker(true))} disabled={!doc || !canEdit || busy === "upload"} />
             {videoOpen && <PanelButton icon={<LayoutTemplate size={16} />} label={busy === "endcard" ? "Adding…" : "Add a brand end card"} onClick={() => void addEndCard()} disabled={!doc || !canEdit || busy !== null} />}
             <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={(e) => { void upload(e.target.files?.[0], "image"); e.target.value = ""; }} />
             {uploads.length > 0 && (
@@ -1683,6 +1803,20 @@ export default function Editor({ designId }: { designId: string }) {
                     <button key={u.id} type="button" title="Add to the design (into the selected frame, if one is selected)" onClick={() => void placeImage(u, "image")} disabled={!canEdit} className="overflow-hidden rounded-md border border-line bg-surface-2 hover:border-brand">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={u.url} alt="" loading="lazy" className="aspect-square w-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {clips.length > 0 && (
+              <div className="flex flex-col gap-1.5 pt-1">
+                <span className="text-[11px] font-medium text-ink-3">Your videos · click to add again</span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {clips.slice(0, 12).map((v) => (
+                    <button key={v.id} type="button" title="Add to the design (into the selected frame, or after the last clip)" onClick={() => void reuseClip(v)} disabled={!canEdit || busy === "upload"} className="relative overflow-hidden rounded-md border border-line bg-surface-2 hover:border-brand">
+                      {/* The first frame as the picture; nothing plays or downloads beyond what that needs. */}
+                      <video src={`${v.url}#t=0.1`} muted playsInline preload="metadata" className="pointer-events-none aspect-square w-full object-cover" aria-hidden="true" />
+                      <span className="absolute bottom-0.5 right-0.5 rounded bg-black/65 px-1 text-[10px] font-medium tabular-nums text-white">{Math.round(v.durationMs / 1000)}s</span>
                     </button>
                   ))}
                 </div>
@@ -1782,6 +1916,9 @@ export default function Editor({ designId }: { designId: string }) {
                     </Button>
                     <Button variant="ghost" size="sm" icon={<Film size={15} />} onClick={() => ((clipTarget.current = { into: fr }), clipFileRef.current?.click())} disabled={busy === "upload"}>
                       {fr.clip ? "Replace video" : "Add video"}
+                    </Button>
+                    <Button variant="ghost" size="sm" icon={<Images size={15} />} onClick={() => ((clipTarget.current = { into: fr }), setVideoPicker(true))} disabled={busy === "upload"} title="A video from Creatives, into this frame">
+                      Video from Creatives
                     </Button>
                     <Button variant="ghost" size="sm" icon={<Images size={15} />} onClick={() => setPicker(true)} disabled={busy === "upload"}>
                       From Creatives
@@ -1935,6 +2072,7 @@ export default function Editor({ designId }: { designId: string }) {
               making={making}
               onMake={() => void makeVideo()}
               onWatch={() => setWatching(true)}
+              editAt={editAt}
             />
           )}
         </div>
@@ -2004,6 +2142,7 @@ export default function Editor({ designId }: { designId: string }) {
         </aside>
       </div>
       <LibraryPicker open={picker} onClose={() => setPicker(false)} onPick={(cr) => void addFromCreative(cr.id)} />
+      <LibraryPicker kind="video" open={videoPicker} onClose={() => ((clipTarget.current = null), setVideoPicker(false))} onPick={(cr) => void clipFromCreative(cr.id)} />
       <WriteCopyDialog open={writing} onClose={() => setWriting(false)} clientId={doc?.clientId ?? null} boxes={writing ? collectCopyFields(c()).fields.length : 0} onWrite={writeWithAi} onTemplates={() => setGallery(true)} onAddHeading={() => void addText("heading")} />
       <CheckDialog
         findings={findings}

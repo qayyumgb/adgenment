@@ -36,6 +36,8 @@ export type WorkQueue<T extends object> = {
   retryLimit: number;
   retryDelaySeconds: number;
   expireInMinutes: number;
+  /** How often an idle worker checks for a new job (default 10 s). Lower for work someone is waiting on. */
+  pollSeconds?: number;
 };
 
 /** The Postgres schema pg-boss keeps its tables in. */
@@ -106,7 +108,7 @@ export async function startJobs(recurring: Recurring[], queues: WorkQueue<any>[]
     for (const q of queues) {
       await ensureQueue(b, q.name, { policy: "stately", retryLimit: q.retryLimit, retryDelay: q.retryDelaySeconds, retryBackoff: true, expireInSeconds: q.expireInMinutes * 60 });
       for (let i = 0; i < q.concurrency; i++) {
-        await b.work<object>(q.name, { pollingIntervalSeconds: 10 }, async ([job]) => {
+        await b.work<object>(q.name, { pollingIntervalSeconds: q.pollSeconds ?? 10 }, async ([job]) => {
           await q.run(job.data);
         });
       }
