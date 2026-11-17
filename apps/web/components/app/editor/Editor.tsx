@@ -953,14 +953,14 @@ export default function Editor({ designId }: { designId: string }) {
         cv.getObjects().forEach((o) => cv.remove(o));
         await renderTemplate(cv, els, { W, H, pal: paletteFor(kit), fonts, logo, tplId: tpl.id });
         // A video design: the template arrives with its animation (C20a).
-        if (motionRef.current) applyTemplateMotion(cv, tpl, els, motionRef.current.duration);
+        if (motionRef.current && videoOpen) applyTemplateMotion(cv, tpl, els, motionRef.current.duration);
       } finally {
         h.quiet = false;
       }
       cv.requestRenderAll();
       recordRef.current();
       bump();
-      if (motionRef.current && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) timelineRef.current?.play(0);
+      if (motionRef.current && videoOpen && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) timelineRef.current?.play(0);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't use that template.");
     } finally {
@@ -2019,7 +2019,7 @@ export default function Editor({ designId }: { designId: string }) {
       />
       <VideoDialog open={watching} onClose={() => setWatching(false)} video={video} stale={videoStale} name={name} onSave={canEdit ? () => (setWatching(false), void (videoStale ? toCreatives() : exportVideo())) : undefined} saving={busy === "export"} />
       <ResizeDialog open={resizing} onClose={() => setResizing(false)} W={W} H={H} make={makeVersion} />
-      <TemplateGallery open={gallery} onClose={() => setGallery(false)} W={W} H={H} kit={kit} owner={kitOwner} onPick={(t) => void applyTemplate(t)} video={videoOpen && Boolean(motion)} />
+      <TemplateGallery open={gallery} onClose={() => setGallery(false)} W={W} H={H} kit={kit} owner={kitOwner} onPick={(t) => void applyTemplate(t)} video={videoOpen && Boolean(motion)} onVideo={canEdit ? (v) => v !== (videoOpen && Boolean(motion)) && toggleVideo() : undefined} />
       {dialog}
       <Dialog
         open={leaving !== null}

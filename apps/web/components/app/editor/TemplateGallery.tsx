@@ -14,9 +14,11 @@ import { templateMotion } from "./templateMotion";
  * client's brand kit, so what you click is what lands on the canvas.
  *
  * For a video design (`video`, C20a) every template comes with its
- * animation: pointing at a card (or focusing it) plays it.
+ * animation: pointing at a card (or focusing it) plays it. The choice between
+ * an image ad and a video ad is made here (`onVideo`), where a design starts;
+ * it can be changed later with the Video button in the editor.
  */
-export function TemplateGallery({ open, onClose, W, H, kit, owner, onPick, video = false }: { open: boolean; onClose: () => void; W: number; H: number; kit: BrandKit | null; owner: string; onPick: (t: Template) => void; video?: boolean }) {
+export function TemplateGallery({ open, onClose, W, H, kit, owner, onPick, video = false, onVideo }: { open: boolean; onClose: () => void; W: number; H: number; kit: BrandKit | null; owner: string; onPick: (t: Template) => void; video?: boolean; /** Switch the design between an image ad and a video ad. Left out: no choice is offered. */ onVideo?: (video: boolean) => void }) {
   const [cat, setCat] = useState<"All" | Category>("All");
   const [playing, setPlaying] = useState<string | null>(null);
   const start = (id: string) => video && !window.matchMedia("(prefers-reduced-motion: reduce)").matches && setPlaying(id);
@@ -37,8 +39,24 @@ export function TemplateGallery({ open, onClose, W, H, kit, owner, onPick, video
     >
       <div className="flex flex-col gap-4">
         {video && <style>{PREVIEW_KEYFRAMES}</style>}
-        <div className="overflow-x-auto">
-          <Segmented<"All" | Category> label="Category" value={cat} onChange={setCat} options={[{ value: "All", label: "All" }, ...CATEGORIES.map((c) => ({ value: c, label: c }))]} />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 overflow-x-auto">
+            <Segmented<"All" | Category> label="Category" value={cat} onChange={setCat} options={[{ value: "All", label: "All" }, ...CATEGORIES.map((c) => ({ value: c, label: c }))]} />
+          </div>
+          {onVideo && (
+            <span className="flex flex-none items-center gap-2">
+              <span className="text-xs text-ink-3">Make</span>
+              <Segmented<"image" | "video">
+                label="What to make"
+                value={video ? "video" : "image"}
+                onChange={(v) => onVideo(v === "video")}
+                options={[
+                  { value: "image", label: "Image ad" },
+                  { value: "video", label: "Video ad" },
+                ]}
+              />
+            </span>
+          )}
         </div>
         <div className={cn("grid max-h-[62vh] gap-3 overflow-y-auto pr-1", cols)}>
           {list.map((t) => (
