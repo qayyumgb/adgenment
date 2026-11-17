@@ -3,6 +3,7 @@ import type { Invite, WorkspaceRole } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { ROLE_LABEL, normalizeRole, type Access, type Role } from "../lib/access";
 import { workspaceEntitlement } from "../lib/plans";
+import { cancelSubscriptions } from "./billing.service";
 
 /**
  * Team (plan B6): members with role and client access, invites (stored,
@@ -294,6 +295,8 @@ export async function acceptInvite(token: string, user: { id: string; email: str
     : [];
   if (normalizeRole(invite.role) === "CLIENT_VIEWER" && !clientIds.length) throw new TeamError(409, "The clients on this invite no longer exist. Ask for a new invite.");
 
+  // An unused workspace that somehow has a plan: cancelled before it goes.
+  for (const m of others) await cancelSubscriptions(m.workspace.id);
   await prisma.$transaction(async (tx) => {
     for (const m of others) await tx.workspace.delete({ where: { id: m.workspace.id } });
     const member = await tx.workspaceMember.create({ data: { workspaceId: invite.workspaceId, userId: user.id, role: invite.role } });

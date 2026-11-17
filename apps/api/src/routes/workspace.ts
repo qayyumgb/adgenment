@@ -9,6 +9,7 @@ import { createClerkClient } from "@clerk/backend";
 import { dismissSetup, setupChecklist, skipSetupStep } from "../services/setup.service";
 import { creditStatus } from "../services/credits.service";
 import { deleteWorkspaceFiles } from "../services/assets.service";
+import { cancelSubscriptions } from "../services/billing.service";
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -210,6 +211,13 @@ router.delete("/", async (req: Request, res: Response, next: NextFunction) => {
       return res.status(400).json({ error: "Type the workspace name exactly to confirm." });
     }
     const user = await prisma.user.findUniqueOrThrow({ where: { id: req.dbUserId! } });
+    // Stop the plan first: a deleted workspace must never go on being charged.
+    try {
+      await cancelSubscriptions(workspace.id);
+    } catch (err) {
+      console.error("[billing] cancel before delete:", err instanceof Error ? err.message : err);
+      return res.status(502).json({ error: "Couldn't cancel your plan with Stripe, so nothing was deleted. Try again in a minute, or cancel the plan in Settings › Billing first." });
+    }
     await prisma.workspace.delete({ where: { id: workspace.id } });
     // Its editor files in R2 (C19).
     await deleteWorkspaceFiles(workspace.id);

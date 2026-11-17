@@ -8,6 +8,7 @@ import { safetyTick, startSafetyScheduler } from "./safety.service";
 import { retentionTick, startRetentionScheduler } from "./retention.service";
 import { cleanupDesigns, startDesignCleanupScheduler } from "./designs.service";
 import { videoRenderQueue } from "./video-render.service";
+import { billingReconcileTick, startBillingReconcileScheduler } from "./billing.service";
 import { startSyncScheduler, syncQueues, syncSchedulerEnabled, syncTick } from "./sync-scheduler.service";
 
 /**
@@ -39,6 +40,8 @@ export const RECURRING: Recurring[] = [
   { name: "smart-hours", cron: "20 * * * *", enabled: on("SMART_HOURS_ENABLED"), run: () => hoursTick(), timer: startHoursScheduler, expireInMinutes: 45 },
   // Locked workspaces (C15b): access removed at 30 days, deletion emails and deletions. Daily.
   { name: "retention", cron: "40 3 * * *", enabled: on("RETENTION_ENABLED"), run: () => retentionTick(), timer: startRetentionScheduler, expireInMinutes: 60 },
+  // Billing (C11): every paying workspace compared with Stripe, so a missed webhook is caught within a day.
+  { name: "billing-reconcile", cron: "25 4 * * *", enabled: on("BILLING_RECONCILE_ENABLED"), run: () => billingReconcileTick(), timer: startBillingReconcileScheduler, expireInMinutes: 30 },
   // Creative editor (C19): unsaved designs left for a day, and uploads unused for 30 days (files deleted from R2).
   { name: "design-cleanup", cron: "47 * * * *", enabled: on("DESIGN_CLEANUP_ENABLED"), run: () => cleanupDesigns(), timer: startDesignCleanupScheduler, expireInMinutes: 30 },
 ];

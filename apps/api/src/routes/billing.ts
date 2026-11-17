@@ -18,10 +18,10 @@ const workspaceOf = async (req: Request) => {
   return a.workspaceId;
 };
 
-/** GET /billing/status */
+/** GET /billing/status?fresh=1 — `fresh`: check with Stripe first (the billing page; the app-wide banner doesn't). */
 router.get("/status", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.json(await billingStatus(await workspaceOf(req)));
+    res.json(await billingStatus(await workspaceOf(req), { fresh: req.query.fresh === "1" }));
   } catch (err) {
     next(err);
   }

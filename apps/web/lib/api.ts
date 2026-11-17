@@ -654,6 +654,8 @@ export interface BillingStatus {
   trialEndsAt: string | null;
   trialDaysLeft: number;
   renewsAt: string | null;
+  /** A smaller plan chosen for the next renewal: nothing changes (or is charged) until `at`. */
+  pending?: { tier: PaidTier; interval: BillingInterval; at: string | null } | null;
   cancelAtPeriodEnd: boolean;
   hasCustomer: boolean;
   limits: { clients: number | null; seats: number | null; credits: number | null };
@@ -2147,7 +2149,8 @@ export function useApiClient() {
     getBilling: () => apiFetch<BillingUsage>("/workspace/billing"),
     getSetup: (clientId?: string | null) => apiFetch<SetupChecklist>(`/workspace/setup${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`),
     getCredits: () => apiFetch<CreditStatus>("/workspace/credits"),
-    getBillingStatus: () => apiFetch<BillingStatus>("/billing/status"),
+    /** `fresh`: the server checks with Stripe first (use on the billing page, not in app-wide chrome). */
+    getBillingStatus: (fresh = false) => apiFetch<BillingStatus>(`/billing/status${fresh ? "?fresh=1" : ""}`),
     /* Superadmin (C15b) */
     /* Creative editor (C19) */
     getDesigns: (clientId?: string | null) => apiFetch<{ designs: DesignSummary[] }>(`/designs${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`),
