@@ -600,7 +600,7 @@ export default function Editor({ designId }: { designId: string }) {
       void c.dispose();
       canvasRef.current = null;
     };
-    // Built once per design. Not on every change to `doc`: saving to Creatives updates it, and rebuilding
+    // Built once per design. Not on every change to `doc`: Save to Creatives updates it, and rebuilding
     // would reload the design as it was when the page opened (and autosave would then write that back).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc?.id]);

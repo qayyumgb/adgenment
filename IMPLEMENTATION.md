@@ -485,6 +485,12 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-17 — Editor: canvas no longer resets after Save to Creatives
+
+- **Bug (live since C19):** after **Save to Creatives** the editor canvas was thrown away and rebuilt from the design **as it was when the page opened** (blank for a new design; the opened draft without the edits made since). The canvas was built in an effect that depended on the whole `doc`, and saving updates `doc` (its `creativeId`). Any edit after that autosaved the old version over the real one.
+- **Fix** (`apps/web/components/app/editor/Editor.tsx`): the effect depends on `doc?.id`, so the canvas is built once per design. Same fix as on `feature/video-ads`, where the bug was found in browser testing.
+- **Check after deploy:** open a draft, change something, Save to Creatives: the canvas stays as it is; keep editing, reload: the edits are there.
+
 ### 2026-11-17 — C20b: editing a video at one moment (branch `feature/video-ads`)
 
 Found in the first browser test: while editing, layers that come in later covered the earlier ones (a second clip hid the first; an end card hid the whole ad).
@@ -500,7 +506,7 @@ Found in the first browser test: while editing, layers that come in later covere
 
 Claude's first pass through `docs/VIDEO_ADS_TEST_GUIDE.md` in Chrome on the local dev servers (results table in the guide).
 
-- **Canvas went blank after Save to Creatives** (`Editor.tsx`, **also on `main`, so in production for image ads**): the canvas was built in an effect that depended on the whole `doc`; saving to Creatives updates `doc` (its `creativeId`), so the canvas was disposed and rebuilt from the design **as it was when the page opened**. On a new design that is blank; on an opened draft it is the draft without the edits made since. Any later edit would autosave that old version over the real one (no data was lost in this test: nothing was edited after it went blank). Fix: the effect depends on `doc?.id`, so the canvas is built once per design. **Needs the same one-line fix on `main`.**
+- **Canvas went blank after Save to Creatives** (`Editor.tsx`, **also on `main`, so in production for image ads**): the canvas was built in an effect that depended on the whole `doc`; saving to Creatives updates `doc` (its `creativeId`), so the canvas was disposed and rebuilt from the design **as it was when the page opened**. On a new design that is blank; on an opened draft it is the draft without the edits made since. Any later edit would autosave that old version over the real one (no data was lost in this test: nothing was edited after it went blank). Fix: the effect depends on `doc?.id`, so the canvas is built once per design. **Also fixed on `main`** (entry above).
 - **Video renders waited up to 10 s before starting** ("Starting…"): work queues checked for jobs every 10 s. `WorkQueue.pollSeconds` (default 10); the video queue uses 2. Measured: 6.3 s wait before, 0.3 s after.
 - **Undo didn't restore the video's length** (adding a clip or an end card lengthens it; undoing left the extra seconds as a frozen last frame): each undo step now carries `motion` and restores it. Checked: end card 10 → 12.5 s, undo → 10, redo → 12.5.
 - **Verified working:** image / video switch on the template screen with animated previews; template applied animated; play, scrub (correct frame at 0.4 s), click-to-edit restoring the design; Make video through the real queue and storage; MP4 upload into a design, trim panel, scrubbing footage; second clip fading in at the right time; trimming moving the next clip and the end; end card without a logo; render with two clips and an end card (crossfade frame and no click at the join checked in the file); Save to Creatives as a Video creative that plays in the drawer; reload keeps everything; no console errors.
