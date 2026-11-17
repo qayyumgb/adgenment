@@ -6,6 +6,7 @@ import { storageConfigured } from "../lib/storage";
 import { apiBase, MAX_UPLOAD_BYTES, readAsset, verifyAssetLink } from "../services/assets.service";
 import { addBrandLogo, addImage, copyDesign, createDesign, deleteDesign, exportDesign, getDesign, importCreativeImage, listDesigns, saveDesign, savePreview, SIZES } from "../services/designs.service";
 import { exportDesignVideo, getVideoRender, startVideoRender } from "../services/video-render.service";
+import { addClip, MAX_CLIP_BYTES } from "../services/clips.service";
 import { addBrandLogo as addKitLogo, getBrandKit, removeBrandLogo, updateBrandKit } from "../services/brand.service";
 
 /**
@@ -19,11 +20,33 @@ import { addBrandLogo as addKitLogo, getBrandKit, removeBrandLogo, updateBrandKi
 
 export const assetsRouter = Router();
 
+// A video player asks for one file in many pieces (byte ranges), and scrubbing asks again and again:
+// the last few videos are kept in memory for a short while instead of being fetched from storage each time.
+type Served = NonNullable<Awaited<ReturnType<typeof readAsset>>>;
+const recent = new Map<string, { f: Served; at: number }>();
+const RECENT_MS = 3 * 60_000;
+const RECENT_MAX = 4;
+async function readForServing(id: string): Promise<Served | null> {
+  const now = Date.now();
+  for (const [k, v] of recent) if (now - v.at > RECENT_MS) recent.delete(k);
+  const hit = recent.get(id);
+  if (hit) {
+    hit.at = now;
+    return hit.f;
+  }
+  const f = await readAsset(id);
+  if (f && f.asset.mime.startsWith("video/")) {
+    if (recent.size >= RECENT_MAX) recent.delete([...recent].sort((a, b) => a[1].at - b[1].at)[0][0]);
+    recent.set(id, { f, at: now });
+  }
+  return f;
+}
+
 /** GET /assets/:id/file?exp=&sig= */
 assetsRouter.get("/:id/file", async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!verifyAssetLink(req.params.id, req.query.exp, req.query.sig)) return res.status(403).json({ error: "This link has expired." });
-    const f = await readAsset(req.params.id);
+    const f = await readForServing(req.params.id);
     if (!f) return res.status(404).json({ error: "Not found" });
     const maxAge = Math.max(0, Math.floor((Number(req.query.exp) - Date.now()) / 1000));
     res.set("Content-Type", f.asset.mime);
@@ -51,6 +74,7 @@ export const designsRouter = Router();
 designsRouter.use(requireAuth);
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
+const uploadClip = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_CLIP_BYTES, files: 1 } });
 const accessOf = async (req: Request) => {
   const a = await getAccess(req);
   if (!a) throw Object.assign(new Error("No workspace found"), { status: 404 });
@@ -155,6 +179,17 @@ designsRouter.post("/:id/preview", upload.single("image"), async (req: Request, 
 designsRouter.post("/:id/export", upload.single("image"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await exportDesign(await accessOf(req), req.dbUserId!, apiBase(req), req.params.id, fileOf(req)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /designs/:id/clips (multipart video) — footage placed in the design (C20b): converted to a standard MP4 and stored. */
+designsRouter.post("/:id/clips", uploadClip.single("video"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!storageConfigured()) throw Object.assign(new Error("File storage isn't set up on this server yet (R2)."), { status: 503 });
+    if (!req.file?.buffer?.length) throw Object.assign(new Error("No video received (field name must be 'video')."), { status: 400 });
+    res.status(201).json(await addClip(await accessOf(req), req.dbUserId!, apiBase(req), req.params.id, req.file.buffer));
   } catch (err) {
     next(err);
   }

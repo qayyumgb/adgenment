@@ -138,7 +138,7 @@ export async function resizeDesign(source: Json, from: Size, to: Size, kit: Bran
         } else if (part === "shape" || part === "button") {
           overrides.set(slot, { fill: x.fill, opacity: x.opacity });
         } else if (part === "frame" && x.empty === false && typeof x.src === "string" && typeof x.assetId === "string") {
-          photos.set(slot, { src: x.src, assetId: x.assetId, focusX: x.focusX as number, focusY: x.focusY as number, zoom: x.zoom as number });
+          photos.set(slot, { src: x.src, assetId: x.assetId, focusX: x.focusX as number, focusY: x.focusY as number, zoom: x.zoom as number, ...(x.clip ? { clip: { clipStart: Number(x.clipStart) || 0, clipEnd: Number(x.clipEnd) || 0, clipDuration: Number(x.clipDuration) || 0, muted: Boolean(x.muted), volume: typeof x.volume === "number" ? x.volume : 1 } } : {}) });
         } else if (part === "logo" && typeof x.src === "string" && typeof x.assetId === "string") {
           logo = { id: x.assetId, url: x.src };
         }

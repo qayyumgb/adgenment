@@ -21,7 +21,7 @@ import type { AnimObj, MotionPreview } from "./motionPreview";
  */
 
 const field = "h-8 rounded-ctl border border-line-2 bg-surface px-2 text-[13px] text-ink outline-none focus:border-brand focus:ring-[3px] focus:ring-brand-soft disabled:opacity-60";
-const LENGTHS = [5, 6, 8, 10, 12, 15, 20, 30];
+const LENGTHS = [5, 6, 8, 10, 12, 15, 20, 30, 45, 60];
 const LABEL_W = 136;
 
 const clock = (t: number) => `0:${String(Math.floor(t)).padStart(2, "0")}.${Math.floor((t % 1) * 10)}`;
@@ -93,17 +93,20 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
     const tick = (now: number) => {
       const at = (now - start) / 1000;
       if (at >= to) return p.exit();
-      p.draw(at);
+      p.draw(at, true);
       setT(at);
       raf.current = requestAnimationFrame(tick);
     };
-    p.draw(from);
+    p.draw(from, true);
     setT(from);
     raf.current = requestAnimationFrame(tick);
   };
   const pause = () => {
     stopLoop();
     setPlaying(false);
+    // Footage stops with the clock.
+    const p = getPreview();
+    if (p?.active) p.draw(t);
   };
   const seek = (at: number) => {
     const p = attach();
@@ -150,12 +153,18 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
   };
 
   const shown = layers.filter((o) => o.visible !== false);
-  const tickEvery = duration <= 10 ? 1 : duration <= 20 ? 2 : 5;
+  const tickEvery = duration <= 10 ? 1 : duration <= 20 ? 2 : duration <= 40 ? 5 : 10;
   const ticks = Array.from({ length: Math.floor(duration / tickEvery) + 1 }, (_, i) => i * tickEvery);
   const rendering = making || video?.status === "queued" || video?.status === "rendering";
   const pct = video && (video.status === "queued" || video.status === "rendering") ? video.progress : 0;
   const ready = video?.status === "done" && Boolean(video.videoUrl);
   const animated = shown.some((o) => cleanAnim(o.anim, duration));
+  const clipOf = (o: AnimObj) => {
+    const k = o as AnimObj & { clip?: boolean; clipStart?: number; clipEnd?: number };
+    if (!k.clip) return null;
+    const a = cleanAnim(o.anim, duration);
+    return { at: a && a.in !== "none" ? a.at ?? 0 : 0, length: Math.max(0, (k.clipEnd ?? 0) - (k.clipStart ?? 0)) };
+  };
 
   return (
     <div data-video-ui className="flex-none border-t border-line bg-surface" aria-label="Video timeline">
@@ -271,7 +280,11 @@ export const Timeline = forwardRef<TimelineHandle, TimelineProps>(function Timel
                         <span className="pointer-events-none relative block truncate px-1.5 text-[10px] font-medium leading-[16px] text-brand-ink">{label}</span>
                       </div>
                     ) : (
-                      <span className="pointer-events-none absolute inset-0 truncate px-1.5 text-[10px] leading-[18px] text-ink-3">On screen the whole time</span>
+                      <span className="pointer-events-none absolute inset-0 truncate px-1.5 text-[10px] leading-[18px] text-ink-3">{clipOf(o) ? "" : "On screen the whole time"}</span>
+                    )}
+                    {clipOf(o) && (
+                      // Footage: how much of the video this clip fills (it holds its last frame after that).
+                      <span className="pointer-events-none absolute bottom-0 left-0 h-[3px] rounded-full bg-[#0ea5e9]" style={{ left: `${(clipOf(o)!.at / duration) * 100}%`, width: `${Math.min(100 - (clipOf(o)!.at / duration) * 100, (clipOf(o)!.length / duration) * 100)}%` }} title="Footage" aria-hidden="true" />
                     )}
                     {canEdit && hasIn && (
                       <span
@@ -374,6 +387,10 @@ export function AnimationFields({ o, duration, canEdit, onChange, onRemove }: { 
       {inn !== "none" && (
         <>
           <Secs label="Starts at" value={at} min={0} max={Math.max(0, (out !== "none" ? outAt : duration) - 0.2)} disabled={!canEdit} onChange={(v) => onChange({ at: v })} />
+        </>
+      )}
+      {inn !== "none" && inn !== "appear" && (
+        <>
           <Secs label="Takes" value={a?.dur ?? DEFAULT_IN_DUR} min={0.1} max={5} disabled={!canEdit} onChange={(v) => onChange({ dur: v }, "in")} />
         </>
       )}
@@ -382,6 +399,10 @@ export function AnimationFields({ o, duration, canEdit, onChange, onRemove }: { 
       {out !== "none" && (
         <>
           <Secs label="Gone by" value={outAt} min={Math.min(duration, at + 0.2)} max={duration} disabled={!canEdit} onChange={(v) => onChange({ outAt: v })} />
+        </>
+      )}
+      {out !== "none" && out !== "cut" && (
+        <>
           <Secs label="Takes" value={a?.outDur ?? DEFAULT_OUT_DUR} min={0.1} max={5} disabled={!canEdit} onChange={(v) => onChange({ outDur: v }, "out")} />
         </>
       )}
@@ -390,6 +411,50 @@ export function AnimationFields({ o, duration, canEdit, onChange, onRemove }: { 
           Remove animation
         </button>
       )}
+    </div>
+  );
+}
+
+/* ───────────────────────── Footage in the selected frame ───────────────────────── */
+
+export type ClipFrame = AnimObj & { clip: boolean; clipStart: number; clipEnd: number; clipDuration: number; muted: boolean; volume: number };
+
+/** Which part of a clip plays, and its sound. `final` false while a slider is dragged. */
+export function ClipFields({ o, duration, canEdit, onChange, onFit, onAddAfter }: { o: ClipFrame; duration: number; canEdit: boolean; onChange: (patch: Partial<Pick<ClipFrame, "clipStart" | "clipEnd" | "muted" | "volume">>, final?: boolean) => void; /** Make the video end where this clip ends. */ onFit: () => void; /** Upload another clip to play after this one. */ onAddAfter: () => void }) {
+  const total = o.clipDuration || o.clipEnd || 0;
+  const length = Math.max(0, o.clipEnd - o.clipStart);
+  const a = cleanAnim(o.anim, duration);
+  const at = a && a.in !== "none" ? a.at ?? 0 : 0;
+  const room = duration - at;
+  const fit = Math.min(MAX_DURATION, Math.max(MIN_DURATION, Math.round((at + length) * 10) / 10));
+  return (
+    <div data-video-ui className="flex flex-col gap-2.5">
+      <Secs label="Starts at" value={o.clipStart} min={0} max={Math.max(0, o.clipEnd - 0.5)} disabled={!canEdit} onChange={(v) => onChange({ clipStart: v })} />
+      <Secs label="Ends at" value={o.clipEnd} min={Math.min(total, o.clipStart + 0.5)} max={total} disabled={!canEdit} onChange={(v) => onChange({ clipEnd: v })} />
+      <p className="m-0 text-[11px] leading-snug text-ink-3">
+        Plays {length.toFixed(1)} s of {total.toFixed(1)} s.{" "}
+        {at > 0 ? `Starts ${at.toFixed(1)} s into the video. ` : ""}
+        {Math.abs(length - room) < 0.05 ? "It runs to the end of the video." : length < room ? "After it ends, its last frame stays until the video ends or another clip covers it." : `The video ends ${(length - room).toFixed(1)} s before this clip does.`}
+      </p>
+      {canEdit && Math.abs(fit - duration) >= 0.1 && (
+        <button type="button" onClick={onFit} className="self-start text-left text-xs font-medium text-brand-ink underline-offset-2 hover:underline">
+          Make the video {fit} s long (end with this clip)
+        </button>
+      )}
+      {canEdit && (
+        <button type="button" onClick={onAddAfter} className="self-start text-left text-xs font-medium text-brand-ink underline-offset-2 hover:underline">
+          + Add a clip after this one
+        </button>
+      )}
+      <label className="flex items-center justify-between gap-2 text-xs text-ink-2">
+        Sound
+        <span className="flex items-center gap-2">
+          <input type="range" min={0} max={1} step={0.05} value={o.muted ? 0 : o.volume} disabled={!canEdit} onChange={(e) => onChange({ volume: Number(e.target.value), muted: Number(e.target.value) === 0 }, false)} onPointerUp={() => onChange({}, true)} onKeyUp={() => onChange({}, true)} className="w-[84px] accent-[#6448f2]" aria-label="Clip volume" />
+          <button type="button" disabled={!canEdit} onClick={() => onChange({ muted: !o.muted, ...(o.muted && o.volume === 0 ? { volume: 1 } : {}) })} className="w-[52px] rounded-md border border-line-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-2 hover:border-brand hover:text-brand-ink disabled:opacity-60" aria-pressed={o.muted}>
+            {o.muted ? "Unmute" : "Mute"}
+          </button>
+        </span>
+      </label>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { FabricImage, Textbox, util, type FabricObject, type StaticCanvas } from "fabric";
 import { fitScale } from "./canvas";
 import { loadFont, nearestWeight } from "./fonts";
-import { makeFrame, type FrameImage } from "./frames";
+import { loadVideo, makeFrame, type FrameImage } from "./frames";
 import { makeShape } from "./shapes";
 import { paint, type Palette, type StackItem, type TEl } from "./templates";
 
@@ -19,7 +19,7 @@ import { paint, type Palette, type StackItem, type TEl } from "./templates";
  * they deleted stay deleted).
  */
 
-export type FramePhoto = { src: string; assetId: string; focusX?: number; focusY?: number; zoom?: number };
+export type FramePhoto = { src: string; assetId: string; focusX?: number; focusY?: number; zoom?: number; /** Footage (C20b): the clip's settings. */ clip?: { clipStart: number; clipEnd: number; clipDuration: number; muted: boolean; volume: number } };
 type Opts = {
   W: number;
   H: number;
@@ -94,8 +94,14 @@ export async function renderTemplate(c: StaticCanvas, els: TEl[], o: Opts) {
       const photo = o.photos?.get(slot);
       if (photo) {
         try {
-          const img = await util.loadImage(photo.src, { crossOrigin: "anonymous" });
-          f.setPhoto(img, photo.assetId);
+          if (photo.clip) {
+            f.setClip(await loadVideo(photo.src), { id: photo.assetId, url: photo.src, durationMs: photo.clip.clipDuration * 1000 });
+            f.set({ ...photo.clip } as Partial<FrameImage>);
+            f.seekPoster();
+          } else {
+            const img = await util.loadImage(photo.src, { crossOrigin: "anonymous" });
+            f.setPhoto(img, photo.assetId);
+          }
           f.set({ focusX: photo.focusX ?? 0.5, focusY: photo.focusY ?? 0.5, zoom: photo.zoom ?? 1 } as Partial<FrameImage>);
         } catch {
           /* the frame stays empty rather than failing the whole layout */

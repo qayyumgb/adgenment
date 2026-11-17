@@ -147,7 +147,7 @@ export async function copyDesign(access: Access, userId: string, base: string, s
   const d = await prisma.design.create({ data: { workspaceId: access.workspaceId, clientId: src.clientId, name, width: size.width, height: size.height, data: {}, createdById: userId, kept: true } });
   try {
     for (const a of sources) {
-      const copy = await copyAsset(a, { designId: d.id, createdById: userId, kind: "upload" });
+      const copy = await copyAsset(a, { designId: d.id, createdById: userId, kind: a.kind === "clip" ? "clip" : "upload" });
       text = text.split(`"asset:${a.id}"`).join(`"asset:${copy.id}"`);
     }
     const saved = await prisma.design.update({ where: { id: d.id }, data: { data: JSON.parse(text) as Prisma.InputJsonValue } });
@@ -272,7 +272,7 @@ export async function cleanupDesigns(now = new Date()) {
       console.error(`[designs] cleanup of ${d.id}:`, err instanceof Error ? err.message : err);
     }
   }
-  const old = await prisma.asset.findMany({ where: { kind: "upload", designId: { not: null }, createdAt: { lt: new Date(now.getTime() - UNUSED_UPLOAD_AFTER_MS) } }, select: { id: true, designId: true } });
+  const old = await prisma.asset.findMany({ where: { kind: { in: ["upload", "clip"] }, designId: { not: null }, createdAt: { lt: new Date(now.getTime() - UNUSED_UPLOAD_AFTER_MS) } }, select: { id: true, designId: true } });
   const byDesign = new Map<string, string[]>();
   for (const a of old) byDesign.set(a.designId!, [...(byDesign.get(a.designId!) ?? []), a.id]);
   let uploads = 0;

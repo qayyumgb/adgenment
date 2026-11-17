@@ -528,6 +528,15 @@ export interface BrandKit {
   logos: DesignImage[];
   updatedAt: string | null;
 }
+/** C20b: a video clip stored for a design. */
+export interface DesignClip {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+  durationMs: number;
+  hasAudio: boolean;
+}
 /** C20a: a design rendered to an MP4 (in progress or finished). */
 export interface VideoRender {
   id: string;
@@ -1848,10 +1857,10 @@ export function useApiClient() {
   // `getToken` from Clerk is itself stable across renders.
   return useMemo(() => {
     /** A multipart image upload (field "image") for the creative editor; `onProgress` gets 0–1 as it uploads. */
-    async function uploadDesignFile<T>(path: string, file: Blob, onProgress?: (share: number) => void): Promise<T> {
+    async function uploadDesignFile<T>(path: string, file: Blob, onProgress?: (share: number) => void, field: "image" | "video" = "image"): Promise<T> {
       const token = await getToken();
       const form = new FormData();
-      form.append("image", file, "image.png");
+      form.append(field, file, field === "video" ? "clip" : "image.png");
       return new Promise<T>((resolve, reject) => {
         const x = new XMLHttpRequest();
         x.open("POST", `${API_BASE}/api${path}`);
@@ -2161,6 +2170,8 @@ export function useApiClient() {
       apiFetch<{ fields: { id: string; text: string }[] }>("/ai/design-copy", { method: "POST", body: JSON.stringify(data) }),
     /** One-click resize (C19b): a new design in another size; the API copies the images it uses. */
     copyDesign: (id: string, data: { name: string; width: number; height: number; data: Record<string, unknown> }) => apiFetch<DesignSummary>(`/designs/${id}/copy`, { method: "POST", body: JSON.stringify(data) }),
+    /** C20b: footage for a design (up to 100 MB, 3 minutes): converted to a standard MP4 on the server, which takes a moment after the upload reaches 100%. */
+    uploadDesignClip: (id: string, file: Blob, onProgress?: (share: number) => void) => uploadDesignFile<DesignClip>(`/designs/${id}/clips`, file, onProgress, "video"),
     /** C20a: the design's latest video render (null when it has none); poll while it's queued or rendering. */
     getDesignVideo: (id: string) => apiFetch<{ render: VideoRender | null }>(`/designs/${id}/video`),
     /** C20a: render the saved design to an MP4. Answers at once; follow it with getDesignVideo. */

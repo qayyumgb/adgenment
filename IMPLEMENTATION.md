@@ -485,6 +485,30 @@ These are the cheap, high-value changes that gate real user signups. Deferred un
 
 > Most recent first. Add a new dated entry for every significant change.
 
+### 2026-11-16 — C20b footage, step 2: clips in a row and a brand end card (branch `feature/video-ads`)
+
+- **A clip starts when its layer comes in.** Footage plays from its layer's entrance time (`anim.at`), in the preview and in the render (the decoder waits, the sound is delayed to match, each clip's sound gets a short fade at both ends). So a sequence is simply clips stacked in the same frame, each coming in as the one below ends.
+- **Two new moves** (`motion.ts`, both copies): entrance **Appear (cut)** (hidden until its time, then simply there) and exit **Disappear (cut)**. A crossfade is the ordinary Fade in on the next clip. Useful for any layer, not only footage.
+- **Adding the next clip:** "Add another video clip" (left panel) or "+ Add a clip after this one" (Video clip section) uploads a clip into a copy of the previous clip's frame, stacked just above it, fading in over its last 0.5 s; the video grows to fit. Change the entrance to Appear for a hard cut.
+- **Trimming ripples:** shortening or lengthening a clip moves the clips after it by the same amount, and the video's end too when it ended with the sequence.
+- **Length:** videos can now be up to **60 s** (was 30); the timeline offers 45 and 60.
+- **Brand end card** (left panel, when the timeline is open): the last 2.5 s on the brand's main colour with the brand kit's logo (copied into the design) and a line of text in the heading font, each animated; the video is lengthened by 2.5 s when there's room. One undo step.
+- **Timeline:** a clip's blue footage bar now starts where the clip starts.
+- **Checks:** `scripts/video-clip-test.ts` now renders two parts of a clip in sequence with a crossfade and different volumes (5 s in 4.2 s; the blended frame at 2.75 s looked at; sound present). Type check and eslint clean. **Not tested in the browser.**
+
+### 2026-11-16 — C20b footage, step 1: a video clip as a layer (branch `feature/video-ads`)
+
+Step 1 of C20b: upload footage into a design, trim it, set its sound, and render it with everything on top.
+
+- **A clip lives in a photo frame** (`editor/frames.ts`): `FrameImage` can hold a `<video>` instead of a photo (`clip: true`, `clipStart`, `clipEnd`, `clipDuration`, `muted`, `volume`). So cover-fit, focus point, zoom, the 13 frame shapes, templates' photo frames, duplicate and resize all work on footage without new code paths. While editing it shows the frame at `clipStart`.
+- **Upload** (`POST /designs/:id/clips`, `services/clips.service.ts`): up to 100 MB and 3 minutes. Every upload is converted once to a standard MP4 (H.264, upright, at most 1920 px, 30 fps, a keyframe each second, AAC; a silent track is added when the original has no sound), so it plays in every browser (iPhone HEVC / MOV included) and trims accurately. Stored as an `Asset` of kind `clip` with the new `durationMs` column. Runs inside the upload request (the editor shows "Preparing video").
+- **Editor:** Upload video (left panel) adds it as a full-size frame behind everything; with a frame selected, or a file dropped on a frame, it goes into that frame. The first clip sets the video's length (3 to 30 s) unless layers are already timed. Right sidebar **Video clip**: starts at / ends at, sound slider and mute, and "Make the video N s long".
+- **Preview** (`MotionPreview`): footage plays with the timeline, with its sound, scrubs with the ruler, and returns to its first frame when the preview ends.
+- **Render** (`services/video/render.ts`): one ffmpeg decoder per clip feeds a small canvas that the frame draws, one frame per output frame; sound from every unmuted clip is mixed (each at its volume) into the MP4 as AAC. A clip shorter than the video holds its last frame. ffmpeg helpers moved to `services/video/ffmpeg.ts` (`probe` reads length, size and whether there is sound).
+- **Files:** clips are copied with the design on resize (keeping their kind and extension), cleaned up 30 days after they leave a design, and deleted with it. `/assets/:id/file` keeps the last few videos in memory for 3 minutes, since a player asks for the same file in many byte ranges.
+- **Checks:** `npx tsx scripts/video-clip-test.ts` (test footage in a rounded frame under an animated headline: 5 s rendered in 3.4 s, sound present, frame looked at); the conversion run on a silent 4K 60 fps clip (→ 1920×1080 with a sound track, 1.7 s). Type check and eslint clean. **Not tested in the browser:** upload, preview playback, trim controls.
+- **Needs:** `prisma db push` for `Asset.durationMs` (done on the local database); restart the API. **Left for later steps:** captions, several clips in a row with cuts / crossfades, picking videos from Creatives, a "Your videos" list.
+
 ### 2026-11-16 — C20a video ads, step 4: save to Creatives and publish (branch `feature/video-ads`)
 
 - **Save to Creatives** (editor top bar, and in the video dialog): a design with any animated layer is saved as a **video ad**. If the current video is up to date it is used; otherwise the design is saved, rendered, and then saved to Creatives in one go (the button stays busy; the timeline shows progress). A design without animation is saved as an image, as before.

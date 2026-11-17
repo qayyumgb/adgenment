@@ -51,7 +51,7 @@ import {
   Eraser,
   Film,
 } from "lucide-react";
-import { useApiClient, type BrandKit, type Creative, type DesignDoc, type DesignImage, type VideoRender } from "@/lib/api";
+import { useApiClient, type BrandKit, type Creative, type DesignClip, type DesignDoc, type DesignImage, type VideoRender } from "@/lib/api";
 import { useClientScope } from "@/components/app/shell/ClientContext";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
@@ -60,7 +60,7 @@ import { useAccess } from "@/components/app/team/access";
 import { DEFAULT_FONT, FONTS, addFontStylesheet, loadFont, nearestWeight } from "./fonts";
 import { EXTRA_PROPS, alignTo, dataUrlToBlob, fitScale, fontsIn, hydrate, isLocked, layerName, serialize, setLocked, snap, type Align, type Guides } from "./canvas";
 import { FRAME_SHAPES, SHAPES, ShapeIcon, makeShape, type ShapeKind } from "./shapes";
-import { FrameImage, isFrame, makeFrame } from "./frames";
+import { FrameImage, isFrame, loadVideo, makeFrame } from "./frames";
 import { BrandColors, ColorPicker } from "./ColorPicker";
 import { BrandPanel } from "./BrandPanel";
 import { TemplateGallery } from "./TemplateGallery";
@@ -72,9 +72,9 @@ import { collectCopyFields } from "./copyFields";
 import { WriteCopyDialog } from "./WriteCopyDialog";
 import { checkDesign, type Finding } from "./designCheck";
 import { CheckDialog } from "./CheckDialog";
-import { DEFAULT_DURATION, clampDuration, cleanAnim, type Anim, type DocMotion } from "./motion";
+import { DEFAULT_DURATION, MAX_DURATION, clampDuration, cleanAnim, type Anim, type DocMotion } from "./motion";
 import { MotionPreview, autoAnimate } from "./motionPreview";
-import { AnimationFields, Timeline, VideoDialog, type TimelineHandle } from "./VideoPanel";
+import { AnimationFields, ClipFields, Timeline, VideoDialog, type ClipFrame, type TimelineHandle } from "./VideoPanel";
 import { applyTemplateMotion } from "./templateMotion";
 import { TEMPLATES } from "./templates";
 
@@ -97,6 +97,9 @@ const SAFE_BOTTOM = 0.2;
 const SWATCHES = ["#ffffff", "#111827", "#6448f2", "#0ea5e9", "#16a34a", "#f59e0b", "#ef4444", "#f3f4f6", "#1e3a8a", "#fde68a"];
 const EMPTY_COLORS: string[] = [];
 const HISTORY_MAX = 60;
+// Footage (C20b): the server's limits, checked here first so a too-big file fails before it uploads.
+const MAX_CLIP_BYTES = 100 * 1024 * 1024;
+const CLIP_TYPES = "video/mp4,video/quicktime,video/webm";
 
 type Obj = FabricObject & { name?: string; assetId?: string; locked?: boolean; anim?: Anim | null };
 type TextObj = Textbox & { name?: string };
@@ -188,6 +191,9 @@ export default function Editor({ designId }: { designId: string }) {
   const canvasRef = useRef<Canvas | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bgFileRef = useRef<HTMLInputElement>(null);
+  const clipFileRef = useRef<HTMLInputElement>(null);
+  // Where the next picked video goes: into this frame, after this clip, or (null) wherever fits.
+  const clipTarget = useRef<{ into?: FrameImage; after?: FrameImage } | null>(null);
   const history = useRef<{ stack: string[]; at: number; quiet: boolean }>({ stack: [], at: -1, quiet: true });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The revision this editor's copy is based on (a save from an older copy is refused).
@@ -262,7 +268,7 @@ export default function Editor({ designId }: { designId: string }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when the design's client changes
   }, [kitClient]);
-  const [incoming, setIncoming] = useState<{ stage: "uploading" | "preparing" | "adding"; share: number } | null>(null);
+  const [incoming, setIncoming] = useState<{ stage: "uploading" | "preparing" | "adding"; share: number; video?: boolean } | null>(null);
   const onUploadProgress = (share: number) => setIncoming({ stage: share >= 1 ? "preparing" : "uploading", share });
 
   const bump = () => setRev((r) => r + 1);
@@ -652,11 +658,18 @@ export default function Editor({ designId }: { designId: string }) {
   /** Drop a file from the computer: into the frame under the pointer, or as a new image there. */
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    const file = Array.from(e.dataTransfer.files ?? []).find((x) => x.type.startsWith("image/"));
+    const dropped = Array.from(e.dataTransfer.files ?? []);
+    const file = dropped.find((x) => x.type.startsWith("image/"));
+    const footage = dropped.find((x) => x.type.startsWith("video/"));
     const cv = canvasRef.current;
-    if (!file || !cv || !canEdit) return;
+    if ((!file && !footage) || !cv || !canEdit) return;
     const p = cv.getScenePoint(e.nativeEvent as unknown as MouseEvent);
     const under = (cv.getObjects().filter((o) => isFrame(o) && o.visible !== false) as unknown as FrameImage[]).reverse().find((fr) => fr.containsPoint(p));
+    // A video file: into the frame under the pointer, or as the ad's background video.
+    if (!file) {
+      cv.discardActiveObject();
+      return uploadClip(footage, under ?? null);
+    }
     setBusy("upload");
     setIncoming({ stage: "uploading", share: 0 });
     try {
@@ -755,6 +768,166 @@ export default function Editor({ designId }: { designId: string }) {
     } finally {
       setBusy(null);
       setIncoming(null);
+    }
+  };
+
+  /** Put a stored clip on the canvas (C20b): in the given or selected frame, else as a new frame filling the ad behind everything. */
+  /** When a layer's footage starts playing: when the layer comes in. */
+  const clipAt = (fr: FrameImage) => {
+    const a = cleanAnim((fr as Obj).anim, duration);
+    return a && a.in !== "none" ? a.at ?? 0 : 0;
+  };
+  const clipEndsAt = (fr: FrameImage) => clipAt(fr) + Math.max(0, fr.clipEnd - fr.clipStart);
+  const clipFrames = () => (canvasRef.current?.getObjects().filter((o) => isFrame(o) && o.clip && o.visible !== false) ?? []) as unknown as FrameImage[];
+
+  /** The next clip of a sequence: the same frame as `prev`, stacked just above it, fading in as `prev` ends. The video grows to fit. */
+  const placeClipAfter = async (clip: DesignClip, prev: FrameImage) => {
+    const cv = c();
+    const FADE = 0.5;
+    const at = Math.max(0, Math.round((clipEndsAt(prev) - FADE) * 10) / 10);
+    if (at > MAX_DURATION - 1) return void toast.error(`A video can be up to ${MAX_DURATION} seconds, and this one is already full. Shorten a clip first.`);
+    const el = await loadVideo(clip.url);
+    const fr = makeFrame(prev.frame, prev.width * Math.abs(prev.scaleX), prev.height * Math.abs(prev.scaleY));
+    fr.set({ left: prev.left, top: prev.top, angle: prev.angle, name: "Video" } as Partial<FrameImage>);
+    fr.setClip(el, clip);
+    const want = at + clip.durationMs / 1000;
+    const next = clampDuration(Math.max(duration, want));
+    fr.set({ anim: cleanAnim({ in: at > 0 ? "fade" : "none", at, dur: FADE }, next) ?? undefined } as Partial<FrameImage>);
+    const h = history.current;
+    h.quiet = true;
+    try {
+      cv.add(fr);
+      cv.moveObjectTo(fr, cv.getObjects().indexOf(prev) + 1);
+    } finally {
+      h.quiet = false;
+    }
+    cv.setActiveObject(fr);
+    cv.requestRenderAll();
+    if (next !== duration) setDuration(next);
+    setVideoOpen(true);
+    recordRef.current();
+    bump();
+    if (want > MAX_DURATION + 0.05) toast(`A video can be up to ${MAX_DURATION} seconds: this clip is cut there. Trim the clips to fit.`, { icon: "✂️", duration: 6000 });
+  };
+
+  const placeClip = async (clip: DesignClip, into?: FrameImage | null, after?: FrameImage | null) => {
+    const cv = c();
+    const active = cv.getActiveObject();
+    const target = into ?? (!after && isFrame(active) && !active.clip ? active : null);
+    // No frame chosen and the ad already has footage: this is the next clip in the sequence.
+    const last = after ?? (target ? null : clipFrames().sort((x, y) => clipEndsAt(y) - clipEndsAt(x))[0] ?? null);
+    if (last && cv.getObjects().includes(last)) return placeClipAfter(clip, last);
+    const el = await loadVideo(clip.url);
+    const firstClip = !cv.getObjects().some((o) => isFrame(o) && o.clip);
+    const animated = (cv.getObjects() as Obj[]).some((o) => cleanAnim(o.anim, duration));
+    const h = history.current;
+    h.quiet = true;
+    try {
+      if (target) target.setClip(el, clip);
+      else {
+        const fr = makeFrame("rect", W, H);
+        fr.set({ left: W / 2, top: H / 2, name: "Video" } as Partial<FrameImage>);
+        fr.setClip(el, clip);
+        cv.add(fr);
+        cv.sendObjectToBack(fr);
+        cv.setActiveObject(fr);
+      }
+    } finally {
+      h.quiet = false;
+    }
+    if (target) cv.setActiveObject(target);
+    cv.requestRenderAll();
+    // A design with footage is a video. Its first clip sets the length, unless layers are already timed.
+    if (firstClip && !animated) setDuration(clip.durationMs / 1000);
+    else if (!motionRef.current) setDuration(DEFAULT_DURATION);
+    setVideoOpen(true);
+    recordRef.current();
+    bump();
+  };
+
+  const uploadClip = async (file: File | undefined, into?: FrameImage | null, after?: FrameImage | null) => {
+    if (!file) return;
+    if (file.size > MAX_CLIP_BYTES) return void toast.error("Videos can be up to 100 MB. Export a smaller file and try again.");
+    setBusy("upload");
+    setIncoming({ stage: "uploading", share: 0, video: true });
+    try {
+      const clip = await api.uploadDesignClip(designId, file, (share) => setIncoming({ stage: share >= 1 ? "preparing" : "uploading", share, video: true }));
+      setIncoming({ stage: "adding", share: 1, video: true });
+      await placeClip(clip, into, after);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't add the video.");
+    } finally {
+      setBusy(null);
+      setIncoming(null);
+    }
+  };
+
+  /** Trim or sound of the footage in a frame. `final` false while a slider is dragged. */
+  const setClipProps = (fr: FrameImage, patch: Record<string, unknown>, final = true) => {
+    previewRef.current?.exit();
+    const endedAt = clipEndsAt(fr);
+    fr.set({ ...patch, dirty: true } as Partial<FrameImage>);
+    // Trimming a clip moves the clips that follow it (and the video's end, if it ended with the sequence) by the same amount.
+    const delta = Math.round((clipEndsAt(fr) - endedAt) * 100) / 100;
+    if (delta) {
+      const all = clipFrames();
+      const endOfAll = Math.max(...all.map((x) => (x === fr ? endedAt : clipEndsAt(x))));
+      const later = all.filter((x) => x !== fr && clipAt(x) > 0 && clipAt(x) >= endedAt - 0.75);
+      const next = clampDuration(duration + delta);
+      for (const x of later) (x as Obj).set({ anim: cleanAnim({ ...((x as Obj).anim ?? {}), at: Math.max(0, clipAt(x) + delta) }, Math.max(duration, next)) ?? undefined } as Partial<FabricObject>);
+      if (Math.abs(endOfAll - duration) < 0.15 && next !== duration) setDuration(next);
+    }
+    if ("clipStart" in patch) fr.seekPoster();
+    c().requestRenderAll();
+    if (final) recordRef.current();
+    bump();
+  };
+
+  /** A brand end card (C20b): the last 2.5 seconds on the brand colour, with the logo and a line to act on. One undo step. */
+  const addEndCard = async () => {
+    const cv = c();
+    previewRef.current?.exit();
+    const LEN = 2.5;
+    const next = clampDuration(duration + LEN);
+    const t0 = Math.round((next - LEN) * 10) / 10;
+    const pal = paletteFor(kit);
+    setBusy("endcard");
+    try {
+      const headingFamily = kit?.headingFont ?? "Poppins";
+      const weight = nearestWeight(headingFamily, 800);
+      await loadFont(headingFamily, weight);
+      let logo: FabricImage | null = null;
+      if (kit?.logos[0]) {
+        const img = await api.addDesignBrandLogo(designId, kit.logos[0].id);
+        setUploads((u) => [img, ...u]);
+        logo = await FabricImage.fromURL(img.url, { crossOrigin: "anonymous" });
+        const s = fitScale(logo.width ?? 1, logo.height ?? 1, W * 0.42, H * 0.2, "contain");
+        logo.set({ left: W / 2, top: H * 0.4, scaleX: s, scaleY: s, assetId: img.id, name: "End card logo", anim: cleanAnim({ in: "pop", at: t0 + 0.25, dur: 0.6 }, next) } as Partial<FabricImage>);
+      }
+      const panel = makeShape("rect", W, H, { fill: pal.primary, name: "End card" });
+      panel.set({ left: W / 2, top: H / 2, anim: cleanAnim({ in: "fade", at: t0, dur: 0.4 }, next) } as Partial<FabricObject>);
+      const line = new Textbox("Shop now at yourbrand.com", { left: W / 2, top: logo ? H * 0.6 : H / 2, width: W * 0.8, fontSize: Math.round(Math.min(W, H) * 0.07), fontWeight: weight, fontFamily: headingFamily, fill: pal.onPrimary, textAlign: "center", lineHeight: 1.15, name: "End card text", anim: cleanAnim({ in: "slide-up", at: t0 + 0.45, dur: 0.6 }, next) } as Partial<Textbox>);
+      const h = history.current;
+      h.quiet = true;
+      try {
+        cv.add(panel);
+        if (logo) cv.add(logo);
+        cv.add(line);
+      } finally {
+        h.quiet = false;
+      }
+      cv.setActiveObject(line);
+      cv.requestRenderAll();
+      if (next !== duration) setDuration(next);
+      setVideoOpen(true);
+      recordRef.current();
+      bump();
+      toast.success(next !== duration ? `End card added: the video is now ${next} s. Edit its text on the canvas.` : "End card added over the last 2.5 s. Edit its text on the canvas.");
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) timelineRef.current?.play(Math.max(0, t0 - 0.5));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't add the end card.");
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -1090,7 +1263,7 @@ export default function Editor({ designId }: { designId: string }) {
 
   const toCreatives = async () => {
     // A design with animation is saved as a video ad: the current video if it's up to date, else a new one first.
-    if ((c().getObjects() as Obj[]).some((o) => cleanAnim(o.anim, duration))) {
+    if ((c().getObjects() as Obj[]).some((o) => cleanAnim(o.anim, duration) || (isFrame(o) && o.clip))) {
       if (video?.status === "done" && !videoStale && statusRef.current === "saved") return exportVideo();
       setBusy("export");
       exportAfter.current = true;
@@ -1495,9 +1668,12 @@ export default function Editor({ designId }: { designId: string }) {
             <PanelButton icon={<Type size={14} />} label="Add body text" onClick={() => void addText("body")} disabled={!doc || !canEdit} />
             <PanelButton icon={<Sparkles size={16} />} label="Write the text with AI" onClick={() => setWriting(true)} disabled={!doc || !canEdit} />
           </Section>
-          <Section title="Images">
+          <Section title="Images and video">
             <PanelButton icon={<ImageIcon size={16} />} label={busy === "upload" ? "Adding…" : "Upload image"} onClick={() => fileRef.current?.click()} disabled={!doc || !canEdit || busy === "upload"} />
             <PanelButton icon={<Images size={16} />} label="From Creatives" onClick={() => setPicker(true)} disabled={!doc || !canEdit || busy === "upload"} />
+            <PanelButton icon={<Film size={16} />} label={busy === "upload" && incoming?.video ? "Adding…" : clipFrames().length ? "Add another video clip" : "Upload video"} onClick={() => ((clipTarget.current = null), clipFileRef.current?.click())} disabled={!doc || !canEdit || busy === "upload"} />
+            <input ref={clipFileRef} type="file" accept={CLIP_TYPES} className="hidden" onChange={(e) => { const to = clipTarget.current; clipTarget.current = null; void uploadClip(e.target.files?.[0], to?.into ?? null, to?.after ?? null); e.target.value = ""; }} />
+            {videoOpen && <PanelButton icon={<LayoutTemplate size={16} />} label={busy === "endcard" ? "Adding…" : "Add a brand end card"} onClick={() => void addEndCard()} disabled={!doc || !canEdit || busy !== null} />}
             <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={(e) => { void upload(e.target.files?.[0], "image"); e.target.value = ""; }} />
             {uploads.length > 0 && (
               <div className="flex flex-col gap-1.5 pt-1">
@@ -1533,7 +1709,7 @@ export default function Editor({ designId }: { designId: string }) {
                 </ToolButton>
               ))}
             </div>
-            <p className="m-0 text-[11px] text-ink-3">Add a frame, then drag an image onto it (or drop a file). Resizing the frame never squashes the photo; double-click to move the photo inside.</p>
+            <p className="m-0 text-[11px] text-ink-3">Add a frame, then drag an image onto it (or drop an image or video file). Resizing the frame never squashes the photo; double-click to move the photo inside.</p>
           </Section>
           <Section title="Background">
             <div className="flex flex-wrap gap-1.5">
@@ -1602,21 +1778,24 @@ export default function Editor({ designId }: { designId: string }) {
                 {fr && (
                   <>
                     <Button variant="ghost" size="sm" icon={<ImageIcon size={15} />} onClick={() => fileRef.current?.click()} disabled={busy === "upload"}>
-                      {fr.empty ? "Add image" : "Replace image"}
+                      {fr.empty ? "Add image" : fr.clip ? "Use an image" : "Replace image"}
+                    </Button>
+                    <Button variant="ghost" size="sm" icon={<Film size={15} />} onClick={() => ((clipTarget.current = { into: fr }), clipFileRef.current?.click())} disabled={busy === "upload"}>
+                      {fr.clip ? "Replace video" : "Add video"}
                     </Button>
                     <Button variant="ghost" size="sm" icon={<Images size={15} />} onClick={() => setPicker(true)} disabled={busy === "upload"}>
                       From Creatives
                     </Button>
                     {!fr.empty && (
                       <>
-                        <ToolButton label={adjusting === fr ? "Done repositioning" : "Reposition image (or double-click the frame)"} active={adjusting === fr} onClick={() => (adjusting === fr ? stopAdjust() : startAdjust(fr))}>
+                        <ToolButton label={adjusting === fr ? "Done repositioning" : fr.clip ? "Reposition the video (or double-click the frame)" : "Reposition image (or double-click the frame)"} active={adjusting === fr} onClick={() => (adjusting === fr ? stopAdjust() : startAdjust(fr))}>
                           <Move size={15} />
                         </ToolButton>
                         <label className="flex items-center gap-1 px-1 text-[11px] text-ink-3" title="Zoom the photo inside the frame">
                           Zoom
                           <input type="range" min={1} max={3} step={0.05} value={fr.zoom} onChange={(e) => change({ zoom: Number(e.target.value), dirty: true })} className="w-[80px] accent-[#6448f2]" aria-label="Zoom the photo" />
                         </label>
-                        <ToolButton label="Remove image (keep the frame)" onClick={() => { stopAdjust(); fr.clearPhoto(); c().requestRenderAll(); recordRef.current(); bump(); }}>
+                        <ToolButton label={fr.clip ? "Remove video (keep the frame)" : "Remove image (keep the frame)"} onClick={() => { stopAdjust(); fr.clearPhoto(); c().requestRenderAll(); recordRef.current(); bump(); }}>
                           <ImageOff size={15} />
                         </ToolButton>
                       </>
@@ -1698,7 +1877,7 @@ export default function Editor({ designId }: { designId: string }) {
               <div role="status" aria-live="polite" className="absolute left-1/2 top-4 z-20 flex w-[260px] -translate-x-1/2 flex-col gap-2 rounded-card border border-line bg-surface px-4 py-3 shadow-pop">
                 <span className="flex items-center gap-2.5 text-[13px] font-medium text-ink">
                   <span className="h-4 w-4 flex-none animate-spin rounded-full border-2 border-brand-soft-2 border-t-brand motion-reduce:animate-none" aria-hidden="true" />
-                  {incoming.stage === "uploading" ? `Uploading image… ${Math.round(incoming.share * 100)}%` : incoming.stage === "preparing" ? "Preparing image…" : "Adding to the design…"}
+                  {incoming.stage === "uploading" ? `Uploading ${incoming.video ? "video" : "image"}… ${Math.round(incoming.share * 100)}%` : incoming.stage === "preparing" ? (incoming.video ? "Preparing video (up to a minute)…" : "Preparing image…") : "Adding to the design…"}
                 </span>
                 <span className="h-1.5 overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
                   <span className={cn("block h-full rounded-full bg-brand transition-[width] duration-200", incoming.stage !== "uploading" && "animate-pulse")} style={{ width: `${incoming.stage === "uploading" ? Math.max(4, incoming.share * 100) : 100}%` }} />
@@ -1762,6 +1941,11 @@ export default function Editor({ designId }: { designId: string }) {
 
         {/* Right: layers */}
         <aside className="w-[220px] flex-none overflow-y-auto border-l border-line bg-surface" aria-label="Layers">
+          {fr?.clip && (
+            <Section title="Video clip">
+              <ClipFields o={fr as unknown as ClipFrame} duration={duration} canEdit={canEdit} onChange={(patch, final) => setClipProps(fr, patch, final)} onFit={() => setDuration(clipEndsAt(fr))} onAddAfter={() => ((clipTarget.current = { after: fr }), clipFileRef.current?.click())} />
+            </Section>
+          )}
           {videoOpen && (
             <Section title="Animation">
               {sel && kind !== "activeselection" ? (

@@ -12,9 +12,41 @@ import { shapePathD, type ShapeKind } from "./shapes";
  * after every resize), it draws its own photo, and it's saved like an image
  * (`src` → "asset:<id>") plus `frame` (the shape), `empty`, `focusX/Y` (0–1)
  * and `zoom` (≥ 1).
+ *
+ * **Footage (plan C20b):** a frame can hold a video clip instead of a photo
+ * (`clip: true`): everything above works the same (cover, focus, zoom,
+ * shapes), its element is a <video>, and it carries the part of the clip to
+ * play (`clipStart` – `clipEnd` seconds of `clipDuration`) and its sound
+ * (`muted`, `volume` 0–1). While editing it shows the frame at `clipStart`.
  */
 
-const FRAME_PROPS = ["frame", "empty", "focusX", "focusY", "zoom"];
+const FRAME_PROPS = ["frame", "empty", "focusX", "focusY", "zoom", "clip", "clipStart", "clipEnd", "clipDuration", "muted", "volume"];
+
+export type ClipInfo = { id: string; url: string; durationMs: number; hasAudio?: boolean };
+
+/** A <video> ready to draw: first frame decoded, sized (Fabric reads width / height), loadable onto a canvas (CORS). */
+export function loadVideo(url: string): Promise<HTMLVideoElement> {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement("video");
+    v.crossOrigin = "anonymous";
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = "auto";
+    const timer = setTimeout(() => fail(), 30_000);
+    const fail = () => {
+      clearTimeout(timer);
+      reject(new Error("The video didn't load."));
+    };
+    v.onloadeddata = () => {
+      clearTimeout(timer);
+      v.width = v.videoWidth;
+      v.height = v.videoHeight;
+      resolve(v);
+    };
+    v.onerror = fail;
+    v.src = url;
+  });
+}
 
 function blank() {
   const c = document.createElement("canvas");
@@ -32,8 +64,27 @@ export class FrameImage extends FabricImage {
   declare zoom: number;
   /** While an image is dragged over it (not saved). */
   declare hover: boolean;
+  declare clip: boolean;
+  declare clipStart: number;
+  declare clipEnd: number;
+  declare clipDuration: number;
+  declare muted: boolean;
+  declare volume: number;
 
-  constructor(element?: HTMLImageElement | HTMLCanvasElement, options: Record<string, unknown> = {}) {
+  /** Loading a saved frame: footage needs a <video>, which Fabric's image loader can't make. */
+  static async fromObject(object: any, options?: any): Promise<any> {
+    if (object?.clip && typeof object.src === "string") {
+      const { type, filters, resizeFilter, clipPath, crossOrigin, ...rest } = object;
+      const el = await loadVideo(object.src);
+      const fr = new FrameImage(el, rest);
+      fr.watchVideo();
+      fr.seekPoster();
+      return fr;
+    }
+    return super.fromObject(object, options);
+  }
+
+  constructor(element?: HTMLImageElement | HTMLCanvasElement | HTMLVideoElement, options: Record<string, unknown> = {}) {
     super(element ?? blank(), options);
     this.frame = (options.frame as ShapeKind) ?? "rounded";
     this.empty = options.empty === undefined ? !element : Boolean(options.empty);
@@ -41,7 +92,32 @@ export class FrameImage extends FabricImage {
     this.focusY = typeof options.focusY === "number" ? options.focusY : 0.5;
     this.zoom = typeof options.zoom === "number" ? options.zoom : 1;
     this.hover = false;
+    this.clip = Boolean(options.clip);
+    this.clipStart = typeof options.clipStart === "number" ? options.clipStart : 0;
+    this.clipDuration = typeof options.clipDuration === "number" ? options.clipDuration : 0;
+    this.clipEnd = typeof options.clipEnd === "number" ? options.clipEnd : this.clipDuration;
+    this.muted = Boolean(options.muted);
+    this.volume = typeof options.volume === "number" ? options.volume : 1;
     this.objectCaching = false;
+  }
+
+  /** The clip's <video>, or null for a photo or an empty frame. */
+  get video(): HTMLVideoElement | null {
+    const el = this.getElement() as unknown;
+    return this.clip && el instanceof HTMLVideoElement ? el : null;
+  }
+
+  /** Redraw when the video has jumped to a new moment (scrubbing, trimming). */
+  watchVideo() {
+    this.video?.addEventListener("seeked", () => this.canvas?.requestRenderAll());
+  }
+
+  /** While editing, show the first frame of the chosen part. */
+  seekPoster() {
+    const v = this.video;
+    if (!v) return;
+    v.pause();
+    if (Math.abs(v.currentTime - this.clipStart) > 0.02) v.currentTime = this.clipStart;
   }
 
   toObject(propertiesToInclude: any[] = []): any {
@@ -86,7 +162,7 @@ export class FrameImage extends FabricImage {
       ctx.font = `600 ${fs}px Inter, system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("Drop an image", 0, 0);
+      ctx.fillText("Drop an image or video", 0, 0);
     } else {
       ctx.save();
       ctx.clip(path);
@@ -114,8 +190,21 @@ export class FrameImage extends FabricImage {
   setPhoto(el: HTMLImageElement, assetId: string) {
     const w = this.width * Math.abs(this.scaleX);
     const h = this.height * Math.abs(this.scaleY);
+    this.video?.pause();
     this.setElement(el, { width: w, height: h });
-    this.set({ scaleX: 1, scaleY: 1, empty: false, assetId, focusX: 0.5, focusY: 0.5, zoom: 1, dirty: true } as Partial<FrameImage>);
+    this.set({ scaleX: 1, scaleY: 1, empty: false, assetId, focusX: 0.5, focusY: 0.5, zoom: 1, clip: false, clipStart: 0, clipEnd: 0, clipDuration: 0, dirty: true } as Partial<FrameImage>);
+    this.setCoords();
+  }
+
+  /** Put a video clip in the frame (keeps the frame's size and place); the whole clip plays, with its sound. */
+  setClip(el: HTMLVideoElement, info: ClipInfo) {
+    const w = this.width * Math.abs(this.scaleX);
+    const h = this.height * Math.abs(this.scaleY);
+    this.video?.pause();
+    this.setElement(el as unknown as HTMLImageElement, { width: w, height: h });
+    const seconds = Math.round(info.durationMs / 10) / 100;
+    this.set({ scaleX: 1, scaleY: 1, empty: false, assetId: info.id, focusX: 0.5, focusY: 0.5, zoom: 1, clip: true, clipStart: 0, clipEnd: seconds, clipDuration: seconds, muted: info.hasAudio === false, volume: 1, dirty: true } as Partial<FrameImage>);
+    this.watchVideo();
     this.setCoords();
   }
 
@@ -123,8 +212,9 @@ export class FrameImage extends FabricImage {
   clearPhoto() {
     const w = this.width * Math.abs(this.scaleX);
     const h = this.height * Math.abs(this.scaleY);
+    this.video?.pause();
     this.setElement(blank(), { width: w, height: h });
-    this.set({ scaleX: 1, scaleY: 1, empty: true, assetId: undefined, dirty: true } as Partial<FrameImage>);
+    this.set({ scaleX: 1, scaleY: 1, empty: true, assetId: undefined, clip: false, clipStart: 0, clipEnd: 0, clipDuration: 0, dirty: true } as Partial<FrameImage>);
     this.setCoords();
   }
 

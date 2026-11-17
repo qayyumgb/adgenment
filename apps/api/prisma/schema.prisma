@@ -1193,8 +1193,10 @@ model Asset {
   width       Int
   height      Int
   bytes       Int
-  /// upload | preview | export | brand | video (an MP4, C20) | poster (a video's still)
+  /// upload | preview | export | brand | video (a rendered MP4, C20) | poster (a video's still) | clip (footage placed in a design, C20b)
   kind        String   @default("upload")
+  /// Videos and clips: the length.
+  durationMs  Int?
   createdById String?
   createdAt   DateTime @default(now())
 

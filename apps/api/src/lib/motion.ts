@@ -13,12 +13,12 @@
  * adjusted by `frameAt`; nothing else about the layer changes.
  */
 
-export type MotionIn = "none" | "fade" | "slide-up" | "slide-down" | "slide-left" | "slide-right" | "pop" | "zoom-in" | "typewriter";
-export type MotionOut = "none" | "fade" | "slide-up" | "slide-down" | "pop";
+export type MotionIn = "none" | "appear" | "fade" | "slide-up" | "slide-down" | "slide-left" | "slide-right" | "pop" | "zoom-in" | "typewriter";
+export type MotionOut = "none" | "cut" | "fade" | "slide-up" | "slide-down" | "pop";
 export type MotionHold = "none" | "zoom" | "float" | "pulse";
 
 export type Anim = {
-  /** Entrance, starting at `at` seconds and lasting `dur` seconds. Before `at` the layer is hidden. */
+  /** Entrance, starting at `at` seconds and lasting `dur` seconds. Before `at` the layer is hidden ("appear": it is simply there from `at`). Footage in the layer starts playing at `at`. */
   in?: MotionIn;
   at?: number;
   dur?: number;
@@ -35,13 +35,14 @@ export type DocMotion = { duration: number };
 
 export const FPS = 30;
 export const MIN_DURATION = 3;
-export const MAX_DURATION = 30;
+export const MAX_DURATION = 60;
 export const DEFAULT_DURATION = 8;
 export const DEFAULT_IN_DUR = 0.6;
 export const DEFAULT_OUT_DUR = 0.4;
 
 export const IN_LABELS: Record<MotionIn, string> = {
   none: "None",
+  appear: "Appear (cut)",
   fade: "Fade in",
   "slide-up": "Slide up",
   "slide-down": "Slide down",
@@ -52,7 +53,7 @@ export const IN_LABELS: Record<MotionIn, string> = {
   typewriter: "Typewriter",
 };
 export const HOLD_LABELS: Record<MotionHold, string> = { none: "None", zoom: "Slow zoom", float: "Float", pulse: "Pulse" };
-export const OUT_LABELS: Record<MotionOut, string> = { none: "None", fade: "Fade out", "slide-up": "Slide up", "slide-down": "Slide down", pop: "Shrink" };
+export const OUT_LABELS: Record<MotionOut, string> = { none: "None", cut: "Disappear (cut)", fade: "Fade out", "slide-up": "Slide up", "slide-down": "Slide down", pop: "Shrink" };
 
 export type Rest = { left: number; top: number; scaleX: number; scaleY: number; opacity: number };
 export type Frame = Rest & {
@@ -161,7 +162,8 @@ export function frameAt(rest: Rest, anim: Anim | null, t: number, w: number, h: 
     const q = clamp01((t - (anim.outAt - od)) / od);
     if (q > 0) {
       const e = inCubic(q);
-      if (out === "fade") f.opacity *= 1 - e;
+      if (out === "cut") f.opacity *= q >= 1 ? 0 : 1;
+      else if (out === "fade") f.opacity *= 1 - e;
       else if (out === "slide-up") (f.top -= e * dist), (f.opacity *= 1 - e);
       else if (out === "slide-down") (f.top += e * dist), (f.opacity *= 1 - e);
       else if (out === "pop") {

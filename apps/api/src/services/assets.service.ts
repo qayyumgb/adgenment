@@ -85,7 +85,7 @@ export async function createAsset(opts: { workspaceId: string; designId?: string
 }
 
 /** Store a finished file as it is (a rendered MP4, C20a): no compression. */
-export async function createFileAsset(opts: { workspaceId: string; designId?: string | null; createdById?: string | null; kind: "video"; body: Buffer; mime: string; ext: string; width: number; height: number }): Promise<Asset> {
+export async function createFileAsset(opts: { workspaceId: string; designId?: string | null; createdById?: string | null; kind: "video" | "clip"; body: Buffer; mime: string; ext: string; width: number; height: number; durationMs?: number | null }): Promise<Asset> {
   const id = randomBytes(12).toString("hex");
   const key = `ws/${opts.workspaceId}/${id}.${opts.ext}`;
   try {
@@ -95,7 +95,7 @@ export async function createFileAsset(opts: { workspaceId: string; designId?: st
     throw assetError(502, "Couldn't save the file to file storage. Try again; if it keeps failing, check the R2 settings on the server.");
   }
   try {
-    return await prisma.asset.create({ data: { id, workspaceId: opts.workspaceId, designId: opts.designId ?? null, key, mime: opts.mime, width: opts.width, height: opts.height, bytes: opts.body.length, kind: opts.kind, createdById: opts.createdById ?? null } });
+    return await prisma.asset.create({ data: { id, workspaceId: opts.workspaceId, designId: opts.designId ?? null, key, mime: opts.mime, width: opts.width, height: opts.height, bytes: opts.body.length, kind: opts.kind, durationMs: opts.durationMs ?? null, createdById: opts.createdById ?? null } });
   } catch (err) {
     await deleteObjects([key]).catch(() => undefined);
     throw err;
@@ -103,11 +103,11 @@ export async function createFileAsset(opts: { workspaceId: string; designId?: st
 }
 
 /** A byte-for-byte copy of an asset under a new id (e.g. a brand logo placed in a design): no re-compression. */
-export async function copyAsset(source: Asset, opts: { designId: string | null; createdById?: string | null; kind: "upload" | "brand" }): Promise<Asset> {
+export async function copyAsset(source: Asset, opts: { designId: string | null; createdById?: string | null; kind: "upload" | "brand" | "clip" }): Promise<Asset> {
   const body = await getObject(source.key);
   if (!body) throw assetError(404, "That image is no longer in file storage.");
   const id = randomBytes(12).toString("hex");
-  const key = `ws/${source.workspaceId}/${id}.webp`;
+  const key = `ws/${source.workspaceId}/${id}.${/\.([a-z0-9]{2,5})$/i.exec(source.key)?.[1] ?? "webp"}`;
   try {
     await putObject(key, body, source.mime);
   } catch (err) {
@@ -115,7 +115,7 @@ export async function copyAsset(source: Asset, opts: { designId: string | null; 
     throw assetError(502, "Couldn't copy the image in file storage. Try again.");
   }
   try {
-    return await prisma.asset.create({ data: { id, workspaceId: source.workspaceId, designId: opts.designId, key, mime: source.mime, width: source.width, height: source.height, bytes: body.length, kind: opts.kind, createdById: opts.createdById ?? null } });
+    return await prisma.asset.create({ data: { id, workspaceId: source.workspaceId, designId: opts.designId, key, mime: source.mime, width: source.width, height: source.height, bytes: body.length, kind: opts.kind, durationMs: source.durationMs, createdById: opts.createdById ?? null } });
   } catch (err) {
     await deleteObjects([key]).catch(() => undefined);
     throw err;

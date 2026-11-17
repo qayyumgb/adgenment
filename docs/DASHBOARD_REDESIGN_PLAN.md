@@ -1339,6 +1339,9 @@ C4 is split in two: **C4a**, the share link and portal (done), and **C4b**, the 
   - **Brand on top:** logo, lower-third text, end card from the brand kit; one-click resize to all sizes (reuses C19b resize).
   - **Auto captions:** speech-to-text (a provider such as Deepgram, AssemblyAI or Whisper API; Claude doesn't read audio) → editable captions styled with brand fonts, burned in on render. Charge in AI credits by minute.
   - **From the library:** pull existing videos from Creatives (synced Meta videos only if Meta allows download; otherwise upload the original).
+  - **Build, step 1 ✅ built (2026-11-16), browser test pending: a clip as a layer.** Footage goes into a photo frame (so crop, focus, shapes, templates and resize already work), trim and sound in the sidebar, plays in the preview, rendered with its sound. Details in IMPLEMENTATION.md.
+  - **Build, step 2 ✅ built (2026-11-16), browser test pending: clips in a row and a brand end card.** A clip starts when its layer comes in; the next clip is added after the previous one with a crossfade (or a cut); trimming moves the clips that follow; videos up to 60 s; a 2.5 s end card from the brand kit.
+  - **Next steps:** auto captions (needs the owner's choice of speech-to-text provider and an API key) · videos from Creatives and a "Your videos" list.
 
 - **C20c — AI script and voiceover (M):**
   - Claude writes a **storyboard** from a campaign, brief or product page: hook, 3–5 scenes, captions, CTA, using the client's best-performing ads (existing data), and fills a motion template scene by scene (like "Write the text with AI", 1–2 credits).

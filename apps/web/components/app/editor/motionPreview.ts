@@ -37,9 +37,13 @@ function typeStyles(text: string, rest: Json, shown: number): Json {
 }
 
 type Layer = { o: AnimObj; anim: Anim | null; rest: Rest; text: string | null; styles: Json; total: number; lastShown: number };
+/** A frame holding footage (frames.ts), as far as the preview needs it. */
+type ClipObj = AnimObj & { clip?: boolean; clipStart?: number; clipEnd?: number; muted?: boolean; volume?: number; getElement?: () => unknown };
+type Clip = { v: HTMLVideoElement; /** When it starts playing in the video: when its layer comes in. */ at: number; start: number; end: number; muted: boolean; volume: number };
 
 export class MotionPreview {
   private layers: Layer[] | null = null;
+  private clips: Clip[] = [];
   private W = 0;
   private H = 0;
   private duration = 0;
@@ -86,6 +90,13 @@ export class MotionPreview {
         lastShown: -1,
       };
     });
+    this.clips = (c.getObjects() as ClipObj[]).flatMap((o) => {
+      const v = o.clip && o.visible !== false ? o.getElement?.() : null;
+      if (!(v instanceof HTMLVideoElement)) return [];
+      const start = o.clipStart ?? 0;
+      const a = cleanAnim(o.anim, duration);
+      return [{ v, at: a && a.in !== "none" ? a.at ?? 0 : 0, start, end: Math.max(start + 0.1, o.clipEnd ?? v.duration ?? start + 0.1), muted: Boolean(o.muted), volume: Math.min(1, Math.max(0, o.volume ?? 1)) }];
+    });
     this.was = { selection: c.selection, skipTargetFind: c.skipTargetFind };
     c.selection = false;
     c.skipTargetFind = true;
@@ -121,11 +132,32 @@ export class MotionPreview {
     }
   }
 
-  /** Show the video at time t (seconds). */
-  draw(t: number) {
+  /** Footage follows the clock: playing along (with its sound) while the preview plays, parked on the right frame otherwise. */
+  private sync(t: number, playing: boolean) {
+    for (const c of this.clips) {
+      const local = t - c.at;
+      const over = c.start + local >= c.end;
+      const target = Math.min(c.end - 0.04, c.start + Math.max(0, local));
+      if (playing && !over && local >= 0) {
+        c.v.muted = c.muted || c.volume === 0;
+        c.v.volume = c.volume;
+        if (c.v.paused) {
+          c.v.currentTime = target;
+          void c.v.play().catch(() => undefined);
+        } else if (Math.abs(c.v.currentTime - target) > 0.3) c.v.currentTime = target;
+      } else {
+        if (!c.v.paused) c.v.pause();
+        if (Math.abs(c.v.currentTime - target) > 0.03) c.v.currentTime = target;
+      }
+    }
+  }
+
+  /** Show the video at time t (seconds). `playing`: the clock is running (footage plays along, with sound). */
+  draw(t: number, playing = false) {
     if (!this.layers) return;
     this.last = t;
     this.apply(t);
+    this.sync(t, playing);
     this.canvas.requestRenderAll();
   }
 
@@ -134,6 +166,12 @@ export class MotionPreview {
     if (!this.layers) return;
     this.rest();
     this.layers = null;
+    // Footage goes back to the still the editor shows: the first frame of its chosen part.
+    for (const k of this.clips) {
+      k.v.pause();
+      if (Math.abs(k.v.currentTime - k.start) > 0.02) k.v.currentTime = k.start;
+    }
+    this.clips = [];
     const c = this.canvas;
     c.selection = this.was.selection;
     c.skipTargetFind = this.was.skipTargetFind;
